@@ -48,6 +48,13 @@ memory:
   memory_enabled: true
   user_profile_enabled: true
 
+display:
+  # Desativa mensagens de progresso de ferramentas (ex: "📖 read_file: ...") no WhatsApp/Chats
+  tool_progress: 'off'
+  platforms:
+    whatsapp:
+      tool_progress: 'off'
+
 auxiliary:
   # IA auxiliar de baixo custo para tarefas de compressão de contexto e buscas
   compression:
