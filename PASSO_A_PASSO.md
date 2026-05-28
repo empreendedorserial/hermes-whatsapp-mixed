@@ -2,11 +2,22 @@
 
 Este guia prático foi criado para guiar você, aluno da **Comunidade Empreendedor Serial**, na configuração completa do seu robô do zero até ele estar atendendo seus clientes com o Gemini 3.5 Flash e atuando como seu assistente pessoal!
 
-Siga os **5 passos simples** abaixo:
+Usaremos um método super moderno: **você editará seus dados visualmente no seu GitHub** e o seu servidor importará tudo de forma automática. Siga os **5 passos simples** abaixo:
 
 ---
 
-## 🛠️ PASSO 1: Subir a Stack e Chaves no Portainer
+## 🎨 PASSO 1: Fazer um Fork e Customizar no seu GitHub
+
+Todo o treinamento do robô e alteração de regras é feito de forma visual diretamente na interface do seu GitHub!
+
+1. Na página do repositório oficial (`github.com/empreendedorserial/hermes-whatsapp-mixed`), clique no botão **Fork** (canto superior direito) para criar uma cópia dele na sua própria conta do GitHub.
+2. No seu repositório pessoal recém-criado, edite os arquivos diretamente pelo seu navegador (clicando no ícone de lápis ✏️):
+   * 📄 **`support_rules.md`**: Coloque as informações da sua empresa, preços, links de checkout (Kiwify, Hotmart, etc.) e formas de suporte. Clique em **Commit changes** para salvar.
+   * 📄 **`SOUL.md`**: Personalize o tom e o comportamento do robô se desejar. Clique em **Commit changes** para salvar.
+
+---
+
+## 🛠️ PASSO 2: Subir a Stack e Chaves no Portainer
 
 Todo o gerenciamento de chaves e domínios é feito de forma visual na interface do Portainer!
 
@@ -20,42 +31,28 @@ Todo o gerenciamento de chaves e domínios é feito de forma visual na interface
    * **`GOOGLE_API_KEY`** = Cole aqui sua chave do Gemini.
    * **`API_SERVER_KEY`** = Crie uma senha forte para proteger sua API.
    * *Opcional:* Preencha `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` se for usar suporte por e-mail (Gmail).
-6. Clique no botão azul **Deploy the stack** na parte inferior da tela.
-7. Aguarde alguns segundos até que o container mude para o status `running`.
+6. Clique no botão azul **Deploy the stack** na parte inferior da tela e aguarde o status mudar para `running`.
 
 > 🔒 **SSL Automático:** O Traefik integrado na Stack configurará os certificados SSL seguros (HTTPS) para você de forma totalmente transparente e imediata!
 
 ---
 
-## ⚡ PASSO 2: Rodar a Instalação Automatizada (1 Clique)
+## ⚡ PASSO 3: Rodar a Sincronização Automatizada (1 Clique)
+
+Agora faremos seu servidor puxar as regras que você salvou no seu GitHub no Passo 1!
 
 1. No painel do Portainer, clique em **Containers** e encontre o container `hermes-agent`.
 2. Clique no ícone de **Console** (`>_`) correspondente a ele.
 3. Clique em **Connect** para abrir o terminal integrado.
-4. Cole o comando abaixo e aperte **Enter**:
+4. **Substitua `SEU_USUARIO_GITHUB` pelo seu usuário real do GitHub** no comando abaixo, cole-o no terminal e aperte **Enter**:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main/setup.sh | bash
+curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/setup.sh | bash -s SEU_USUARIO_GITHUB
 ```
 
-> **O que aconteceu aqui?** O script automatizado configurou toda a estrutura de pastas do seu volume persistente (`/opt/data`), baixou os modelos corretos de personalidade (`SOUL.md`), regras de negócio (`support_rules.md`), configurou o `config.yaml` otimizado para o Gemini 3.5 e corrigiu a ponte do WhatsApp!
-
----
-
-## 🎨 PASSO 3: Customizar as Regras do seu Negócio de Forma Visual
-
-Você **não** precisa editar códigos no terminal para treinar o seu robô! Faremos tudo de forma visual usando o painel do Hermes.
-
-1. Acesse o painel visual do Hermes digitando no seu navegador de internet o seu domínio configurado:
-   👉 `https://hermes.seu-dominio.com`
-2. No painel, clique no gerenciador de arquivos e abra o arquivo:
-   👉 `/opt/data/support_rules.md`
-3. Edite as informações com os dados do **seu negócio**:
-   * Preços dos seus produtos.
-   * Seus links de checkout (Kiwify, Hotmart, Stripe, etc.).
-   * Seus horários de atendimento.
-   * Respostas para dúvidas frequentes (FAQ).
-4. Clique em **Salvar**. Seu robô aprende as novas regras no mesmo milissegundo!
+> **Sincronização Ativa:** O seu servidor baixou a persona (`SOUL.md`) e regras de vendas (`support_rules.md`) direto do seu GitHub pessoal, configurou o `config.yaml` e corrigiu a ponte do WhatsApp! 
+> 
+> 💡 **Dica de Ouro:** Sempre que quiser mudar os preços ou as regras do seu negócio, basta editá-las no seu GitHub e rodar este mesmo comando novamente no console. Seu servidor atualizará tudo em segundos!
 
 ---
 

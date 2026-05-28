@@ -1,8 +1,12 @@
 #!/bin/bash
 set -e
 
+# Pega o usuário do GitHub via parâmetro. Se não for passado, usa 'empreendedorserial' como padrão.
+GITHUB_USER="${1:-empreendedorserial}"
+
 echo "=========================================================="
 echo "🤖 CONFIGURADOR DE MODO MISTO DO EMPREENDEDOR SERIAL 🤖"
+echo "           GitHub Fork de: $GITHUB_USER"
 echo "=========================================================="
 
 # Define o caminho base do Hermes dentro do container
@@ -11,44 +15,33 @@ mkdir -p "$BASE_DIR"
 mkdir -p "/opt/data"
 
 # URL Base para os arquivos do GitHub
-RAW_URL="https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main"
+RAW_URL="https://raw.githubusercontent.com/$GITHUB_USER/hermes-whatsapp-mixed/main"
 
-echo "⏳ 1. Baixando arquivos de configuração e personas..."
+echo "⏳ 1. Baixando arquivos de configuração e personas de $RAW_URL..."
 
-# Baixa o arquivo de persona (SOUL.md) apenas se ele NÃO existir para proteger customizações do aluno
-if [ ! -f "/opt/data/SOUL.md" ]; then
-    curl -sSL "$RAW_URL/SOUL.md" -o "/opt/data/SOUL.md"
-    cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
-    echo "  ✓ Persona SOUL.md configurada em /opt/data/SOUL.md"
-else
-    echo "  - SOUL.md já existe em /opt/data, pulando para proteger suas customizações."
-    # Garante que a cópia ativa do Hermes esteja atualizada com a versão persistente do aluno
-    cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
-fi
+# Baixa e atualiza o arquivo de persona (SOUL.md) direto do repositório/fork do aluno
+curl -sSL "$RAW_URL/SOUL.md" -o "/opt/data/SOUL.md"
+cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
+echo "  ✓ Persona SOUL.md sincronizada com seu GitHub"
 
-# Baixa a base de conhecimento de suporte (support_rules.md) se ela não existir
-if [ ! -f "/opt/data/support_rules.md" ]; then
-    curl -sSL "$RAW_URL/support_rules.md" -o "/opt/data/support_rules.md"
-    echo "  ✓ Modelo de support_rules.md criado em /opt/data/support_rules.md"
-else
-    echo "  - support_rules.md já existe em /opt/data, pulando para não sobrescrever."
-fi
+# Baixa e atualiza a base de conhecimento de suporte (support_rules.md) direto do repositório/fork do aluno
+curl -sSL "$RAW_URL/support_rules.md" -o "/opt/data/support_rules.md"
+echo "  ✓ Regras de suporte support_rules.md sincronizadas com seu GitHub"
 
-# Baixa o modelo de config.yaml se ele não existir
+# Baixa o modelo de config.yaml se ele não existir localmente
 if [ ! -f "$BASE_DIR/config.yaml" ]; then
     curl -sSL "$RAW_URL/config.yaml.example" -o "$BASE_DIR/config.yaml"
     echo "  ✓ config.yaml inicial configurado."
 else
-    echo "  - config.yaml já existe, pulando."
+    echo "  - config.yaml já existe localmente, pulando."
 fi
 
-# Baixa o modelo de chaves de API (.env) se ele não existir
+# Baixa o modelo de chaves de API (.env) se ele não existir localmente
 if [ ! -f "$BASE_DIR/.env" ]; then
-    curl -sSL "$RAW_URL/.env.example" -o "$BASE_DIR/.env"
+    curl -sSL "$RAW_URL/env.example" -o "$BASE_DIR/.env" || curl -sSL "$RAW_URL/.env.example" -o "$BASE_DIR/.env"
     echo "  ✓ Arquivo de chaves .env inicial criado."
-    echo "  ⚠️ ATENÇÃO: Edite o arquivo /opt/data/.hermes/.env e coloque suas chaves de API!"
 else
-    echo "  - Arquivo .env já existe, pulando."
+    echo "  - Arquivo .env já existe localmente, pulando."
 fi
 
 echo "⏳ 2. Baixando e aplicando o Patch do WhatsApp..."
@@ -57,10 +50,12 @@ curl -sSL "$RAW_URL/patch_whatsapp.py" -o "/tmp/patch_whatsapp.py"
 python3 /tmp/patch_whatsapp.py
 
 echo "=========================================================="
-echo "🎉 CONFIGURAÇÃO CONCLUÍDA COM SUCESSO!"
+echo "🎉 SINCRONIZAÇÃO E CONFIGURAÇÃO CONCLUÍDAS COM SUCESSO!"
 echo "=========================================================="
+echo "Seu Hermes foi sincronizado com o seu GitHub Fork ($GITHUB_USER)!"
 echo "Para deixar seu Hermes 100% operacional:"
-echo "1. Edite as chaves de API em: /opt/data/.hermes/.env"
-echo "2. Edite as regras do seu negócio em: /opt/data/support_rules.md"
+echo "1. Preencha suas chaves no Portainer Stack Env ou em: /opt/data/.hermes/.env"
+echo "2. Para atualizar suas regras de negócio ou sua persona no futuro:"
+echo "   Edite-as diretamente no seu GitHub e execute este setup novamente!"
 echo "3. Abra o console do Portainer e digite 'hermes' para iniciar!"
 echo "=========================================================="
