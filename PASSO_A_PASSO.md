@@ -8,17 +8,22 @@ Siga os **5 passos simples** abaixo:
 
 ## 🛠️ PASSO 1: Subir a Stack e Chaves no Portainer
 
-Todo o gerenciamento de chaves é feito de forma visual na interface gráfica do Portainer!
+Todo o gerenciamento de chaves e domínios é feito de forma visual na interface do Portainer!
 
 1. Acesse o painel do seu **Portainer**.
 2. Vá no menu lateral em **Stacks** e clique em **Add stack**.
 3. Escolha um nome para a stack (ex: `hermes-agent`).
 4. Cole o conteúdo do arquivo `docker-compose.yml` (disponível no repositório) no editor de texto.
-5. Em **Environment variables** (Variáveis de ambiente) do Portainer, preencha suas chaves essenciais:
-   * `GOOGLE_API_KEY` = Cole aqui sua chave do Gemini.
-   * `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` = Cole aqui as credenciais do seu login Google (se for usar suporte por e-mail).
+5. Em **Environment variables** (Variáveis de ambiente) do Portainer, preencha seus domínios e chaves:
+   * **`HERMES_DASH_HOST`** = O domínio do seu painel visual (ex: `hermes.seu-dominio.com`).
+   * **`HERMES_API_HOST`** = O subdomínio da API (ex: `hermes-api.seu-dominio.com`).
+   * **`GOOGLE_API_KEY`** = Cole aqui sua chave do Gemini.
+   * **`API_SERVER_KEY`** = Crie uma senha forte para proteger sua API.
+   * *Opcional:* Preencha `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` se for usar suporte por e-mail (Gmail).
 6. Clique no botão azul **Deploy the stack** na parte inferior da tela.
 7. Aguarde alguns segundos até que o container mude para o status `running`.
+
+> 🔒 **SSL Automático:** O Traefik integrado na Stack configurará os certificados SSL seguros (HTTPS) para você de forma totalmente transparente e imediata!
 
 ---
 
@@ -41,8 +46,8 @@ curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-m
 
 Você **não** precisa editar códigos no terminal para treinar o seu robô! Faremos tudo de forma visual usando o painel do Hermes.
 
-1. Acesse o painel visual do Hermes digitando no seu navegador de internet:
-   👉 `http://IP_DO_SEU_SERVIDOR:9119`
+1. Acesse o painel visual do Hermes digitando no seu navegador de internet o seu domínio configurado:
+   👉 `https://hermes.seu-dominio.com`
 2. No painel, clique no gerenciador de arquivos e abra o arquivo:
    👉 `/opt/data/support_rules.md`
 3. Edite as informações com os dados do **seu negócio**:
@@ -56,7 +61,7 @@ Você **não** precisa editar códigos no terminal para treinar o seu robô! Far
 
 ## 📲 PASSO 4: Conectar o WhatsApp e Ativar
 
-1. Volte ao **Console** do container `hermes-agent` no Portainer (ou abra no Terminal Web do Dashboard).
+1. Volte ao **Console** do container `hermes-agent` no Portainer (ou abra no Terminal Web do seu Dashboard).
 2. Digite o comando abaixo para iniciar o Hermes e gerar o QR Code de pareamento:
    ```bash
    hermes
