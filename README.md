@@ -23,19 +23,24 @@ Esse modo permite que seu agente desempenhe duas funções ao mesmo tempo:
 
 ## 🚀 Como Implantar pelo Portainer (Passo a Passo)
 
-### Passo 1: Criar a Stack no Portainer
+### Passo 1: Criar a Stack e Definir Credenciais no Portainer
+
+Todo o gerenciamento de chaves de API é feito de forma visual e segura na interface do Portainer, antes de subir seu robô!
 
 1. Abra o painel do seu **Portainer**.
 2. Vá em **Stacks** -> **Add stack**.
 3. Dê um nome à stack (ex: `hermes-agent`).
 4. No campo **Web editor**, cole o conteúdo do arquivo `docker-compose.yml` deste repositório.
-5. Clique em **Deploy the stack** no final da página.
+5. Em **Environment variables** (Variáveis de ambiente) na interface do Portainer, adicione suas chaves de API essenciais como:
+   * `GOOGLE_API_KEY` (sua chave do Gemini)
+   * `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` (se for usar e-mail de suporte)
+6. Clique em **Deploy the stack** para criar seu container.
 
 ---
 
 ### Passo 2: Configuração e Instalação de 1 Clique ⚡
 
-Uma vez que o container esteja rodando no Portainer, você não precisa configurar nada manualmente! 
+Uma vez que o container esteja rodando no Portainer, você não precisa configurar nada de forma complexa!
 
 1. Clique na stack do `hermes-agent` no Portainer.
 2. Vá em **Containers** e clique no ícone de **Console** (`>_`) do container `hermes-agent`.
@@ -55,12 +60,15 @@ curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-m
 
 ---
 
-### Passo 3: Colocar suas Chaves de API e Regras de Suporte
+### Passo 3: Configurar Regras e Vendas de forma Visual (Web Dashboard) 🎨
 
-Acesse os arquivos diretamente na pasta de volume persistente do seu servidor (ex: `/opt/data/`) ou através de um editor de arquivos:
+Você **não** precisa de terminal ou de códigos para definir as regras da sua empresa! O Hermes Agent oferece um painel visual completo:
 
-1. **Chaves de API:** Abra o arquivo `/opt/data/.hermes/.env` e insira sua chave (como `GOOGLE_API_KEY`).
-2. **Suporte e Vendas:** Abra o arquivo `/opt/data/support_rules.md` e preencha com as regras do seu negócio, preços e links de checkout.
+1. Acesse o painel do Hermes direto no seu navegador:
+   👉 `http://IP_DO_SEU_SERVIDOR:9119`
+2. No painel, você terá acesso a um **gerenciador de arquivos visual** completo com editor de textos!
+3. Abra e edite o arquivo **`support_rules.md`** localizado na raiz do seu volume `/opt/data/`.
+4. Preencha o documento de forma visual com as informações do seu negócio, preços, links de checkout e formas de suporte. Ao salvar, seu robô aprende as novas regras no mesmo instante!
 
 ---
 
@@ -69,7 +77,7 @@ Acesse os arquivos diretamente na pasta de volume persistente do seu servidor (e
 Em vez de digitar códigos no terminal ou usar senhas manuais, você pode autenticar sua conta de e-mail de suporte conversando com o seu Hermes diretamente pelo **console (chat do terminal) ou pelo Telegram**!
 
 ### 1. Garantir as Credenciais do Google na Stack
-Certifique-se de que as credenciais do seu cliente Google Web estejam definidas na sua Stack do Portainer ou no arquivo `/opt/data/.hermes/.env`:
+Certifique-se de que as credenciais do seu cliente Google Web estejam definidas na sua Stack do Portainer (como explicado no Passo 1):
 * `GOOGLE_CLIENT_ID`
 * `GOOGLE_CLIENT_SECRET`
 * *Nota: No Google Cloud Console, a URI de redirecionamento autorizada deve ser configurada como: `http://localhost:1`.*
@@ -108,7 +116,7 @@ Como o Hermes Agent roda containerizado, qualquer arquivo criado fora dos caminh
 
 Se você quer acessar o Web Dashboard e o console interativo do Hermes com HTTPS (`https://seu-dominio.com`), nós incluímos o arquivo `Caddyfile.example`.
 
-Basta subir un container do Caddy na mesma rede do seu Hermes Agent e usar a seguinte configuração no seu `Caddyfile`:
+Basta subir um container do Caddy na mesma rede do seu Hermes Agent e usar a seguinte configuração no seu `Caddyfile`:
 
 ```caddy
 hermes.seu-dominio.com {
@@ -133,7 +141,7 @@ Depois de parear o seu WhatsApp no Hermes Agent, você pode controlá-lo enviand
 ---
 
 ### 🔄 Como Forçar o Reinício da Ponte
-Sempre que fizer alterações no código do robô ou aplicar o patch pela primeira vez, execute o seguinte comando no console para recarregar o robô do WhatsApp:
+Sempre que fizer alterações do robô ou aplicar o patch pela primeira vez, execute o seguinte comando no console para recarregar o robô do WhatsApp:
 
 ```bash
 docker exec -it hermes-agent pkill -f bridge.js
