@@ -104,5 +104,23 @@ Você agora tem superpoderes! Diretamente do seu chat privado, envie os seguinte
 * 🟢 **`start_bot`** - Reativa o chatbot comercial para responder seus clientes no piloto automático.
 
 ---
+
+## 👥 PASSO EXTRA: Configurando Múltiplos Perfis Separados (Profiles Nativo) 🚀
+
+Se você deseja ter **agentes totalmente independentes** rodando ao mesmo tempo (um perfil focado apenas em ser seu Assistente Técnico Pessoal e outro focado 100% no Atendimento ao Cliente), você pode usar o sistema de **Perfis (Profiles)** do Hermes:
+
+1. Abra o **Console** do seu container `hermes-agent` no Portainer.
+2. Crie um novo perfil chamado `suporte` herdando as suas chaves base de API rodando o comando:
+   ```bash
+   /opt/hermes/.venv/bin/hermes profile create suporte --clone
+   ```
+3. Abra sua Dashboard Web e clique na aba **PROFILES** (`https://hermes.seu-dominio.com/profiles`). Você verá que agora existem dois perfis listados de forma visual!
+4. **Isolamento de Prompts:**
+   * O perfil `default` mantém o `/opt/data/.hermes/SOUL.md` (Admin).
+   * O perfil `suporte` terá seu próprio arquivo exclusivo em `/opt/data/.hermes/profiles/suporte/SOUL.md`. Você pode colar nele apenas o tom e as diretrizes do atendimento de clientes.
+5. **WhatsApp Independente:**
+   Cada perfil possui seu próprio pareamento de WhatsApp independente. Você pode parear um número exclusivo para o suporte dos seus clientes e manter seu assistente no seu número privado!
+
+---
 *Bons negócios e automações!*  
 *Comunidade Empreendedor Serial (André Alencar).*

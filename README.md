@@ -346,6 +346,28 @@ Depois de parear o seu WhatsApp no Hermes Agent, você pode controlá-lo enviand
 
 ---
 
+## 👥 Configuração Avançada de Múltiplos Perfis (Profiles Nativo) 🚀
+
+Se você deseja ter **agentes totalmente independentes** rodando ao mesmo tempo (por exemplo: um perfil focado apenas em ser seu Assistente Técnico Pessoal e outro perfil focado 100% no Atendimento de Clientes), você pode usar o sistema nativo de **Perfis (Profiles)** do Hermes!
+
+Cada perfil ganha seu próprio painel, chaves de API, banco de dados, memórias e arquivos de persona (`SOUL.md`).
+
+### Como criar e configurar um novo perfil:
+
+1. Acesse o **Console** do container do `hermes-agent` no seu Portainer.
+2. Rode o comando para criar um novo perfil clonando as suas configurações base (vamos chamá-lo de `suporte`):
+   ```bash
+   /opt/hermes/.venv/bin/hermes profile create suporte --clone
+   ```
+3. Acesse a aba **PROFILES** na sua Dashboard Web (`https://hermes.seu-dominio.com/profiles`) e você verá que agora aparecem os dois perfis (`default` e `suporte`).
+4. **Isolando as Personas:**
+   * O perfil `default` continuará usando o `/opt/data/.hermes/SOUL.md` (onde você pode deixar apenas suas regras de Admin).
+   * O perfil `suporte` usará seu próprio arquivo localizado em `/opt/data/.hermes/profiles/suporte/SOUL.md` (onde você pode colar apenas as diretrizes do suporte ao cliente, como o conteúdo do `SOUL_WHATSAPP.md`).
+5. **Pareando de forma independente:**
+   Você pode parear um número de WhatsApp diferente para cada perfil de forma totalmente isolada! Basta acessar o terminal ou o painel web de cada perfil para fazer o escaneamento do QR Code.
+
+---
+
 ## 🔄 Como Reiniciar a Ponte do WhatsApp de Forma Segura
 
 Toda vez que você rodar o script de setup para sincronizar novas regras ou atualizar sua persona, a ponte do WhatsApp precisa ser recarregada para carregar as novas instruções de forma limpa.
