@@ -258,6 +258,7 @@ Se /opt/data existir, use-o como DATA_DIR. Caso contrário, use $HOME.
 
 **PASSO 2 — Criar estrutura de diretórios**
 mkdir -p $HERMES_HOME $DATA_DIR
+mkdir -p $HERMES_HOME/plugins/whatsapp-manager
 
 **PASSO 3 — Baixar SOUL.md (persona)**
 Se o arquivo $DATA_DIR/SOUL.md NÃO existir:
@@ -265,19 +266,29 @@ Se o arquivo $DATA_DIR/SOUL.md NÃO existir:
   cp $DATA_DIR/SOUL.md $HERMES_HOME/SOUL.md
 Se já existir, apenas copie a versão persistente para $HERMES_HOME/SOUL.md
 
-**PASSO 4 — Baixar support_rules.md**
+**PASSO 4 — Baixar Personas de Suporte (WhatsApp e E-mail)**
+Se o arquivo $DATA_DIR/SOUL_WHATSAPP.md NÃO existir:
+  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/SOUL_WHATSAPP.md -o $DATA_DIR/SOUL_WHATSAPP.md
+Se o arquivo $DATA_DIR/SOUL_EMAIL.md NÃO existir:
+  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/SOUL_EMAIL.md -o $DATA_DIR/SOUL_EMAIL.md
+
+**PASSO 5 — Baixar support_rules.md**
 Se o arquivo $DATA_DIR/support_rules.md NÃO existir:
   curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/support_rules.md -o $DATA_DIR/support_rules.md
 
-**PASSO 5 — Baixar config.yaml inicial**
+**PASSO 6 — Baixar o Plugin whatsapp-manager**
+curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/plugins/whatsapp-manager/plugin.yaml -o $HERMES_HOME/plugins/whatsapp-manager/plugin.yaml
+curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/plugins/whatsapp-manager/__init__.py -o $HERMES_HOME/plugins/whatsapp-manager/__init__.py
+
+**PASSO 7 — Baixar config.yaml inicial**
 Se o arquivo $HERMES_HOME/config.yaml NÃO existir:
   curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/config.yaml.example -o $HERMES_HOME/config.yaml
 
-**PASSO 6 — Aplicar patch do WhatsApp**
+**PASSO 8 — Aplicar patch do WhatsApp**
 curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/patch_whatsapp.py -o /tmp/patch_whatsapp.py && python3 /tmp/patch_whatsapp.py
 
-**PASSO 7 — Confirmar resultado**
-Me mostre a lista de arquivos criados em $HERMES_HOME e em $DATA_DIR.
+**PASSO 9 — Confirmar resultado**
+Me mostre a lista de arquivos criados em $HERMES_HOME, em $HERMES_HOME/plugins/whatsapp-manager e em $DATA_DIR.
 
 Execute cada passo em sequência, pare se houver erro e me explique o que aconteceu.
 ```
