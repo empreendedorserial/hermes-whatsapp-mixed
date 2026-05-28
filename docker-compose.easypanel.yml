@@ -8,7 +8,7 @@
 #   API_SERVER_KEY        : Chave secreta de autenticação para a API do Hermes
 #   💡 Como gerar uma chave segura:
 #      Terminal : openssl rand -hex 32
-#      Online   : https://generate-secret.vercel.app/32
+#      Online   : https://generate-secret.vercel.app/32 ou https://generate-secret.vercel.app/64
 #
 # 🤖 PROVEDORES DE IA (pelo menos uma é recomendada):
 #   OPENAI_API_KEY        : Chave de API da OpenAI
