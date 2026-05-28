@@ -10,11 +10,11 @@ Esse modo permite que seu agente desempenhe duas funções ao mesmo tempo:
 ---
 
 ## 📂 O que está incluído neste repositório:
-* 🐋 **`docker-compose.yml`**: Arquivo otimizado para implantação rápida como Stack no Portainer.
+* 🐋 **`docker-compose.yml`**: Arquivo otimizado para implantação rápida como Stack no Portainer (já preparado para injetar credenciais).
 * ⚡ **`setup.sh`**: Script de configuração de 1 clique que baixa todas as regras, chaves, persona e aplica o patch.
 * 🐍 **`patch_whatsapp.py`**: Script de automação universal que reconfigura a ponte do WhatsApp (filtro de assinaturas inteligente e novos comandos).
-* ⚙️ **`config.yaml.example`**: Configuração pré-otimizada para alta performance, ativação de memória persistente, suporte a e-mail e prevenção de spam em grupos de WhatsApp.
-* 🔑 **`.env.example`**: Modelo organizado de variáveis de ambiente e chaves de API necessárias (incluindo suporte a Gmail).
+* ⚙️ **`config.yaml.example`**: Configuração pré-otimizada para alta performance, ativação de memória persistente e prevenção de spam em grupos de WhatsApp.
+* 🔑 **`.env.example`**: Modelo organizado de variáveis de ambiente e chaves de API necessárias (incluindo chaves de OAuth do Google).
 * 🔒 **`Caddyfile.example`**: Configuração de Proxy Reverso de 1 clique usando o Caddy para expor seu Web Dashboard/Terminal com SSL grátis e automático.
 * 👤 **`SOUL.md`**: Persona pré-configurada para o funcionamento do Modo Duplo (Dono vs Clientes).
 * 📖 **`support_rules.md`**: Modelo estruturado de base de conhecimento separando as diretrizes de e-mail e WhatsApp.
@@ -49,7 +49,7 @@ curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-m
 **O que este comando faz automaticamente por você:**
 * Baixa e configura o arquivo de persona adaptativa (`SOUL.md`).
 * Cria o modelo de regras de suporte (`support_rules.md`).
-* Configura as otimizações corretas no seu `config.yaml` (incluindo blocos de e-mail).
+* Configura as otimizações corretas no seu `config.yaml`.
 * Cria o modelo de arquivo de chaves de API (`.env`).
 * Executa o patch corretivo e de novos recursos para o WhatsApp (`patch_whatsapp.py`).
 
@@ -59,42 +59,37 @@ curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-m
 
 Acesse os arquivos diretamente na pasta de volume persistente do seu servidor (ex: `/opt/data/`) ou através de um editor de arquivos:
 
-1. **Chaves de API:** Abra o arquivo `/opt/data/.hermes/.env` e insira sua chave (como `OPENROUTER_API_KEY`).
+1. **Chaves de API:** Abra o arquivo `/opt/data/.hermes/.env` e insira sua chave (como `GOOGLE_API_KEY`).
 2. **Suporte e Vendas:** Abra o arquivo `/opt/data/support_rules.md` e preencha com as regras do seu negócio, preços e links de checkout.
 
 ---
 
-## 📧 Como Conectar e Ativar o Suporte via Gmail
+## 📧 Como Conectar e Ativar o Suporte via Gmail (OAuth Seguro)
 
-Se você deseja que o Hermes leia sua caixa de entrada de e-mails de suporte e envie respostas estruturadas para seus clientes de forma automática:
+Em vez de usar senhas comuns ou senhas de aplicativo que expiram ou são bloqueadas, nós utilizamos a autenticação oficial por **OAuth 2.0 (Google Web Client)** contida na sua stack do Portainer.
 
-### 1. Gerar uma Senha de App no Google (Obrigatório)
-Por motivos de segurança, o Gmail **bloqueia** o uso da sua senha comum. Você precisa criar uma senha específica de 16 dígitos para o Hermes:
-1. Acesse sua **Conta Google** (myaccount.google.com).
-2. Vá em **Segurança** (Security).
-3. Ative a **Verificação em duas etapas** (se não estiver ativa).
-4. Na barra de buscas superior, pesquise por **"Senhas de app"** (App passwords).
-5. Digite um nome para identificação (ex: `Hermes Agent`) e clique em **Criar**.
-6. **Copie a senha de 16 dígitos** exibida na janela amarela (ela não aparecerá novamente!).
+### 1. Garantir as Credenciais do Google na Stack
+Certifique-se de que as credenciais do seu cliente Google Web estejam definidas nas variáveis de ambiente da sua Stack do Portainer ou no arquivo `/opt/data/.hermes/.env`:
+* `GOOGLE_CLIENT_ID`
+* `GOOGLE_CLIENT_SECRET`
+* *Nota: No Google Cloud Console, a URI de redirecionamento autorizada para este cliente deve ser configurada exatamente como: `http://localhost:1`.*
 
-### 2. Configurar as Credenciais no `.env`
-Abra o arquivo `/opt/data/.hermes/.env` e preencha as variáveis correspondentes:
-```env
-EMAIL_USERNAME=seu-email-de-suporte@gmail.com
-EMAIL_PASSWORD=suasenha_de_app_de_16_digitos_sem_espaços
-```
+### 2. Rodar o Fluxo de Consentimento (Login)
+1. No console do container no Portainer, inicie o comando de login do e-mail de suporte rodando o script:
+   ```bash
+   python3 /opt/data/.hermes/scripts/support_agent.py
+   ```
+2. O script detectará a falta do token e imprimirá uma **URL de consentimento da Google** no terminal.
+3. Copie essa URL completa, abra no seu navegador e faça login com a conta de e-mail de suporte da sua empresa.
+4. Clique em **Continuar** e dê as permissões de acesso ao Gmail para o Hermes.
 
-### 3. Ativar o Canal no `config.yaml`
-Abra o seu arquivo `/opt/data/.hermes/config.yaml` e mude o campo `enabled` sob `email` de `false` para `true`:
-```yaml
-email:
-  enabled: true
-  imap_server: imap.gmail.com
-  imap_port: 993
-  smtp_server: smtp.gmail.com
-  smtp_port: 465
-  use_ssl: true
-```
+### 3. Copiar o Link de Redirecionamento de Volta
+1. Após permitir o acesso, o navegador tentará te redirecionar para uma página em branco que não carrega, cujo endereço na barra de navegação começará com:
+   👉 `http://localhost:1/?code=4/0Ad...`
+2. Copie essa **URL completa diretamente da barra de endereços** do seu navegador.
+3. Volte ao terminal do Portainer, **cole a URL inteira** no console e aperte Enter.
+
+> **Pronto!** O Hermes validará o token de acesso de forma criptografada e salvará a autenticação permanente. Ele agora tem acesso seguro ao seu Gmail para ler e responder dúvidas de suporte automaticamente com base nas suas regras!
 
 ---
 
