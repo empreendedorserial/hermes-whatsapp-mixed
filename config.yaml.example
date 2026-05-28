@@ -1,0 +1,46 @@
+# ⚙️ Hermes Agent - Configuração Recomendada (config.yaml)
+# Copie este conteúdo para o seu arquivo ~/.hermes/config.yaml ou /opt/data/.hermes/config.yaml
+
+model:
+  # O modelo padrão que o Hermes vai usar para raciocinar e responder
+  default: openrouter/anthropic/claude-3.5-sonnet
+  provider: openrouter
+  context_length: 8000
+
+agent:
+  # Número máximo de interações (voltas) que o agente pode dar em uma única tarefa antes de parar
+  max_turns: 60
+  tool_use_enforcement: auto
+  reasoning_effort: medium
+
+terminal:
+  # Backend onde os comandos serão executados. No Portainer, 'local' roda dentro do container do Hermes.
+  backend: local
+  cwd: .
+  timeout: 180
+
+whatsapp:
+  # Desativa respostas automáticas em grupos para evitar spam e consumo de créditos desnecessários!
+  group_policy: disabled
+
+approvals:
+  # Modo de segurança para comandos do terminal:
+  # - manual: Sempre pede autorização antes de rodar comandos de terminal (Recomendado/Seguro)
+  # - smart: Usa IA auxiliar para auto-aprovar comandos de baixo risco e só perguntar os perigosos
+  # - off: Roda qualquer comando de terminal livremente (Cuidado!)
+  mode: manual
+  timeout: 60
+
+memory:
+  # Habilita a memória persistente para que o Hermes lembre das preferências do dono nas próximas conversas
+  memory_enabled: true
+  user_profile_enabled: true
+
+auxiliary:
+  # IA auxiliar de baixo custo para tarefas de compressão de contexto e buscas
+  compression:
+    provider: openrouter
+    model: openrouter/google/gemini-flash-1.5-8b
+  session_search:
+    provider: openrouter
+    model: openrouter/google/gemini-flash-1.5-8b
