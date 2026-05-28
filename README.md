@@ -255,6 +255,17 @@ Envie o prompt abaixo para o Hermes pelo **Dashboard Web**, **Telegram** ou **Wh
 Hermes, preciso que você execute o setup inicial do modo misto.
 Siga os passos abaixo usando suas ferramentas de terminal:
 
+**PASSO 0 — Escolha do repositório de origem**
+Antes de começar, me pergunte:
+
+> "Para baixar os arquivos do setup, você prefere usar:
+> **(1) Repositório oficial** → https://github.com/empreendedorserial/hermes-whatsapp-mixed
+> **(2) Meu próprio fork** → me informe a URL do seu repositório no GitHub (ex: https://github.com/SEU_USUARIO/hermes-whatsapp-mixed)"
+
+Aguarde minha resposta antes de continuar.
+- Se eu escolher **(1)**, use `REPO_BASE=https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main` em todos os comandos curl dos próximos passos.
+- Se eu escolher **(2)**, extraia o usuário e repositório da URL que eu informar e monte o `REPO_BASE` correspondente (ex: `https://raw.githubusercontent.com/MEU_USUARIO/hermes-whatsapp-mixed/main`).
+
 **PASSO 1 — Auto-descoberta de caminhos**
 Execute e me mostre os resultados:
 echo "HOME=$HOME"
@@ -272,38 +283,57 @@ mkdir -p $HERMES_HOME/plugins/whatsapp-manager
 
 **PASSO 3 — Baixar SOUL.md (persona principal)**
 Se o arquivo $DATA_DIR/SOUL.md NÃO existir:
-  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/SOUL.md -o $DATA_DIR/SOUL.md
+  curl -sSL $REPO_BASE/SOUL.md -o $DATA_DIR/SOUL.md
   cp $DATA_DIR/SOUL.md $HERMES_HOME/SOUL.md
 Se já existir, apenas copie a versão persistente para $HERMES_HOME/SOUL.md
 
 **PASSO 4 — Baixar Personas de Suporte (WhatsApp e E-mail)**
 Se o arquivo $DATA_DIR/SOUL_WHATSAPP.md NÃO existir:
-  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/SOUL_WHATSAPP.md -o $DATA_DIR/SOUL_WHATSAPP.md
+  curl -sSL $REPO_BASE/SOUL_WHATSAPP.md -o $DATA_DIR/SOUL_WHATSAPP.md
 Se o arquivo $DATA_DIR/SOUL_EMAIL.md NÃO existir:
-  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/SOUL_EMAIL.md -o $DATA_DIR/SOUL_EMAIL.md
+  curl -sSL $REPO_BASE/SOUL_EMAIL.md -o $DATA_DIR/SOUL_EMAIL.md
 
 **PASSO 5 — Baixar support_rules.md**
 Se o arquivo $DATA_DIR/support_rules.md NÃO existir:
-  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/support_rules.md -o $DATA_DIR/support_rules.md
+  curl -sSL $REPO_BASE/support_rules.md -o $DATA_DIR/support_rules.md
 
 **PASSO 6 — Baixar o Plugin whatsapp-manager**
-curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/plugins/whatsapp-manager/plugin.yaml -o $HERMES_HOME/plugins/whatsapp-manager/plugin.yaml
-curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/plugins/whatsapp-manager/__init__.py -o $HERMES_HOME/plugins/whatsapp-manager/__init__.py
+curl -sSL $REPO_BASE/plugins/whatsapp-manager/plugin.yaml -o $HERMES_HOME/plugins/whatsapp-manager/plugin.yaml
+curl -sSL $REPO_BASE/plugins/whatsapp-manager/__init__.py -o $HERMES_HOME/plugins/whatsapp-manager/__init__.py
 
 **PASSO 7 — Baixar config.yaml inicial**
 Se o arquivo $HERMES_HOME/config.yaml NÃO existir:
-  curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/config.yaml.example -o $HERMES_HOME/config.yaml
+  curl -sSL $REPO_BASE/config.yaml.example -o $HERMES_HOME/config.yaml
 
 **PASSO 8 — Aplicar patch do WhatsApp**
-curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/patch_whatsapp.py -o /tmp/patch_whatsapp.py && python3 /tmp/patch_whatsapp.py
+curl -sSL $REPO_BASE/patch_whatsapp.py -o /tmp/patch_whatsapp.py && python3 /tmp/patch_whatsapp.py
 
-**PASSO 9 — Confirmar resultado**
-Me mostre a lista de arquivos criados em $HERMES_HOME, em $HERMES_HOME/plugins/whatsapp-manager e em $DATA_DIR.
+**PASSO 9 — Criar os perfis separados (whatsapp e email)**
+Execute os comandos abaixo para criar os perfis clonando as configurações base:
+/opt/hermes/.venv/bin/hermes profile create whatsapp --clone
+/opt/hermes/.venv/bin/hermes profile create email --clone
+
+Após criar, confirme com:
+/opt/hermes/.venv/bin/hermes profile list
+
+**PASSO 10 — Copiar personas isoladas para cada perfil**
+Copie a persona do WhatsApp para o perfil whatsapp:
+  cp $DATA_DIR/SOUL_WHATSAPP.md $HERMES_HOME/profiles/whatsapp/SOUL.md
+
+Copie a persona do E-mail para o perfil email:
+  cp $DATA_DIR/SOUL_EMAIL.md $HERMES_HOME/profiles/email/SOUL.md
+
+Se os diretórios dos perfis ainda não existirem, crie-os antes:
+  mkdir -p $HERMES_HOME/profiles/whatsapp
+  mkdir -p $HERMES_HOME/profiles/email
+
+**PASSO 11 — Confirmar resultado**
+Me mostre a lista de arquivos criados em $HERMES_HOME, em $HERMES_HOME/plugins/whatsapp-manager, em $HERMES_HOME/profiles e em $DATA_DIR.
 
 Execute cada passo em sequência, pare se houver erro e me explique o que aconteceu.
 ```
 
-> 💡 **Substitua `SEU_USUARIO_GITHUB`** pelo seu usuário do GitHub (onde está o seu Fork pessoal).
+> 💡 **No PASSO 0**, o Hermes vai perguntar se você quer usar o repositório oficial (`empreendedorserial`) ou o seu próprio fork. Basta responder com **(1)** ou colar a URL do seu fork — sem precisar editar nenhum comando manualmente.
 
 ### Por que funciona em qualquer ambiente?
 
