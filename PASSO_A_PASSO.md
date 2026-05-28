@@ -44,7 +44,7 @@ Agora faremos seu servidor puxar as regras que você salvou no seu GitHub no Pas
 1. No painel do Portainer, clique em **Containers** e encontre o container `hermes-agent`.
 2. Clique no ícone de **Console** (`>_`) correspondente a ele.
 3. Clique em **Connect** para abrir o terminal integrado.
-4. **Substitua `SEU_USUARIO_GITHUB` pelo seu usuário real do GitHub** no comando abaixo, cole-o no terminal e aprete **Enter**:
+4. **Substitua `SEU_USUARIO_GITHUB` pelo seu usuário real do GitHub** no comando abaixo, cole-o no terminal e aperte **Enter**:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/setup.sh | bash -s SEU_USUARIO_GITHUB
@@ -52,7 +52,18 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 
 > **Sincronização Ativa:** O seu servidor baixou a persona (`SOUL.md`) e regras de vendas (`support_rules.md`) direto do seu GitHub pessoal, configurou o `config.yaml` e corrigiu a ponte do WhatsApp! 
 > 
-> 💡 **Dica de Ouro:** Sempre que quiser mudar os preços ou as regras do seu negócio, basta editá-las no seu GitHub e rodar este mesmo comando novamente no console. Seu servidor atualizará tudo em segundos!
+> 💡 **Dica de Sincronização:** Sempre que quiser mudar os preços ou as regras do seu negócio de forma definitiva, o ideal é editar no seu GitHub e rodar este comando acima novamente!
+
+---
+
+## 🎨 PASSO BÔNUS: Ajustes Rápidos via Web UI (Dashboard Visual)
+
+Se você precisar fazer uma mudança rápida e pontual e não quiser acessar o GitHub:
+
+1. Abra no seu navegador o endereço do seu painel visual: `https://hermes.seu-dominio.com`
+2. No menu lateral, utilize o **Gerenciador de Arquivos Visual**.
+3. Clique para editar diretamente na Web os arquivos **`support_rules.md`** ou **`SOUL.md`** localizados na pasta `/opt/data/`.
+4. Salve as alterações e o Hermes atualizará as regras no mesmo instante!
 
 ---
 

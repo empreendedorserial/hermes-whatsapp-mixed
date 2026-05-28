@@ -58,7 +58,7 @@ Agora, vamos fazer com que o seu servidor baixe automaticamente os arquivos que 
 
 1. No Portainer, clique em **Containers** e clique no ícone de **Console** (`>_`) do container `hermes-agent`.
 2. Clique em **Connect** para abrir o terminal integrado.
-3. Substitua `SEU_USUARIO_GITHUB` pelo seu usuário real do GitHub no comando abaixo, cole-o no console e aperte Enter:
+3. Substitua `SEU_USUARIO_GITHUB` pelo seu usuário real do GitHub no comando abaixo, cole-o no console e aprete Enter:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/setup.sh | bash -s SEU_USUARIO_GITHUB
@@ -66,7 +66,23 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 
 > **O que o script fez por você?** Ele baixou a persona (`SOUL.md`) e as regras de negócio (`support_rules.md`) diretamente do seu GitHub Fork pessoal, configurou as otimizações no `config.yaml` e corrigiu a ponte do WhatsApp!
 
-💡 **Dica de Ouro:** Toda vez que você quiser alterar as regras do seu negócio ou atualizar sua persona, basta editar o arquivo no seu GitHub e rodar este mesmo comando acima de novo! Seu servidor atualizará tudo em menos de 3 segundos!
+💡 **Dica de Sincronização:** Toda vez que você quiser alterar as regras do seu negócio ou atualizar sua persona, basta editá-las no seu GitHub e rodar este mesmo comando de novo. Seu servidor atualizará tudo em segundos!
+
+---
+
+### Passo Extra: Ajustes Rápidos pela Web UI (Dashboard do Hermes) 🎨
+
+Se você precisar fazer um ajuste rápido de última hora (mudar um preço, corrigir uma palavra na sua Persona) e não quiser usar o GitHub naquele momento, você pode editar tudo de forma visual:
+
+1. Acesse o painel visual do Hermes direto no seu navegador:
+   👉 `https://hermes.seu-dominio.com` *(Graças ao Traefik, já com HTTPS/SSL ativo!)*
+2. No menu lateral, acesse o **gerenciador de arquivos visual** integrado.
+3. Você pode clicar para abrir e **editar diretamente pela interface Web** os arquivos:
+   * 📄 **`support_rules.md`** (Regras de Suporte e FAQ).
+   * 📄 **`SOUL.md`** (Arquivo de Persona e Personalidade).
+4. Basta clicar em **Salvar** e o Hermes assumirá as alterações no mesmo instante!
+
+*⚠️ Nota: Lembre-se de que se você rodar o setup.sh novamente com o parâmetro do seu GitHub, ele baixará as versões do seu repositório. Por isso, para alterações definitivas, o recomendado é atualizar sempre o seu GitHub Fork!*
 
 ---
 
