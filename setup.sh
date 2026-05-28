@@ -24,9 +24,19 @@ curl -sSL "$RAW_URL/SOUL.md" -o "/opt/data/SOUL.md"
 cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
 echo "  ✓ Persona SOUL.md sincronizada com seu GitHub"
 
+# Baixa e atualiza o arquivo de persona do suporte do WhatsApp (SOUL_WHATSAPP.md) direto do repositório/fork do aluno
+curl -sSL "$RAW_URL/SOUL_WHATSAPP.md" -o "/opt/data/SOUL_WHATSAPP.md"
+echo "  ✓ Persona do WhatsApp SOUL_WHATSAPP.md sincronizada"
+
 # Baixa e atualiza a base de conhecimento de suporte (support_rules.md) direto do repositório/fork do aluno
 curl -sSL "$RAW_URL/support_rules.md" -o "/opt/data/support_rules.md"
 echo "  ✓ Regras de suporte support_rules.md sincronizadas com seu GitHub"
+
+# Configura o plugin whatsapp-manager nativamente
+mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager"
+curl -sSL "$RAW_URL/plugins/whatsapp-manager/plugin.yaml" -o "/opt/data/.hermes/plugins/whatsapp-manager/plugin.yaml"
+curl -sSL "$RAW_URL/plugins/whatsapp-manager/__init__.py" -o "/opt/data/.hermes/plugins/whatsapp-manager/__init__.py"
+echo "  ✓ Plugin whatsapp-manager sincronizado e atualizado"
 
 # Baixa o modelo de config.yaml se ele não existir localmente
 if [ ! -f "$BASE_DIR/config.yaml" ]; then
