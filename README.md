@@ -211,12 +211,14 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 
 ---
 
-### Passo 7: Inserir Chaves de API e Regras de Negócio
+### Passo 7: Personalizar as Regras de Negócio
 
-Acesse os arquivos pelo Console do Easypanel ou pelo gerenciador de arquivos do Dashboard:
+> ✅ **As chaves de API já estão configuradas** via variáveis de ambiente da stack (Passo 3) — não é necessário editar nenhum arquivo manualmente para isso.
 
-1. **Chaves de API:** Edite `/root/.hermes/.env` com suas chaves (ex: `OPENROUTER_API_KEY`).
-2. **Regras do Negócio:** Edite `/opt/data/support_rules.md` com os dados do seu produto.
+Acesse o gerenciador de arquivos visual do Dashboard (`https://hermes.seu-dominio.com`) ou o Console do Easypanel e edite:
+
+* 📄 **`/opt/data/support_rules.md`** — regras do negócio, preços, links de checkout, instruções de suporte.
+* 📄 **`/opt/data/SOUL.md`** — persona e tom do assistente (só se quiser personalizar).
 
 ---
 
@@ -225,7 +227,7 @@ Acesse os arquivos pelo Console do Easypanel ou pelo gerenciador de arquivos do 
 | Volume | Caminho no container | O que persiste |
 |---|---|---|
 | `hermes_data` | `/opt/data` | SOUL.md, support_rules.md, workspace, HERMES_HOME |
-| `hermes_root` | `/root/.hermes` | config.yaml, .env (criados pelo setup.sh) |
+| `hermes_root` | `/root/.hermes` | config.yaml (criado pelo setup.sh) |
 
 > Os volumes ficam em `/etc/easypanel/projects/<projeto>/hermes/volumes/` no servidor.
 
