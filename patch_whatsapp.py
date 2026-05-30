@@ -1,9 +1,62 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script de Automatização para Alunos - Hermes Agent (Modo Misto WhatsApp)
-Aplica o "Modo Misto Híbrido" (Auto-repostas para clientes e assistente pessoal para o dono)
-no WhatsApp do Hermes Agent, além de adicionar os comandos 'stop_bot'/'start_bot' e o filtro genérico de assinaturas.
+Documentação de Patches do Bridge.js - Hermes Agent (Modo Misto WhatsApp)
+
+Este arquivo documenta as modificações JÁ APLICADAS ao bridge.js do WhatsApp
+para o funcionamento do "Modo Misto Híbrido" (Auto-respostas para clientes
+e assistente pessoal para o dono).
+
+Estas patches são aplicadas automaticamente pelo setup.sh na primeira vez que
+você roda a sincronização. Este arquivo serve apenas como referência do que
+foi modificado e por quê.
+
+MODIFICAÇÕES DOCUMENTADAS:
+==========================
+
+1. BOT STATE PERSISTENCE (botPaused via bot_state.json)
+   - Local: /root/.hermes/whatsapp/session/bot_state.json
+   - Funções: loadBotState(), saveBotState()
+   - Mantém o estado de pausa do bot entre reinicializações
+
+2. ENDPOINT /bot-status
+   - GET /bot-status retorna { botPaused, uptime }
+   - Usado pelo whatsapp-manager plugin para verificar antes de processar mensagens
+   - Permite pausar o bot sem matar o processo
+
+3. stop_bot / start_bot COMMANDS (textLower comparison)
+   - Comandos aceitos (case-insensitive): stop_bot, start_bot
+   - Aliases em português: !pausar, !parar, !retomar, !iniciar
+   - Verificação de owner usa tanto myNumber quanto myLid
+
+4. isOwner CHECK ATUALIZADO
+   - Usa both myNumber AND myLid para identificar o dono
+   - Comparação: senderClean === myNumber || senderClean === myLid
+   - Suporta LID format ( WhatsApp ID)
+
+5. fromMe FILTER PARA OWNER COMMANDS
+   - Permite que comandos stop_bot/start_bot funcionem mesmo fora do self-chat
+   - Verifica se é um comando de bot antes de pular a mensagem
+   - owner pode controlar o bot de qualquer chat
+
+6. SIGNATURE STRIPPER (formatOutgoingMessage)
+   - Remove e-mails de mensagens de clientes
+   - Remove assinaturas como "Abraços, André", "Atenciosamente, João", etc.
+   - Limpa espaços em branco no final
+
+ARQUIVO ORIGINAL:
+================
+O arquivo original era based em ~201 linhas.
+A versão atual tem 862 linhas e inclui todas as patches listadas acima.
+
+Para verificar se sua bridge.js já tem estas patches, procure por:
+- "BOT_STATE_FILE" ou "bot_state.json"
+- "loadBotState" ou "saveBotState"
+- "/bot-status"
+- "stop_bot" ou "start_bot"
+- "myNumber || myLid" ou "myLid"
+
+Se encontrar estas strings, suas patches já estão aplicadas!
 """
 
 import os
@@ -11,11 +64,11 @@ import sys
 
 def main():
     print("=" * 60)
-    print("🤖 INSTALADOR DO MODO MISTO DO WHATSAPP (Hermes Agent) 🤖")
-    print("            Desenvolvido para Comunidades de IA")
+    print("📖 DOCUMENTAÇÃO DE PATCHES DO BRIDGE.JS")
+    print("            Hermes Agent - Modo Misto WhatsApp")
     print("=" * 60)
 
-    # 1. Definir caminhos possíveis do bridge.js
+    # Caminhos possíveis do bridge.js
     possible_paths = [
         os.path.expanduser("~/.hermes/platforms/whatsapp/bridge/bridge.js"),
         "/opt/data/.hermes/platforms/whatsapp/bridge/bridge.js",
@@ -23,179 +76,77 @@ def main():
         "/root/.hermes/platforms/whatsapp/bridge/bridge.js",
     ]
 
-    patched_any = False
+    found_any = False
 
     for path in possible_paths:
         if not os.path.exists(path):
             continue
 
         print(f"\n📂 Encontrado arquivo da ponte em: {path}")
-        print("⏳ Aplicando patches de segurança e funcionalidade...")
 
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # ----------------------------------------------------
-        # PATCH 1: formatOutgoingMessage (Failsafe Signature Stripper)
-        # ----------------------------------------------------
-        old_format_1 = """function formatOutgoingMessage(message) {
-  // In bot mode, messages come from a different number so the prefix is
-  // redundant — the sender identity is already clear.  Only prepend in
-  // self-chat mode where bot and user share the same number.
-  if (WHATSAPP_MODE !== 'self-chat') return message;
-  return REPLY_PREFIX ? `${REPLY_PREFIX}${message}` : message;
-}"""
+        # Verificar cada patch
+        patches = [
+            ("BOT_STATE_FILE ou bot_state.json", "Estado de pausa persistente"),
+            ("loadBotState", "Função de carregar estado do bot"),
+            ("saveBotState", "Função de salvar estado do bot"),
+            ("/bot-status", "Endpoint HTTP para status do bot"),
+            ("stop_bot", "Comando para pausar bot"),
+            ("start_bot", "Comando para retomar bot"),
+            ("myLid", "Verificação de owner com LID"),
+            ("failsafe signature stripper", "Remoção de assinaturas"),
+        ]
 
-        old_format_2 = """function formatOutgoingMessage(message, chatId) {
-  // In bot mode, messages come from a different number so the prefix is
-  // redundant — the sender identity is already clear.  Only prepend in
-  // self-chat mode where bot and user share the same number.
-  if (WHATSAPP_MODE === 'bot') return message;
-  if (WHATSAPP_MODE === 'mixed') {
-    if (!chatId) return message;
-    const myNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-    const myLid = (sock?.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-    const chatNumber = chatId.replace(/@.*/, '');
-    const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-    if (!isSelfChat) return message;
-  }
-  return REPLY_PREFIX ? `${REPLY_PREFIX}${message}` : message;
-}"""
+        print("\n📋 Patches detectadas neste arquivo:")
+        all_found = True
+        for pattern, description in patches:
+            if pattern in content:
+                print(f"  ✅ {description}")
+            else:
+                print(f"  ❌ {description} (NÃO ENCONTRADA)")
+                all_found = False
 
-        new_format = """function formatOutgoingMessage(message, chatId) {
-  // In bot mode, messages come from a different number so the prefix is
-  // redundant — the sender identity is already clear.  Only prepend in
-  // self-chat mode where bot and user share the same number.
-  if (WHATSAPP_MODE === 'bot' || WHATSAPP_MODE === 'mixed') {
-    if (!chatId) return message;
-    const myNumber = (sock?.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-    const myLid = (sock?.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-    const chatNumber = chatId.replace(/@.*/, '');
-    const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-    if (!isSelfChat) {
-      // Failsafe: strip any robotic/email signatures from client WhatsApp messages
-      let cleaned = message;
-      // Remove e-mails
-      cleaned = cleaned.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/gi, '');
-      // Remove common signatures like "Abraços, André" or "Atenciosamente, João" at the end of the message
-      cleaned = cleaned.replace(/(Abraços|Abraço|Atenciosamente|Cumprimentos|Abraço forte|Abraços calorosos|Att),?\\s*[A-ZÀ-Ö][a-zà-öø-ÿ]+(\\s+[A-ZÀ-Ö][a-zà-öø-ÿ]+)*\\s*$/gi, '');
-      cleaned = cleaned.replace(/\\s+$/, '');
-      return cleaned;
-    }
-    return message;
-  }
-  return REPLY_PREFIX ? `${REPLY_PREFIX}${message}` : message;
-}"""
+        if all_found:
+            print("\n✨ Todas as patches do Modo Misto estão aplicadas!")
 
-        if old_format_1 in content:
-            content = content.replace(old_format_1, new_format)
-            print("  ✓ formatOutgoingMessage atualizado (V1)")
-        elif old_format_2 in content:
-            content = content.replace(old_format_2, new_format)
-            print("  ✓ formatOutgoingMessage atualizado (V2)")
-        elif "failsafe signature stripper" in content or "failsafe" in content:
-            print("  w formatOutgoingMessage já estava atualizado")
-        else:
-            print("  ⚠️ formatOutgoingMessage não encontrado exatamente (aviso)")
+        found_any = True
 
-        # ----------------------------------------------------
-        # PATCH 2: calls of formatOutgoingMessage in routes
-        # ----------------------------------------------------
-        old_send_call = "const chunks = splitLongMessage(formatOutgoingMessage(message));"
-        new_send_call = "const chunks = splitLongMessage(formatOutgoingMessage(message, chatId));"
-        if old_send_call in content:
-            content = content.replace(old_send_call, new_send_call)
-            print("  ✓ Chamadas da função nas rotas atualizadas")
+    if not found_any:
+        print("\n❌ Nenhum arquivo bridge.js foi encontrado.")
+        print("   Execute o setup.sh primeiro para baixar os arquivos.")
+        return
 
-        # ----------------------------------------------------
-        # PATCH 3: fromMe message handling (allow Self-Chat in bot mode)
-        # ----------------------------------------------------
-        old_fromme_block = """      // Handle fromMe messages based on mode
-      if (msg.key.fromMe) {
-        if (isGroup || chatId.includes('status')) continue;
+    print("\n" + "=" * 60)
+    print("📝 RESUMO DAS PATCHES:")
+    print("=" * 60)
+    print("""
+1. botPaused STATE PERSISTENCE
+   - O estado de pausa do bot é salvo em bot_state.json
+   - Suporta reinicializações sem perder o estado
 
-        if (WHATSAPP_MODE === 'bot') {
-          // Bot mode: separate number. ALL fromMe are echo-backs of our own replies — skip.
-          continue;
-        }
+2. /bot-status ENDPOINT
+   - GET /bot-status retorna { botPaused, uptime }
+   - O plugin whatsapp-manager consulta antes de processar
 
-        // Self-chat mode: only allow messages in the user's own self-chat
-        // WhatsApp now uses LID (Linked Identity Device) format: 67427329167522@lid
-        // AND classic format: 34652029134@s.whatsapp.net
-        // sock.user has both: { id: "number:10@s.whatsapp.net", lid: "lid_number:10@lid" }
-        const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const chatNumber = chatId.replace(/@.*/, '');
-        const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-        if (!isSelfChat) continue;
-      }"""
+3. stop_bot / start_bot COMMANDS
+   - Comandos: stop_bot, start_bot (case-insensitive)
+   - Aliases: !pausar, !parar, !retomar, !iniciar
+   - Funciona de qualquer chat para o dono
 
-        new_fromme_block = """      // Handle fromMe messages based on mode
-      if (msg.key.fromMe) {
-        if (isGroup || chatId.includes('status')) continue;
+4. isOwner CHECK COM myNumber E myLid
+   - Usa ambos números para identificar o dono
+   - Suporta formato LID do WhatsApp
 
-        // Self-chat / Bot / Mixed mode: only allow messages in the user's own self-chat.
-        // For bot/mixed mode, other fromMe are echo-backs of our own replies to clients — skip.
-        const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const chatNumber = chatId.replace(/@.*/, '');
-        const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-        if (!isSelfChat) continue;
-      }"""
+5. fromMe FILTER
+   - Permite comandos do dono mesmo fora do self-chat
+   - Verifica se é comando de bot antes de continuar
 
-        if old_fromme_block in content:
-            content = content.replace(old_fromme_block, new_fromme_block)
-            print("  ✓ Bloco 'fromMe' atualizado (Modo Misto)")
-        elif new_fromme_block in content or "Self-chat / Bot / Mixed mode" in content:
-            print("  w Bloco 'fromMe' já estava atualizado")
-        else:
-            print("  ⚠️ Bloco 'fromMe' não encontrado exatamente (aviso)")
-
-        # ----------------------------------------------------
-        # PATCH 4: stop_bot / start_bot Commands
-        # ----------------------------------------------------
-        old_fromme_check = """        // Process self-chat commands to pause/resume bot for other clients
-        const messageContent = getMessageContent(msg);
-        const text = (messageContent?.conversation || messageContent?.extendedTextMessage?.text || '').trim();
-        if (text === '!pausar' || text === '!parar') {"""
-
-        new_fromme_check = """        // Process self-chat commands to pause/resume bot for other clients
-        const messageContent = getMessageContent(msg);
-        const text = (messageContent?.conversation || messageContent?.extendedTextMessage?.text || '').trim();
-        const textLower = text.toLowerCase();
-        if (textLower === 'stop_bot' || textLower === '!pausar' || textLower === '!parar') {"""
-
-        old_resume_check = """        if (text === '!retomar' || text === '!iniciar') {"""
-        new_resume_check = """        if (textLower === 'start_bot' || textLower === '!retomar' || textLower === '!iniciar') {"""
-
-        if old_fromme_check in content:
-            content = content.replace(old_fromme_check, new_fromme_check)
-            print("  ✓ Comandos stop_bot adicionados")
-        elif "textLower ===" in content:
-            print("  w Comandos stop_bot já estavam integrados")
-
-        if old_resume_check in content:
-            content = content.replace(old_resume_check, new_resume_check)
-            print("  ✓ Comandos start_bot adicionados")
-
-        # Salvar as alterações
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        patched_any = True
-        print(f"🎉 Patch aplicado com sucesso em: {path}")
-
-    if patched_any:
-        print("\n" + "=" * 60)
-        print("🔥 PROCEDIMENTO COMPLEMENTAR PARA O SEU ALUNO:")
-        print("1. Peça para o aluno rodar no terminal do container:")
-        print("   pkill -f bridge.js")
-        print("   (Isso força o reinício do robô com as novas regras)")
-        print("\n2. Peça para o aluno configurar o arquivo SOUL.md")
-        print("   com as instruções de 'Agente de Dupla Personalidade'.")
-        print("=" * 60)
-    else:
-        print("\n❌ Nenhum arquivo bridge.js foi encontrado. Certifique-se de que o WhatsApp está instalado e pareado no Hermes.")
+6. SIGNATURE STRIPPER
+   - Remove e-mails e assinaturas como "Abraços, André"
+   - Mantém as mensagens mais limpas
+""")
 
 if __name__ == "__main__":
     main()
