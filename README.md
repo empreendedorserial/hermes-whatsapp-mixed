@@ -418,6 +418,22 @@ Depois de parear o seu WhatsApp no Hermes Agent, você pode controlá-lo enviand
 
 ---
 
+## 🤖 Estado do Bot (bot_paused) e Persistência
+
+O sistema mantém o estado de pausa do bot **mesmo após reinicializações**:
+
+* **Arquivo de estado:** `/root/.hermes/whatsapp/session/bot_state.json`
+* **Endpoint HTTP:** `GET /bot-status` — retorna `{ botPaused, uptime }`
+* O plugin `whatsapp-manager` consulta `/bot-status` antes de processar mensagens de clientes
+* Se o bot está pausado, mensagens de clientes são ignoradas silenciosamente
+
+### Como funciona:
+1. Quando você envia `stop_bot`, o estado `botPaused: true` é salvo no arquivo `bot_state.json`
+2. Se o container é reiniciado, o `loadBotState()` restaura o estado ao iniciar a bridge
+3. O `whatsapp-manager`插件 verifica `/bot-status` e só entrega mensagens se `botPaused === false`
+
+---
+
 ## 👥 Configuração Avançada de Múltiplos Perfis (Profiles Nativo) 🚀
 
 Se você deseja ter **agentes totalmente independentes** rodando ao mesmo tempo (por exemplo: um perfil focado em ser seu Assistente Técnico Pessoal, outro focado 100% no Atendimento de Clientes no WhatsApp, e um terceiro focado exclusivamente em Suporte por E-mail), você pode usar o sistema nativo de **Perfis (Profiles)** do Hermes!
