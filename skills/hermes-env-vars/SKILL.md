@@ -6,83 +6,41 @@ category: devops
 
 # Hermes Agent — Variáveis de Ambiente
 
-Guia de referência rápida para encontrar e configurar variáveis de ambiente no Portainer.
+**Resumo:** Este é um reference rápido. Para documentação completa da arquitetura, consulte `hermes-architecture`.
 
----
+## Variáveis por Plataforma
 
-## Como identificar variáveis disponíveis no container
+| Plataforma | Variáveis | Método | Status |
+|------------|-----------|--------|--------|
+| WhatsApp | `WHATSAPP_*` | Baileys | ✅ Configurado |
+| E-mail | `GOOGLE_CLIENT_*` | Gmail API (OAuth2) via support_agent.py | ✅ Configurado |
+| Gemini STT/Vision | `GOOGLE_CLIENT_*` | Google OAuth API | ⚠️ Billing pode estar bloqueado |
+
+## Como verificar
 
 ```bash
-# Lista todas variáveis (filtrado por categoria)
-python3 -c "import os; [print(k) for k,v in os.environ.items()]"
+# Todas plataformas
+python3 -c "import os; print(sorted([k for k in os.environ.keys() if any(x in k for x in ['WHATSAPP','EMAIL','GOOGLE','IMAP','SMTP'])]))"
 
-# Filtrar por plataforma
-python3 -c "import os; [print(k) for k,v in os.environ.items() if 'WHATSAPP' in k.upper()]"
-python3 -c "import os; [print(k) for k,v in os.environ.items() if 'EMAIL' in k.upper() or 'IMAP' in k.upper() or 'SMTP' in k.upper()]"
-python3 -c "import os; [print(k) for k,v in os.environ.items() if 'GOOGLE' in k.upper()]"
+# WhatsApp
+ps aux | grep bridge | grep -v grep
+
+# Email
+tail -5 /opt/data/support_agent.log 2>/dev/null
 ```
 
----
+## E-mail (Gmail API — NÃO IMAP/SMTP)
 
-## WhatsApp
+O sistema de email usa **Google Gmail API** via `support_agent.py`, não IMAP/SMTP nem himalaya.
 
-**Localização:** `/opt/data/.hermes/platforms/whatsapp/bridge.log`
+Variáveis: `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (mesmas do Gemini).
 
-**Variáveis esperadas (Portainer):**
-- `WHATSAPP_ENABLED=true`
-- `WHATSAPP_OWNER_NUMBER=5586981612061`
-- `WHATSAPP_MODE=mixed`
-- `WHATSAPP_BRIDGE_PORT` (opcional)
-
-**Verificação:**
+Verificar status:
 ```bash
-python3 -c "import os; print([k for k in os.environ.keys() if 'WHATSAPP' in k.upper()])"
+cd /opt/data && PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 .hermes/scripts/support_agent.py
 ```
 
----
-
-## E-mail (Gmail API / Google Workspace)
-
-**ATENÇÃO:** O sistema de email NÃO usa IMAP/SMTP — usa a **Google Gmail API** via OAuth2, através do script `support_agent.py`.
-
-**Arquitetura:**
-- Script: `~/.hermes/scripts/support_agent.py`
-- API: Google Gmail API (Google Workspace)
-- Autenticação: OAuth2 com web client credentials
--调度: cron job ( watchdog pattern )
-
-**O que foi confirmado:**
-- Variáveis `EMAIL_*` NÃO existem no ambiente container (não é IMAP/SMTP)
-- O sistema de email usa `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (mesmas variáveis do Gemini)
-- Não é o adapter `email.py` do Hermes — é um sistema separado
-
-**Variáveis esperadas (Portainer):**
-- `GOOGLE_CLIENT_ID` — ID do cliente OAuth (mesma variável para Gmail API e Gemini)
-- `GOOGLE_CLIENT_SECRET` — Secret do cliente OAuth (mesma variável para Gmail API e Gemini)
-
-**Observação:** O `support_agent.py` foi diseñado para usar OAuth2 web client credentials. a mesma `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` que alimentam o Gemini STT também alimentam o sistema de email.
-
-**Verificação:**
-```bash
-python3 -c "import os; print([k for k in os.environ.keys() if any(x in k for x in ['GOOGLE','CLIENT'])])"
-```
-
----
-
-## Google OAuth ( Gemini / Google AI )
-
-**Essas variáveis são compartilhadas com o sistema de email Gmail API.**
-
-**Variáveis esperadas (Portainer):**
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-
-**Usado por:**
-- **Gmail API** — sistema de auto-resposta de suporte (support_agent.py)
-- **Gemini** — transcrição de áudio/STT e vision
-
-**Status:** ⚠️ Configurado, mas billing do Gemini pode estar bloqueado (429 RESOURCE_EXHAUSTED).
-
+> **Nota:** Detalhes completos da arquitetura de email, fluxo do sistema, e resolução de problemas estão em `hermes-architecture`.
 ---
 
 ## Resumo

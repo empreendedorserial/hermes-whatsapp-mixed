@@ -6,6 +6,14 @@ category: devops
 
 # Arquitetura do Hermes Agent
 
+**📌 Fonte de verdade** — Este é o documento completo de referência. Outras skills resumem seções daqui.
+
+**Skills relacionadas:**
+- `hermes-env-vars` — resumo rápido de variáveis por plataforma
+- `whatsapp-bot-env-vars` — operação WhatsApp (dual-mode, startup, DB)
+- `messaging-gateway-customization` — customização avançada (plugins, patching, pitfalls)
+- `himalaya` — CLI IMAP/SMTP (⚠️ NÃO é o sistema ativo de email — ver nota no topo)
+
 Guia completo de referência sobre como o sistema funciona: onde estão as credenciais, como cada plataforma se conecta, e como a informação flui entre os componentes.
 
 ---
@@ -97,6 +105,12 @@ python3 -c "import os; [print(k,'=',v[:30]+'...') for k,v in os.environ.items() 
 4. Para cada e-mail, verifica se é auto-resposta, se já foi respondido, etc.
 5. Se precisar responder: carrega `support_rules.md` + `SOUL_EMAIL.md` → chama MiniMax via API → envia resposta
 6. Se não houver e-mails para processar: saída silenciosa (sem notificação)
+
+**Como rodar manualmente:**
+```bash
+cd /opt/data && PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 .hermes/scripts/support_agent.py
+```
+Nota: `python-dotenv` só existe no venv do Hermes (`/opt/hermes/.venv`), não no Python global do container.
 
 ---
 
@@ -278,9 +292,27 @@ cat /opt/data/.hermes/auth.json | python3 -c "import json,sys; d=json.load(sys.s
 ## Problemas Comuns e Diagnóstico
 
 ### Email respondendo em 3ª pessoa (ele/ela)
-- **Causa:** SOUL_EMAIL.md mal configurado (diz "assistente de IA" ou "próprio André")
-- **Solução:** Declarar "equipe de suporte do André Alencar" em 1ª pessoa plural
-- **Arquivo:** `/opt/data/.hermes/profiles/email/SOUL.md`
+- **Causa:** TWO bugs combinados:
+  1. `support_agent.py` linha ~113: o prefixo do system prompt dizia `"Você é um assistente de suporte"` (genérico), não `"Você é a equipe de suporte do André Alencar respondendo por e-mail"`
+  2. `support_agent.py` parsing: MiniMax devolve blocks na ordem `thinking` PRIMEIRO, `text` DEPOIS. O código antigo pegava `block[0]` (sempre `thinking` = raciocínio interno), não a resposta real.
+- **Solução:** Corrigir AMBOS:
+  - System prompt: `"Você é a equipe de suporte do André Alencar respondendo por e-mail. Ignore..."`
+  - Parsing: iterar pelos blocks e priorizar `text` sobre `thinking`
+- **Código correto do parsing:**
+  ```python
+  for block in content:
+      if block.get("type") == "text":
+          return block.get("text", "")
+  for block in content:
+      if block.get("type") == "thinking":
+          return block.get("thinking", "")  # fallback
+  ```
+- **Arquivos:** `/opt/data/.hermes/scripts/support_agent.py`
+
+### Email sendo enviado 2 vezes
+- **Causa:** O script foi executado múltiplas vezes em paralelo (cron overlapping) ou threads duplicadas no loop
+- **Verificação:** `grep "Enviando resposta" /opt/data/support_agent.log` — se aparecer 2x para mesmo msg_id, é este bug
+- **Arquivo:** `/opt/data/.hermes/scripts/support_agent.py`
 
 ### WhatsApp respondendo como bot
 - **Causa:** SOUL_whatsapp.md mal configurado
@@ -299,3 +331,24 @@ cat /opt/data/.hermes/auth.json | python3 -c "import json,sys; d=json.load(sys.s
 ### Credenciais não aparecem no ambiente
 - **Causa:** Reinício do container wipeou variáveis temporárias
 - **Solução:** Verificar no Portainer se as variáveis estão configuradas no container
+
+### GitHub push: token removido do remote URL
+- **Causa:** Após `git remote set-url origin https://github.com/...` (sem token), o push falha com `Authentication failed`
+- **Sintoma:** `remote: Invalid username or token` ao fazer git push
+- **Solução:** Re-adicionar o token temporariamente:
+  ```bash
+  git remote set-url origin https://TOKEN@github.com/user/repo.git
+  git push origin main
+  # Imediatamente depois:
+  git remote set-url origin https://github.com/user/repo.git
+  ```
+- **Segurança:** Após push, SEMPRE remover token do remote URL (já está no `.git-credentials` local)
+
+### Python dotenv não encontrado ao rodar scripts manualmente
+- **Sintoma:** `ModuleNotFoundError: No module named 'dotenv'`
+- **Causa:** `python-dotenv` só existe no venv do Hermes (`/opt/hermes/.venv`), não no Python global do container
+- **Solução:** Usar PYTHONPATH:
+  ```bash
+  PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 /opt/data/.hermes/scripts/support_agent.py
+  ```
+- **Arquivo:** `/opt/data/.hermes/scripts/support_agent.py`
