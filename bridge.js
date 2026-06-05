@@ -354,7 +354,8 @@ async function startSocket() {
           saveBotState();
           console.log('⏸️ Bot paused by owner command.');
           try {
-            await sendWithTimeout(chatId, { text: '⏸️ *Atendimento do WhatsApp pausado.* Os clientes não receberão respostas da IA a partir de agora.' });
+            const sent = await sendWithTimeout(chatId, { text: '⏸️ *Atendimento do WhatsApp pausado.* Os clientes não receberão respostas da IA a partir de agora.' });
+            trackSentMessageId(sent);
           } catch (err) {
             console.error('Failed to send pause response:', err.message);
           }
@@ -362,9 +363,11 @@ async function startSocket() {
         } else if (['start_bot', '!retomar', '!iniciar'].includes(textLower)) {
           botPaused = false;
           saveBotState();
-          console.log('▶️ Bot activated by owner command.');
+          delete silencedChats[chatId]; // Unsilence this specific chat!
+          console.log(`▶️ Bot activated by owner command. Chat ${chatId} unsilenced.`);
           try {
-            await sendWithTimeout(chatId, { text: '▶️ *Atendimento do WhatsApp ativo.* A IA voltará a responder os clientes automaticamente.' });
+            const sent = await sendWithTimeout(chatId, { text: '▶️ *Atendimento do WhatsApp ativo.* A IA voltará a responder os clientes automaticamente.' });
+            trackSentMessageId(sent);
           } catch (err) {
             console.error('Failed to send resume response:', err.message);
           }
@@ -404,8 +407,18 @@ async function startSocket() {
         const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
 
         if (!isSelfChat && !recentlySentIds.has(msg.key.id)) {
-          silencedChats[chatId] = Date.now() + SILENCE_DURATION_MS;
-          console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          // If the message is a command (starts with ! or is start_bot / stop_bot), do NOT silence the chat.
+          const isCommand = textLower.startsWith('!') || ['start_bot', 'stop_bot'].includes(textLower);
+          if (isCommand) {
+            console.log(`ℹ️ Chat ${chatId} não silenciado porque a mensagem é um comando: "${textLower}"`);
+            if (['start_bot', '!retomar', '!iniciar', '!suporte on'].includes(textLower)) {
+              delete silencedChats[chatId];
+              console.log(`🔊 Chat ${chatId} reativado/unsilenced via comando.`);
+            }
+          } else {
+            silencedChats[chatId] = Date.now() + SILENCE_DURATION_MS;
+            console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} minutos (dono enviou mensagem manualmente).`);
+          }
         }
 
         if (WHATSAPP_MODE === 'bot' && !isSelfChat) {
