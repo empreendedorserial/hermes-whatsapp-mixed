@@ -3,13 +3,17 @@
 """
 Documentação de Patches do Bridge.js - Hermes Agent (Modo Misto WhatsApp)
 
-Este arquivo documenta as modificações JÁ APLICADAS ao bridge.js do WhatsApp
+Este arquivo aplica e documenta as modificações do bridge.js do WhatsApp
 para o funcionamento do "Modo Misto Híbrido" (Auto-respostas para clientes
 e assistente pessoal para o dono).
 
-Estas patches são aplicadas automaticamente pelo setup.sh na primeira vez que
-você roda a sincronização. Este arquivo serve apenas como referência do que
-foi modificado e por quê.
+As correções incluem:
+- bridge ouvindo em 0.0.0.0 para o Traefik conseguir alcançar a porta 3000;
+- package.json com "type": "module" para eliminar o warning do Node;
+- endpoint /whatsapp/qr e /whatsapp/status mantidos para pareamento sem Telegram.
+
+Este script é executado pelo setup.sh durante a sincronização para manter o
+bridge consistente com a stack publicada.
 
 MODIFICAÇÕES DOCUMENTADAS:
 ==========================
