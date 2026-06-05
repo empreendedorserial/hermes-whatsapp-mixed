@@ -1,0 +1,156 @@
+---
+name: deploy-plugin
+description: "Realiza o deploy do plugin whatsapp-manager no servidor Hermes — commit, push, pull e restart do container."
+category: deploy
+---
+
+# Deploy do Plugin WhatsApp Manager
+
+Esta skill guia o processo completo de deploy de alterações no plugin `whatsapp-manager` para o servidor Hermes em produção.
+
+---
+
+## Quando usar esta skill
+
+Use quando o usuário disser algo como:
+- "faz o deploy"
+- "publica as alterações"
+- "sobe pro servidor"
+- "atualiza o plugin"
+- "deploy do whatsapp"
+- "deploy do plugin"
+- "manda pro hermes"
+
+---
+
+## Pré-requisitos
+
+- O repositório local está em: `/Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed`
+- O remote `origin` aponta para `github.com/empreendedorserial/hermes-whatsapp-mixed`
+- O servidor Hermes tem o plugin clonado em `/opt/data/.hermes/plugins/whatsapp-manager`
+- Acesso ao Portainer em `https://hermes.empreendedorserial.com/portainer/`
+
+---
+
+## Etapa 1 — Commit e Push no GitHub
+
+### 1.1 Verificar o que mudou
+
+```bash
+cd /Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed && git status
+```
+
+Revisar as alterações e confirmar com o usuário se está tudo certo.
+
+### 1.2 Adicionar e commitar
+
+```bash
+cd /Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed && git add -A && git commit -m "MENSAGEM_DO_COMMIT"
+```
+
+> **Regra:** A mensagem de commit deve ser descritiva e em português. Exemplos:
+> - `fix: bot continuava respondendo após stop_bot`
+> - `feat: adiciona delay na primeira resposta ao cliente`
+> - `chore: atualiza SOUL_WHATSAPP.md com novas regras`
+
+### 1.3 Push para o GitHub
+
+```bash
+cd /Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed && git push origin main
+```
+
+Se der erro de divergência, usar `git pull --rebase origin main` antes do push.
+
+---
+
+## Etapa 2 — Git Pull no Hermes (aba Plugins)
+
+O Hermes Agent roda no container Docker e o plugin é carregado de `/opt/data/.hermes/plugins/whatsapp-manager`.
+
+### 2.1 Acessar o terminal do container
+
+Abra o Portainer:
+1. Acesse `https://hermes.empreendedorserial.com/portainer/`
+2. Vá em **Containers** → clique no container `hermes` (ou `hermes-agent`)
+3. Clique em **Console** → selecione `/bin/bash` → **Connect**
+
+### 2.2 Executar o git pull
+
+No terminal do container:
+
+```bash
+cd /opt/data/.hermes/plugins/whatsapp-manager && git pull origin main
+```
+
+> **Verificar:** Confirme que os arquivos alterados aparecem na saída do `git pull`. Se aparecer `Already up to date.`, o push da Etapa 1 pode não ter sido concluído.
+
+---
+
+## Etapa 3 — Restart do Container
+
+As alterações no plugin só são carregadas quando o Hermes reinicia.
+
+### Opção A — Pelo Portainer (Recomendado)
+
+1. No Portainer, vá em **Containers**
+2. Selecione o container `hermes` (ou `hermes-agent`)
+3. Clique em **Restart**
+4. Aguarde o container subir (status `running`)
+
+### Opção B — Pelo Portainer Stack
+
+1. Vá em **Stacks** → selecione a stack do Hermes
+2. Clique em **Update the stack** → **Update**
+
+### Opção C — Via CLI (se tiver acesso SSH ao host)
+
+```bash
+docker restart hermes
+```
+
+---
+
+## Verificação Pós-Deploy
+
+### Conferir se o container subiu
+
+No Portainer → Containers → verificar que o status é `running` e que o uptime é recente (poucos segundos/minutos).
+
+### Conferir logs do plugin
+
+No terminal do container (via Portainer Console):
+
+```bash
+grep "whatsapp-manager" /opt/data/.hermes/logs/hermes.log | tail -20
+```
+
+Procurar por:
+- `✓ bridge.js atualizado` — confirma que o bridge foi copiado
+- `✓ Skills registradas` — confirma que as skills carregaram
+- Ausência de erros `⚠️` ou `❌`
+
+### Testar o bot
+
+Envie `start_bot` ou `stop_bot` no WhatsApp para confirmar que o bridge está respondendo.
+
+---
+
+## Troubleshooting
+
+| Problema | Solução |
+|----------|---------|
+| `git pull` dá conflito no container | `cd /opt/data/.hermes/plugins/whatsapp-manager && git reset --hard origin/main` |
+| Container não sobe após restart | Verificar logs no Portainer → Container → Logs |
+| Plugin não carrega as alterações | Conferir se o `git pull` trouxe os arquivos e se o container foi reiniciado |
+| `bridge.js` não atualiza no bridge | O `register()` do plugin copia automaticamente no boot — verificar logs por `bridge.js atualizado` |
+| Push rejeitado por divergência | `git pull --rebase origin main && git push origin main` |
+
+---
+
+## Notas Importantes
+
+- O **branch principal** é `main`
+- O plugin é carregado automaticamente pelo Hermes no boot via `register()` em `__init__.py`
+- O `bridge.js` é copiado automaticamente do plugin para `/opt/data/.hermes/platforms/whatsapp/bridge/` durante o `register()`
+- Arquivos como `SOUL_WHATSAPP.md`, `support_rules.md` e `SOUL_EMAIL.md` são baixados automaticamente na primeira inicialização se não existirem no volume
+- O `bot_state.json` (estado de pause do bot) é persistido e **não é afetado** pelo restart

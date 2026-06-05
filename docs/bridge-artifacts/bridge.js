@@ -390,6 +390,15 @@ async function startSocket() {
         }
       }
 
+      // If bot is paused, drop messages from non-owner users immediately
+      // (don't enqueue them — the Python gateway should never see them)
+      if (botPaused && !isOwner) {
+        if (WHATSAPP_DEBUG) {
+          try { console.log(JSON.stringify({ event: 'ignored', reason: 'bot_paused', chatId, senderId })); } catch {}
+        }
+        continue;
+      }
+
       // Handle fromMe messages based on mode
       if (msg.key.fromMe) {
         if (isGroup || chatId.includes('status')) continue;
