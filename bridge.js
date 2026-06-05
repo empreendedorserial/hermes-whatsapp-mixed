@@ -232,52 +232,6 @@ async function startSocket() {
 
   sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
 
-  sock.ev.on('messages.update', (updates) => {
-    for (const update of updates) {
-      // status >= 3 covers DELIVERY_ACK(3), READ(4), PLAYED(5)
-      const st = update.update?.status;
-      const isReadOrDelivered = (typeof st === 'number' && st >= 3) ||
-        update.update?.read === true ||
-        st === 'read' || st === 'delivered';
-      if (update.update && isReadOrDelivered) {
-        const chatId = update.key.remoteJid;
-        if (!chatId) continue;
-        if (chatId.includes('status') || chatId.endsWith('@g.us')) continue;
-        
-        const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const chatNumber = chatId.replace(/@.*/, '');
-        const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-        if (isSelfChat) continue;
-
-        silencedChats[chatId] = Date.now() + SILENCE_DURATION_MS;
-        console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (messages.update status=${st}).`);
-      }
-    }
-  });
-
-  // Detect read receipts — fires when owner reads client messages on any device
-  sock.ev.on('message-receipt.update', (updates) => {
-    for (const update of updates) {
-      const chatId = update.key?.remoteJid;
-      if (!chatId) continue;
-      if (chatId.includes('status') || chatId.endsWith('@g.us')) continue;
-
-      const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-      const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-      const chatNumber = chatId.replace(/@.*/, '');
-      const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-      if (isSelfChat) continue;
-
-      // Check if any receipt is a read receipt
-      const receipts = update.receipt ? [update.receipt] : (update.userReceipt || []);
-      const hasRead = receipts.some(r => r.readTimestamp || r.receiptTimestamp);
-      if (hasRead) {
-        silencedChats[chatId] = Date.now() + SILENCE_DURATION_MS;
-        console.log(`🔇 Chat ${chatId} silenciado por ${WHATSAPP_SILENCE_DURATION_MIN} min (message-receipt.update).`);
-      }
-    }
-  });
 
   sock.ev.on('chats.update', (updates) => {
     for (const update of updates) {
