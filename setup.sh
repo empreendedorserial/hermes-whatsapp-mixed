@@ -58,7 +58,13 @@ else
 fi
 
 echo "⏳ 2. Baixando e aplicando o Patch do WhatsApp..."
-# Baixa e executa o patch da ponte do WhatsApp
+# Sincroniza o arquivo bridge.js modificado diretamente do repositório
+mkdir -p "/opt/data/.hermes/platforms/whatsapp/bridge"
+curl -sSL "$RAW_URL/docs/bridge-artifacts/bridge.js" -o "/opt/data/.hermes/platforms/whatsapp/bridge/bridge.js"
+curl -sSL "$RAW_URL/docs/bridge-artifacts/package.json" -o "/opt/data/.hermes/platforms/whatsapp/bridge/package.json"
+echo "  ✓ Arquivos bridge.js e package.json sincronizados."
+
+# Baixa e executa o patch_whatsapp.py para verificar a integridade
 curl -sSL "$RAW_URL/patch_whatsapp.py" -o "/tmp/patch_whatsapp.py"
 python3 /tmp/patch_whatsapp.py
 

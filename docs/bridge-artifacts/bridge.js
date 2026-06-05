@@ -224,6 +224,17 @@ async function startSocket() {
 
       if (reason === DisconnectReason.loggedOut) {
         console.log('❌ Logged out. Delete session and restart to re-authenticate.');
+        try {
+          if (existsSync(SESSION_DIR)) {
+            const files = readdirSync(SESSION_DIR);
+            for (const file of files) {
+              unlinkSync(path.join(SESSION_DIR, file));
+            }
+            console.log('🧹 Session directory cleaned automatically.');
+          }
+        } catch (err) {
+          console.error('⚠️ Failed to clean session directory:', err.message);
+        }
         process.exit(1);
       } else {
         // 515 = restart requested (common after pairing). Always reconnect.
