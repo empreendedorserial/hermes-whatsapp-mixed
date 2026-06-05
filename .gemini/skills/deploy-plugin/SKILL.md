@@ -63,26 +63,22 @@ Se der erro de divergência, usar `git pull --rebase origin main` antes do push.
 
 ---
 
-## Etapa 2 — Git Pull no Hermes (aba Plugins)
+## Etapa 2 — Git Pull no Dashboard do Hermes
 
-O Hermes Agent roda no container Docker e o plugin é carregado de `/opt/data/.hermes/plugins/whatsapp-manager`.
+O plugin é atualizado diretamente pelo painel do Hermes, na aba de Plugins.
 
-### 2.1 Acessar o terminal do container
+### 2.1 Acessar o Dashboard do Hermes
 
-Abra o Portainer:
-1. Acesse `https://hermes.empreendedorserial.com/portainer/`
-2. Vá em **Containers** → clique no container `hermes` (ou `hermes-agent`)
-3. Clique em **Console** → selecione `/bin/bash` → **Connect**
+1. Acesse `https://hermes.empreendedorserial.com/`
+2. Navegue até a aba **Plugins**
 
-### 2.2 Executar o git pull
+### 2.2 Atualizar o plugin
 
-No terminal do container:
+1. Localize o plugin `whatsapp-manager` na lista
+2. Clique no botão de **Pull** / **Atualizar** do plugin
+3. Aguarde a confirmação de que o pull foi concluído
 
-```bash
-cd /opt/data/.hermes/plugins/whatsapp-manager && git pull origin main
-```
-
-> **Verificar:** Confirme que os arquivos alterados aparecem na saída do `git pull`. Se aparecer `Already up to date.`, o push da Etapa 1 pode não ter sido concluído.
+> **Verificar:** Confirme que a mensagem de sucesso aparece. Se aparecer `Already up to date`, o push da Etapa 1 pode não ter sido concluído.
 
 ---
 
