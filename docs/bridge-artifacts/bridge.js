@@ -23,7 +23,7 @@ import express from 'express';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -226,10 +226,8 @@ async function startSocket() {
         console.log('❌ Logged out. Delete session and restart to re-authenticate.');
         try {
           if (existsSync(SESSION_DIR)) {
-            const files = readdirSync(SESSION_DIR);
-            for (const file of files) {
-              unlinkSync(path.join(SESSION_DIR, file));
-            }
+            rmSync(SESSION_DIR, { recursive: true, force: true });
+            mkdirSync(SESSION_DIR, { recursive: true });
             console.log('🧹 Session directory cleaned automatically.');
           }
         } catch (err) {
