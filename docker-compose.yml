@@ -186,7 +186,7 @@ services:
 
   whatsapp-bridge:
     image: nousresearch/hermes-agent:v2026.5.16
-    command: ["bash", "-lc", "while [ ! -f /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js ]; do sleep 1; done && exec node /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js --port 3000 --session /opt/data/.hermes/platforms/whatsapp/session --mode bot"]
+    command: ["bash", "-c", "while [ ! -f /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js ]; do sleep 1; done && exec node /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js --port 3000 --session /opt/data/.hermes/platforms/whatsapp/session --mode bot"]
 
     volumes:
       - hermes_agent_hermes_data_v5:/opt/data
@@ -194,6 +194,7 @@ services:
     environment:
       - HOME=/opt/data
       - HERMES_HOME=/opt/data/.hermes
+      - NODE_PATH=/opt/hermes/scripts/whatsapp-bridge/node_modules
       - TZ=${TZ:-America/Sao_Paulo}
       - HERMES_DASH_HOST=${HERMES_DASH_HOST}
       - WHATSAPP_BRIDGE_HOST=${HERMES_DASH_HOST}
