@@ -56,6 +56,7 @@
 services:
   hermes:
     image: nousresearch/hermes-agent:v2026.5.16
+    # Bootstrap externo/visual: plugins ficam para o dashboard do Hermes.
     command: gateway run
 
     volumes:
