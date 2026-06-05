@@ -1,3 +1,9 @@
 name: whatsapp-manager
 version: "1.1"
-description: "Gerencia o comportamento do WhatsApp: assistente pessoal para o André com roteamento inteligente de modelos (Gemini 1.5 Pro), suporte de clientes (Gemini 3.5 Flash) via SOUL_WHATSAPP.md, e controle de comandos."
+description: |
+  Gerencia o comportamento do WhatsApp: assistente pessoal para o André com roteamento inteligente de modelos (Gemini 1.5 Pro), suporte de clientes (Gemini 3.5 Flash) via SOUL_WHATSAPP.md, e controle de comandos.
+
+  📱 QR Code para parear o WhatsApp:
+    • PNG:    https://hermes.empreendedorserial.com/whatsapp/qr?format=png
+    • SVG:    https://hermes.empreendedorserial.com/whatsapp/qr?format=svg
+    • Status: https://hermes.empreendedorserial.com/whatsapp/status
