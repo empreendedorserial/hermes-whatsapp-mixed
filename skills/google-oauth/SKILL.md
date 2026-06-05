@@ -61,15 +61,87 @@ Execute o script abaixo **no container** para gerar a URL de autorização:
 
 ```bash
 PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 - <<'EOF'
-import os, json
-from pathlib import Path
+import os, urllib.parse
 
-# Carregar .env se necessário
 try:
     from dotenv import load_dotenv
     load_dotenv("/opt/data/.env")
 except ImportError:
     pass
+
+client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+if not client_id:
+    print("❌ GOOGLE_CLIENT_ID não configurado.")
+    exit(1)
+
+SCOPES = " ".join([
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify",
+])
+
+# Usa OOB: o Google exibe o código na página, sem redirect para localhost
+params = urllib.parse.urlencode({
+    "client_id": client_id,
+    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+    "response_type": "code",
+    "scope": SCOPES,
+    "access_type": "offline",
+    "prompt": "consent",
+})
+auth_url = f"https://accounts.google.com/o/oauth2/auth?{params}"
+
+print("\n" + "="*60)
+print("👉 CLIQUE NESTE LINK PARA AUTORIZAR O GMAIL:")
+print("="*60)
+print(auth_url)
+print("="*60)
+print("\nO Google vai mostrar um CÓDIGO na tela (ex: 4/0Adk...)")
+print("")
+print("Após autorizar:")
+print("  1. O browser vai abrir uma página com ERRO (site inacessível) — isso é normal!")
+print("  2. Copie a URL completa da barra de endereço do browser")
+print("  3. Envie essa URL para o agente")
+EOF
+```
+
+**O agente deve:**
+1. Apresentar a URL como link clicável
+2. Avisar o usuário com esta mensagem exata:
+
+> *"Clique no link e autorize. Depois da autorização o browser vai abrir uma página com erro (é normal, esperado). Copie a URL completa da barra de endereço do browser e me manda aqui."*
+
+---
+
+### Passo 4 — Receber e processar (código ou URL)
+
+**REGRA DO AGENTE:** Assim que o usuário mandar qualquer coisa após a autorização, extrair o `code` e executar:
+- Se contiver `code=` (URL completa como `http://localhost:8080/?state=...&code=4/0Adk...`): extrair automaticamente o parâmetro `code`
+- Se começar com `4/`: usar diretamente
+- Substituir `CODIGO_AQUI` no script pelo código extraído e executar
+
+O script extrai o `code` da URL automaticamente:
+
+```bash
+PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 - <<'EOF'
+import os, json, urllib.request, urllib.parse
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv("/opt/data/.env")
+except ImportError:
+    pass
+
+# ← SUBSTITUIR pelo código recebido do usuário (só o code, não a URL)
+AUTH_CODE = "CODIGO_AQUI"
+
+# Se vier URL completa, extrair o code
+if "code=" in AUTH_CODE:
+    parsed = urllib.parse.urlparse(AUTH_CODE)
+    params = urllib.parse.parse_qs(parsed.query)
+    AUTH_CODE = params.get("code", [""])[0]
+    print(f"[info] Código extraído da URL: {AUTH_CODE[:20]}...")
 
 client_id = os.getenv("GOOGLE_CLIENT_ID", "")
 client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -78,106 +150,49 @@ if not client_id or not client_secret:
     print("❌ GOOGLE_CLIENT_ID ou GOOGLE_CLIENT_SECRET não configurados.")
     exit(1)
 
+# Trocar o code por tokens via HTTP direto (sem state/code_verifier)
+payload = urllib.parse.urlencode({
+    "code": AUTH_CODE,
+    "client_id": client_id,
+    "client_secret": client_secret,
+    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+    "grant_type": "authorization_code",
+}).encode()
+
+req = urllib.request.Request(
+    "https://oauth2.googleapis.com/token",
+    data=payload,
+    headers={"Content-Type": "application/x-www-form-urlencoded"},
+    method="POST",
+)
+
 try:
-    from google_auth_oauthlib.flow import Flow
-except ImportError:
-    print("❌ Biblioteca google-auth-oauthlib não encontrada.")
-    print("   Execute: uv pip install --python /opt/hermes/.venv/bin/python google-auth-oauthlib google-api-python-client")
+    with urllib.request.urlopen(req) as resp:
+        token_data = json.loads(resp.read().decode())
+except urllib.error.HTTPError as e:
+    err = json.loads(e.read().decode())
+    print(f"❌ Erro {e.code}: {err.get('error')} — {err.get('error_description')}")
+    print("   Gere uma URL nova (Passo 3) e autorize novamente.")
     exit(1)
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify",
-]
-
-client_config = {
-    "installed": {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-    }
-}
-
-flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri="urn:ietf:wg:oauth:2.0:oob")
-auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-
-print("\n" + "="*60)
-print("👉 CLIQUE NESTE LINK PARA AUTORIZAR O GMAIL:")
-print("="*60)
-print(auth_url)
-print("="*60)
-print("\nApós autorizar, você receberá um código de 4-6 palavras.")
-print("Envie o código de volta para o agente.")
-EOF
-```
-
-**O agente deve copiar a URL gerada e apresentar ao usuário como link clicável.**
-
----
-
-### Passo 4 — Receber o código e salvar o token
-
-Após o usuário colar o código de autorização, execute:
-
-```bash
-PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages python3 - <<'EOF'
-import os, json
-from pathlib import Path
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv("/opt/data/.env")
-except ImportError:
-    pass
-
-# O agente deve substituir CODIGO_AQUI pelo código recebido do usuário
-AUTH_CODE = "CODIGO_AQUI"
-
-client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
-
-from google_auth_oauthlib.flow import Flow
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify",
-]
-
-client_config = {
-    "installed": {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-    }
-}
-
-flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri="urn:ietf:wg:oauth:2.0:oob")
-flow.fetch_token(code=AUTH_CODE)
-creds = flow.credentials
 
 TOKEN_PATH = Path("/opt/data/.hermes/google_token.json")
 TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
 with open(TOKEN_PATH, "w") as f:
     json.dump({
-        "token": creds.token,
-        "refresh_token": creds.refresh_token,
-        "client_id": creds.client_id,
-        "client_secret": creds.client_secret,
-        "scopes": list(creds.scopes or []),
+        "token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scopes": token_data.get("scope", "").split(),
     }, f, indent=2)
 
 print(f"✅ Token salvo em {TOKEN_PATH}")
+print(f"   refresh_token: {'presente' if token_data.get('refresh_token') else 'AUSENTE — gere nova URL'}")
 print("   O support_agent.py agora tem acesso ao Gmail.")
 EOF
 ```
 
-> **Importante:** O agente deve substituir `CODIGO_AQUI` pelo código que o usuário enviou antes de executar.
+> **Se der erro `invalid_grant`:** o código já foi usado ou expirou (validade de ~10 min). Execute o Passo 3 novamente para gerar uma URL nova e autorize de novo.
 
 ---
 
