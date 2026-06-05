@@ -14,6 +14,7 @@ Esse modo permite que seu agente desempenhe duas funções ao mesmo tempo:
 * 🟣 **`docker-compose.easypanel.yml`**: Arquivo adaptado para implantação no Easypanel (sem Swarm, sem Traefik externo — SSL e proxy gerenciados automaticamente).
 * ⚡ **`setup.sh`**: Script de configuração e sincronização de 1 clique que vincula seu servidor ao seu repositório pessoal no GitHub.
 * 🐍 **`patch_whatsapp.py`**: Script de automação universal que reconfigura a ponte do WhatsApp (filtro de assinaturas inteligente e novos comandos).
+* 🔄 **Sincronização automática no deploy**: a stack executa o `setup.sh` ao subir o container principal, mantendo o plugin e as personas sincronizados com o GitHub.
 * ⚙️ **`config.yaml.example`**: Configuração pré-otimizada para alta performance, ativação de memória persistente e prevenção de spam em grupos de WhatsApp.
 * 🔑 **`.env.example`**: Modelo de exemplo para as variáveis de ambiente necessárias (ignorado por segurança pelo `.gitignore` para evitar vazamentos).
 * 👤 **`SOUL.md`**: Persona pré-configurada para o funcionamento do Modo Duplo (Dono vs Clientes).
