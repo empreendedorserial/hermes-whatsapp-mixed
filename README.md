@@ -52,6 +52,26 @@ O robô conta com recursos nativos de controle diretamente pelo WhatsApp:
 
 ---
 
+## 🚀 Como Atualizar / Fazer Deploy do Plugin
+
+Para implantar novas alterações feitas no código deste plugin (como ajustes na bridge ou regras de comportamento):
+
+1. **Commit e Push local:** Envie as alterações locais para a branch principal do GitHub:
+   ```bash
+   git status
+   git add -A
+   git commit -m "MENSAGEM_DESCRITIVA"
+   git push origin main
+   ```
+2. **Atualização no Dashboard do Hermes:**
+   - Acesse o painel web do seu **Hermes Dashboard**.
+   - Vá na aba **Plugins**, localize o plugin `whatsapp-manager` e clique no botão de **Pull / Atualizar**.
+3. **Reinicialização do Contêiner:**
+   - Acesse o painel do **Portainer** ou **Easypanel**.
+   - Vá até o contêiner do Hermes (`hermes-agent`) e clique em **Restart** (Reiniciar) para que o novo código do plugin seja carregado.
+
+---
+
 ## 🐋 Como Fazer Deploy da Stack
 
 Todos os arquivos de deploy de contêineres e configurações avançadas foram movidos para a pasta `/deploy`.

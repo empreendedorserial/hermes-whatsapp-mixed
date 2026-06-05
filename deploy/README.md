@@ -484,6 +484,25 @@ Cada perfil ganha seu próprio painel, chaves de API, banco de dados, memórias 
 
 ---
 
+## 🚀 Como Atualizar / Fazer Deploy do Plugin
+
+Se você fez modificações no código-fonte do plugin (como regras no `bridge.js` ou novas lógicas), o fluxo de atualização segue estas etapas:
+
+1. **Commit e Push no GitHub (Máquina Local):**
+   ```bash
+   git status
+   git add -A
+   git commit -m "MENSAGEM_DO_COMMIT"
+   git push origin main
+   ```
+2. **Pull no Dashboard do Hermes (Painel Web):**
+   - Acesse o painel do seu **Hermes Dashboard** -> aba **Plugins**.
+   - Localize `whatsapp-manager` e clique em **Pull / Atualizar**.
+3. **Reinicialização do Contêiner (Portainer ou Easypanel):**
+   - Vá até a tela de contêineres e reinicie o contêiner `hermes-agent` para que o novo código do plugin seja lido e a nova versão do `bridge.js` seja copiada automaticamente.
+
+---
+
 ## 🔄 Como Reiniciar a Ponte do WhatsApp de Forma Segura
 
 Toda vez que você rodar o script de setup para sincronizar novas regras ou atualizar sua persona, a ponte do WhatsApp precisa ser recarregada para carregar as novas instruções de forma limpa.
