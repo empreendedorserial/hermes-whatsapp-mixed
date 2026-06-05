@@ -193,6 +193,8 @@ services:
       - HOME=/opt/data
       - HERMES_HOME=/opt/data/.hermes
       - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_DASH_HOST=${HERMES_DASH_HOST}
+      - WHATSAPP_BRIDGE_HOST=${HERMES_DASH_HOST}
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER}
