@@ -22,6 +22,72 @@ def save_status(status):
         print(f"[whatsapp-manager] Erro ao salvar status: {e}")
 
 def register(ctx):
+    # Auto-inicialização e cópia dos arquivos da ponte
+    try:
+        plugin_dir = Path(__file__).parent
+        target_bridge_dir = Path("/opt/data/.hermes/platforms/whatsapp/bridge")
+        target_bridge_dir.mkdir(parents=True, exist_ok=True)
+
+        import shutil
+        import urllib.request
+
+        # 1. Copiar bridge.js do plugin para o volume
+        source_bridge = plugin_dir / "bridge.js"
+        target_bridge = target_bridge_dir / "bridge.js"
+        if source_bridge.exists():
+            if not target_bridge.exists() or source_bridge.read_bytes() != target_bridge.read_bytes():
+                shutil.copy2(source_bridge, target_bridge)
+                print(f"[whatsapp-manager] bridge.js atualizado em {target_bridge}")
+
+        # 2. Copiar package.json do plugin para o volume
+        source_pkg = plugin_dir / "package.json"
+        target_pkg = target_bridge_dir / "package.json"
+        if source_pkg.exists():
+            if not target_pkg.exists() or source_pkg.read_bytes() != target_pkg.read_bytes():
+                shutil.copy2(source_pkg, target_pkg)
+                print(f"[whatsapp-manager] package.json atualizado em {target_pkg}")
+
+        # 3. Bootstrap automático de personas e regras (se ausentes no volume)
+        github_user = os.getenv("HERMES_SETUP_GITHUB_USER", "empreendedorserial").strip()
+        raw_base_url = f"https://raw.githubusercontent.com/{github_user}/hermes-whatsapp-mixed/main"
+
+        bootstrap_files = {
+            "/opt/data/SOUL.md": f"{raw_base_url}/SOUL.md",
+            "/opt/data/SOUL_WHATSAPP.md": f"{raw_base_url}/SOUL_WHATSAPP.md",
+            "/opt/data/SOUL_EMAIL.md": f"{raw_base_url}/SOUL_EMAIL.md",
+            "/opt/data/support_rules.md": f"{raw_base_url}/support_rules.md",
+        }
+
+        for path_str, url in bootstrap_files.items():
+            path_obj = Path(path_str)
+            if not path_obj.exists():
+                print(f"[whatsapp-manager] Inicializando {path_str} a partir de {url}...")
+                try:
+                    with urllib.request.urlopen(url, timeout=10) as response:
+                        content = response.read()
+                        path_obj.write_bytes(content)
+                        print(f"[whatsapp-manager] ✓ {path_str} baixado com sucesso.")
+                except Exception as dl_err:
+                    print(f"[whatsapp-manager] ⚠️ Erro ao baixar {path_str}: {dl_err}")
+
+        # Garantir cópia das personas para os respectivos perfis se existirem
+        soul_whatsapp_path = Path("/opt/data/SOUL_WHATSAPP.md")
+        profile_wa_soul = Path("/opt/data/.hermes/profiles/whatsapp/SOUL.md")
+        if soul_whatsapp_path.exists() and not profile_wa_soul.exists():
+            profile_wa_soul.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(soul_whatsapp_path, profile_wa_soul)
+            print(f"[whatsapp-manager] ✓ Copiado SOUL_WHATSAPP.md para perfil de WhatsApp")
+
+        soul_email_path = Path("/opt/data/SOUL_EMAIL.md")
+        profile_em_soul = Path("/opt/data/.hermes/profiles/email/SOUL.md")
+        if soul_email_path.exists() and not profile_em_soul.exists():
+            profile_em_soul.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(soul_email_path, profile_em_soul)
+            print(f"[whatsapp-manager] ✓ Copiado SOUL_EMAIL.md para perfil de E-mail")
+
+    except Exception as setup_err:
+        print(f"[whatsapp-manager] Erro durante o bootstrap automático: {setup_err}")
+
     # Hook 1: pre_gateway_dispatch (Filtro e controle de comandos)
     async def pre_gateway_dispatch(event_type, context):
         event = context.get("event")
