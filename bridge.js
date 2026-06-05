@@ -286,12 +286,6 @@ async function startSocket() {
       if (msg.key.fromMe) {
         if (isGroup || chatId.includes('status')) continue;
 
-        if (WHATSAPP_MODE === 'bot') {
-          // Bot mode: separate number. ALL fromMe are echo-backs of our own replies — skip.
-          continue;
-        }
-
-        // Self-chat mode: only allow messages in the user's own self-chat
         // WhatsApp now uses LID (Linked Identity Device) format: 67427329167522@lid
         // AND classic format: 34652029134@s.whatsapp.net
         // sock.user has both: { id: "number:10@s.whatsapp.net", lid: "lid_number:10@lid" }
@@ -299,6 +293,13 @@ async function startSocket() {
         const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
         const chatNumber = chatId.replace(/@.*/, '');
         const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+
+        if (WHATSAPP_MODE === 'bot' && !isSelfChat) {
+          // Bot mode: separate number. ALL fromMe to other users are echo-backs of our own replies — skip.
+          continue;
+        }
+
+        // Self-chat mode or self-chat in bot mode: only allow messages in the user's own self-chat
         if (!isSelfChat) continue;
       }
 
