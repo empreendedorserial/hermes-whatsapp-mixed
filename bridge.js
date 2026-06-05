@@ -53,7 +53,7 @@ const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cac
 const PAIR_ONLY = args.includes('--pair-only');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
-const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').trim().replace(/@.*/, '');
+const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').trim().replace(/@.*/, '').replace(/:.*/, '');
 const WHATSAPP_SILENCE_DURATION_MIN = parseInt(process.env.WHATSAPP_SILENCE_DURATION_MIN || '10', 10);
 const SILENCE_DURATION_MS = WHATSAPP_SILENCE_DURATION_MIN * 60 * 1000;
 const silencedChats = {};
@@ -279,7 +279,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
       (myLid && senderClean === myLid) ||
       (WHATSAPP_OWNER_NUMBER && senderClean === WHATSAPP_OWNER_NUMBER);
 
-    const chatNumber = chatId.replace(/@.*/, '');
+    const chatNumber = chatId.replace(/@.*/, '').replace(/:.*/, '');
     const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
     const isOwnerChat = isSelfChat || (WHATSAPP_OWNER_NUMBER && chatNumber === WHATSAPP_OWNER_NUMBER);
 
@@ -370,7 +370,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
         } catch {}
         continue;
       }
-      if (!matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+      if (!isOwner && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
         try {
           console.log(JSON.stringify({
             event: 'ignored',

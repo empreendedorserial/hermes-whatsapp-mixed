@@ -321,8 +321,8 @@ def register(ctx):
         if not owner_number:
             return None
 
-        clean_sender = sender_id.split("@")[0] if sender_id else ""
-        clean_owner = owner_number.split("@")[0]
+        clean_sender = sender_id.split("@")[0].split(":")[0] if sender_id else ""
+        clean_owner = owner_number.split("@")[0].split(":")[0]
 
         if clean_sender == clean_owner:
             # Assistente Pessoal do André

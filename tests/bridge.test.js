@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 process.env.WHATSAPP_OWNER_NUMBER = '99999';
+process.env.WHATSAPP_ALLOWED_USERS = 'client123';
+process.env.WHATSAPP_MODE = 'bot';
 
 const {
   onChatsUpdate,
@@ -241,5 +243,48 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     assert.strictEqual(getBotPaused(), false, 'Bot should be resumed after start_bot from owner in direct chat');
     assert.ok(mockSock.sentMessages.length > 0, 'Should send resume confirmation message');
     assert.ok(mockSock.sentMessages[0].payload.text.includes('ativo'), 'Confirmation should contain active text');
+  });
+
+  await t.test('8. Owner regular message should bypass the allowlist check and be enqueued', async () => {
+    const ownerJid = '99999@s.whatsapp.net';
+    
+    await onMessagesUpsert({
+      messages: [{
+        key: {
+          id: 'msg-8',
+          fromMe: false,
+          remoteJid: ownerJid
+        },
+        message: {
+          conversation: 'Hello bot, please list files'
+        }
+      }],
+      type: 'notify'
+    });
+
+    const queue = getMessageQueue();
+    assert.strictEqual(queue.length, 1, 'Owner message should bypass allowlist and be enqueued');
+    assert.strictEqual(queue[0].body, 'Hello bot, please list files', 'Enqueued message body should match');
+  });
+
+  await t.test('9. Client not in allowlist should be ignored and not enqueued', async () => {
+    const randomClientJid = 'randomclient@s.whatsapp.net';
+    
+    await onMessagesUpsert({
+      messages: [{
+        key: {
+          id: 'msg-9',
+          fromMe: false,
+          remoteJid: randomClientJid
+        },
+        message: {
+          conversation: 'Hello, I want support'
+        }
+      }],
+      type: 'notify'
+    });
+
+    const queue = getMessageQueue();
+    assert.strictEqual(queue.length, 0, 'Unauthorized client message should be ignored and not enqueued');
   });
 });
