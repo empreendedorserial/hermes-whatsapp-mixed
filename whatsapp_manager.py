@@ -199,8 +199,17 @@ def register(ctx):
                     )
                 return {"action": "skip", "reason": "status-solicitado"}
 
-        # Se não for o dono, injetar histórico da conversa via rewrite
+        # Se não for o dono, verificar status de suporte/pausa e injetar histórico da conversa
         if not is_owner:
+            # Verificar se o suporte está ativo
+            status = load_status()
+            if not status.get("support_active", True):
+                return {"action": "skip", "reason": "atendimento-pausado"}
+
+            # Verificar se o bot está pausado via stop_bot
+            if _check_bot_paused():
+                return {"action": "skip", "reason": "bot-pausado"}
+
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             if chat_id and sender_id:
                 _sender_to_chat[sender_id] = chat_id
@@ -210,15 +219,6 @@ def register(ctx):
             if history_context:
                 rewrite_text = f"{history_context}\n\n[ Nova mensagem do cliente ]\n{event.text or ''}"
                 return {"action": "rewrite", "text": rewrite_text}
-
-            # Verificar se o suporte está ativo
-            status = load_status()
-            if not status.get("support_active", True):
-                return {"action": "skip", "reason": "atendimento-pausado"}
-
-            # Verificar se o bot está pausado via stop_bot
-            if _check_bot_paused():
-                return {"action": "skip", "reason": "bot-pausado"}
         else:
             # Para o dono, salvar chat_id também
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""

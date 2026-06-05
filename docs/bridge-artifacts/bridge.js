@@ -52,6 +52,7 @@ const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cac
 const PAIR_ONLY = args.includes('--pair-only');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
+const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').trim().replace(/@.*/, '');
 const DEFAULT_REPLY_PREFIX = '⚕ *Hermes Agent*\n────────────\n';
 const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
   ? DEFAULT_REPLY_PREFIX
@@ -148,6 +149,31 @@ function getContextInfo(messageContent) {
 }
 
 mkdirSync(SESSION_DIR, { recursive: true });
+
+let botPaused = false;
+const BOT_STATE_FILE = path.join(SESSION_DIR, 'bot_state.json');
+
+function loadBotState() {
+  try {
+    if (existsSync(BOT_STATE_FILE)) {
+      const data = JSON.parse(readFileSync(BOT_STATE_FILE, 'utf8'));
+      botPaused = !!data.botPaused;
+    }
+  } catch (err) {
+    console.error('⚠️ Failed to load bot state:', err.message);
+  }
+}
+
+function saveBotState() {
+  try {
+    writeFileSync(BOT_STATE_FILE, JSON.stringify({ botPaused }));
+  } catch (err) {
+    console.error('⚠️ Failed to save bot state:', err.message);
+  }
+}
+
+// Load initial bot state
+loadBotState();
 
 // Build LID → phone reverse map from session files (lid-mapping-{phone}.json)
 function buildLidMap() {
@@ -281,6 +307,48 @@ async function startSocket() {
       const senderId = msg.key.participant || chatId;
       const isGroup = chatId.endsWith('@g.us');
       const senderNumber = senderId.replace(/@.*/, '');
+
+      // Intercept owner bot commands (stop_bot / start_bot)
+      const messageContentForCmd = getMessageContent(msg);
+      let bodyForCmd = '';
+      if (messageContentForCmd.conversation) {
+        bodyForCmd = messageContentForCmd.conversation;
+      } else if (messageContentForCmd.extendedTextMessage?.text) {
+        bodyForCmd = messageContentForCmd.extendedTextMessage.text;
+      }
+      const textLower = bodyForCmd.trim().toLowerCase();
+
+      const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+      const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
+      const senderClean = senderId.replace(/@.*/, '').replace(/:.*/, '');
+      const isOwner =
+        (myNumber && senderClean === myNumber) ||
+        (myLid && senderClean === myLid) ||
+        (WHATSAPP_OWNER_NUMBER && senderClean === WHATSAPP_OWNER_NUMBER);
+
+      if (isOwner && !isGroup && !chatId.includes('status')) {
+        if (['stop_bot', '!pausar', '!parar'].includes(textLower)) {
+          botPaused = true;
+          saveBotState();
+          console.log('⏸️ Bot paused by owner command.');
+          try {
+            await sendWithTimeout(chatId, { text: '⏸️ *Atendimento do WhatsApp pausado.* Os clientes não receberão respostas da IA a partir de agora.' });
+          } catch (err) {
+            console.error('Failed to send pause response:', err.message);
+          }
+          continue;
+        } else if (['start_bot', '!retomar', '!iniciar'].includes(textLower)) {
+          botPaused = false;
+          saveBotState();
+          console.log('▶️ Bot activated by owner command.');
+          try {
+            await sendWithTimeout(chatId, { text: '▶️ *Atendimento do WhatsApp ativo.* A IA voltará a responder os clientes automaticamente.' });
+          } catch (err) {
+            console.error('Failed to send resume response:', err.message);
+          }
+          continue;
+        }
+      }
 
       // Handle fromMe messages based on mode
       if (msg.key.fromMe) {
@@ -480,6 +548,7 @@ const _ACCEPTED_HOST_VALUES = new Set([
   '127.0.0.1',
   '[::1]',
   '::1',
+  'whatsapp-bridge',
 ]);
 const _PUBLIC_HOSTS = [
   process.env.HERMES_DASH_HOST,
@@ -505,6 +574,13 @@ app.use((req, res, next) => {
     });
   }
   next();
+});
+
+app.get('/bot-status', (req, res) => {
+  res.json({
+    botPaused,
+    uptime: process.uptime(),
+  });
 });
 
 // Poll for new messages (long-poll style)
