@@ -464,7 +464,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
         console.log(`[bridge] Intercepted client video message from ${chatId}. Sending auto-reply and skipping LLM.`);
         try {
           const sent = await sendWithTimeout(chatId, {
-            text: 'Recebi seu vídeo! Vou dar uma olhada nele mais tarde. Se você puder me descrever em texto o que está acontecendo, consigo te ajudar por aqui agora mesmo!'
+            text: 'Recebi seu vídeo! Vou dar uma olhada nele mais tarde.'
           });
           trackSentMessageId(sent);
         } catch (err) {
