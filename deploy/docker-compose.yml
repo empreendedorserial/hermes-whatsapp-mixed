@@ -65,6 +65,7 @@ services:
       - WORKSPACE=/opt/data/workspace
       - HERMES_WORKSPACE=/opt/data/workspace
       - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_SERVER_DOMAIN=${HERMES_SERVER_DOMAIN:-}
 
       # Providers
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -196,6 +197,7 @@ services:
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER}
       - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-Hermes Agent}
+      - HERMES_SERVER_DOMAIN=${HERMES_SERVER_DOMAIN:-}
 
     networks:
       - traefik_public

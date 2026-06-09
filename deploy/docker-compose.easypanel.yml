@@ -78,6 +78,7 @@ services:
       - HERMES_HOME=/opt/data/.hermes
       - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - TZ=${TZ:-America/Sao_Paulo}
+      - HERMES_SERVER_DOMAIN=${HERMES_SERVER_DOMAIN:-}
       - WORKSPACE=/opt/data/workspace
       - HERMES_WORKSPACE=/opt/data/workspace
 

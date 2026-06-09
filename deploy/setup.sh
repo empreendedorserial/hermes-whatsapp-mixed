@@ -51,6 +51,8 @@ if [ ! -d "/opt/data/.hermes/plugins/whatsapp-manager" ]; then
     curl -sSL "$RAW_ROOT/skills/google-oauth/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources"
     curl -sSL "$RAW_ROOT/skills/research-sources/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
+    mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics"
+    curl -sSL "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
     echo "  ✓ Plugin whatsapp-manager instalado com sucesso (incluindo skills e google_api)."
 else
     echo "  - Plugin whatsapp-manager já instalado. Atualizando __init__.py, skills e módulos..."
@@ -60,6 +62,8 @@ else
     curl -sSL "$RAW_ROOT/skills/google-oauth/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources"
     curl -sSL "$RAW_ROOT/skills/research-sources/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
+    mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics"
+    curl -sSL "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
     echo "  ✓ __init__.py, google_api.py e skills atualizados."
 fi
 
