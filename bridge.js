@@ -446,18 +446,25 @@ let onMessagesUpsert = async ({ messages, type }) => {
       }
     } else if (messageContent.videoMessage) {
       body = messageContent.videoMessage.caption || '';
-      hasMedia = true;
-      mediaType = 'video';
-      try {
-        const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-        const mime = messageContent.videoMessage.mimetype || 'video/mp4';
-        const ext = mime.includes('mp4') ? '.mp4' : '.mkv';
-        mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
-        const filePath = path.join(DOCUMENT_CACHE_DIR, `vid_${randomBytes(6).toString('hex')}${ext}`);
-        writeFileSync(filePath, buf);
-        mediaUrls.push(filePath);
-      } catch (err) {
-        console.error('[bridge] Failed to download video:', err.message);
+      if (isOwner) {
+        hasMedia = true;
+        mediaType = 'video';
+        try {
+          const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const mime = messageContent.videoMessage.mimetype || 'video/mp4';
+          const ext = mime.includes('mp4') ? '.mp4' : '.mkv';
+          mkdirSync(DOCUMENT_CACHE_DIR, { recursive: true });
+          const filePath = path.join(DOCUMENT_CACHE_DIR, `vid_${randomBytes(6).toString('hex')}${ext}`);
+          writeFileSync(filePath, buf);
+          mediaUrls.push(filePath);
+        } catch (err) {
+          console.error('[bridge] Failed to download video:', err.message);
+        }
+      } else {
+        console.log(`[bridge] Ignoring video file attachment from client ${chatId} to save tokens.`);
+        if (!body) {
+          body = '[Vídeo recebido — mídia ignorada para economizar créditos]';
+        }
       }
     } else if (messageContent.audioMessage || messageContent.pttMessage) {
       hasMedia = true;
@@ -809,7 +816,18 @@ app.post('/send', async (req, res) => {
       (lowercaseMsg.includes('attempt') && (lowercaseMsg.includes('waiting') || lowercaseMsg.includes('rate limited')));
 
     if (isSystemError) {
-      console.error(`[bridge] Intercepted and blocked system error message to ${chatId}: ${message}`);
+      let apiName = 'Unknown API';
+      if (lowercaseMsg.includes('openrouter')) {
+        apiName = 'OpenRouter';
+      } else if (lowercaseMsg.includes('openai')) {
+        apiName = 'OpenAI';
+      } else if (lowercaseMsg.includes('anthropic') || lowercaseMsg.includes('claude')) {
+        apiName = 'Anthropic';
+      } else if (lowercaseMsg.includes('gemini')) {
+        apiName = 'Google Gemini';
+      }
+
+      console.error(`[bridge] ⚠️ ERROR DETECTED ON ${apiName.toUpperCase()} API FOR CLIENT ${chatId}:\n[CONTENT]: ${message}`);
       return res.json({ success: true, info: 'System error message blocked and logged' });
     }
 
