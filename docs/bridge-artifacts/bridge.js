@@ -461,10 +461,16 @@ let onMessagesUpsert = async ({ messages, type }) => {
           console.error('[bridge] Failed to download video:', err.message);
         }
       } else {
-        console.log(`[bridge] Ignoring video file attachment from client ${chatId} to save tokens.`);
-        if (!body) {
-          body = '[Vídeo recebido — mídia ignorada para economizar créditos]';
+        console.log(`[bridge] Intercepted client video message from ${chatId}. Sending auto-reply and skipping LLM.`);
+        try {
+          const sent = await sendWithTimeout(chatId, {
+            text: 'Recebi seu vídeo! Vou dar uma olhada nele mais tarde. Se você puder me descrever em texto o que está acontecendo, consigo te ajudar por aqui agora mesmo!'
+          });
+          trackSentMessageId(sent);
+        } catch (err) {
+          console.error('[bridge] Failed to send video auto-reply:', err.message);
         }
+        continue;
       }
     } else if (messageContent.audioMessage || messageContent.pttMessage) {
       hasMedia = true;
