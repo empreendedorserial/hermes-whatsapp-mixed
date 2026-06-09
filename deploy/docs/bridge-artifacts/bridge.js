@@ -32,6 +32,32 @@ import qrcode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
 
+// Keep track of recent console logs for the debug/diagnostics endpoint
+const recentLogs = [];
+const MAX_RECENT_LOGS = 50;
+function addRecentLog(level, message) {
+  const logEntry = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${message}`;
+  recentLogs.push(logEntry);
+  if (recentLogs.length > MAX_RECENT_LOGS) {
+    recentLogs.shift();
+  }
+}
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+console.log = (...args) => {
+  originalLog.apply(console, args);
+  addRecentLog('info', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+console.error = (...args) => {
+  originalError.apply(console, args);
+  addRecentLog('error', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+console.warn = (...args) => {
+  originalWarn.apply(console, args);
+  addRecentLog('warn', args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+};
+
 // Parse CLI args
 const args = process.argv.slice(2);
 function getArg(name, defaultVal) {
@@ -53,7 +79,7 @@ const AUDIO_CACHE_DIR = path.join(process.env.HOME || '~', '.hermes', 'audio_cac
 const PAIR_ONLY = args.includes('--pair-only');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
-const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').trim().replace(/@.*/, '');
+const WHATSAPP_OWNER_NUMBER = (process.env.WHATSAPP_OWNER_NUMBER || '').replace(/\D/g, '');
 const WHATSAPP_CONNECTION_NAME = process.env.WHATSAPP_CONNECTION_NAME || 'Hermes Agent';
 const WHATSAPP_SILENCE_DURATION_MIN = parseInt(process.env.WHATSAPP_SILENCE_DURATION_MIN || '10', 10);
 const SILENCE_DURATION_MS = WHATSAPP_SILENCE_DURATION_MIN * 60 * 1000;
@@ -280,10 +306,11 @@ let onMessagesUpsert = async ({ messages, type }) => {
       (myLid && senderClean === myLid) ||
       (WHATSAPP_OWNER_NUMBER && senderClean === WHATSAPP_OWNER_NUMBER);
 
-    const chatNumber = chatId.replace(/@.*/, '');
+    const chatNumber = chatId.replace(/@.*/, '').replace(/:.*/, '');
     const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+    const isOwnerChat = isSelfChat || (WHATSAPP_OWNER_NUMBER && chatNumber === WHATSAPP_OWNER_NUMBER);
 
-    if (isOwner && isSelfChat && !isGroup && !chatId.includes('status')) {
+    if (isOwner && isOwnerChat && !isGroup && !chatId.includes('status')) {
       if (['stop_bot', '!pausar', '!parar'].includes(textLower)) {
         botPaused = true;
         saveBotState();
@@ -370,7 +397,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
         } catch {}
         continue;
       }
-      if (!matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+      if (!isOwner && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
         try {
           console.log(JSON.stringify({
             event: 'ignored',
@@ -718,6 +745,36 @@ app.get('/whatsapp/status', (req, res) => {
     qrAvailable: !!currentQr,
     currentQrAt,
     connected: connectionState === 'connected',
+  });
+});
+
+app.get('/whatsapp/debug', (req, res) => {
+  const credsExists = existsSync(path.join(SESSION_DIR, 'creds.json'));
+  let sessionFilesCount = 0;
+  try {
+    sessionFilesCount = readdirSync(SESSION_DIR).length;
+  } catch {}
+
+  res.json({
+    status: connectionState,
+    qrAvailable: !!currentQr,
+    currentQrAt,
+    botPaused,
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage(),
+    session: {
+      directory: SESSION_DIR,
+      credsExists,
+      filesCount: sessionFilesCount,
+    },
+    env: {
+      WHATSAPP_MODE,
+      WHATSAPP_ALLOWED_USERS: process.env.WHATSAPP_ALLOWED_USERS || '',
+      WHATSAPP_OWNER_NUMBER,
+      WHATSAPP_CONNECTION_NAME,
+      PORT,
+    },
+    recentLogs,
   });
 });
 

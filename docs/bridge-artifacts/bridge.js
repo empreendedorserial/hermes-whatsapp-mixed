@@ -768,7 +768,7 @@ app.get('/whatsapp/debug', (req, res) => {
     },
     env: {
       WHATSAPP_MODE,
-      WHATSAPP_ALLOWED_USERS,
+      WHATSAPP_ALLOWED_USERS: process.env.WHATSAPP_ALLOWED_USERS || '',
       WHATSAPP_OWNER_NUMBER,
       WHATSAPP_CONNECTION_NAME,
       PORT,
