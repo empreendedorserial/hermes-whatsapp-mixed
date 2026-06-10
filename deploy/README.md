@@ -83,11 +83,20 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 Para manter seus contatos pessoais (`personal_contacts.json`) ou suas personas totalmente privados (sem expor em repositórios públicos):
 1. Crie um repositório **privado** no GitHub (ex: `hermes-config-privado`).
 2. Adicione nele o arquivo `personal_contacts.json` (veja o formato em [personal_contacts.json.example](file:///Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed/deploy/personal_contacts.json.example)). Você também pode mover seus arquivos `.md` (personas/regras) para lá se quiser mantê-los privados.
-3. Crie um **Personal Access Token (PAT)** clássico ou fine-grained no GitHub com permissão de leitura de repositório (`repo`).
-4. Execute o setup passando os argumentos extras de Token e Repositório Privado no console do container:
+3. Crie um **Personal Access Token (PAT)** no GitHub com permissão de leitura de repositório (`repo`).
+4. Configure as chaves diferenciadas:
+   * **Na Stack do Portainer (Cliente):**
+     * `CLIENT_GITHUB_USER` = Usuário do GitHub do cliente (dono do WhatsApp).
+     * `CLIENT_CONFIG_REPO` = Nome do repositório privado de configurações (ex: `usuario-cliente/hermes-config-privado`).
+     * `CLIENT_CONFIG_GITHUB_TOKEN` = PAT Token do cliente para acessar seu repositório privado de configs.
+   * **No arquivo `.env` local em `/opt/data/.env` ou `/opt/data/.hermes/.env` (Desenvolvedor):**
+     * `DEV_GITHUB_USER` = Usuário do repositório de código base do Hermes.
+     * `DEV_GITHUB_TOKEN` = Token do desenvolvedor (caso o repositório de código base seja privado).
+5. Execute o setup no console do container:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/deploy/setup.sh | bash -s SEU_USUARIO_GITHUB <SEU_TOKEN_PAT_GITHUB> <SEU_USUARIO_GITHUB/NOME_DO_REPO_PRIVADO>
+   curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/deploy/setup.sh | bash -s SEU_USUARIO_GITHUB
    ```
+
 
 
 ---

@@ -155,7 +155,7 @@ def register(ctx):
                 print(f"[whatsapp-manager] package.json atualizado em {target_pkg}")
 
         # 3. Bootstrap automático de personas e regras (se ausentes no volume)
-        github_user = os.getenv("HERMES_SETUP_GITHUB_USER", "empreendedorserial").strip()
+        github_user = (os.getenv("CLIENT_GITHUB_USER") or os.getenv("DEV_GITHUB_USER") or os.getenv("HERMES_SETUP_GITHUB_USER") or "empreendedorserial").strip()
         raw_base_url = f"https://raw.githubusercontent.com/{github_user}/hermes-whatsapp-mixed/main/deploy"
 
         personal_contacts_path = Path("/opt/data/personal_contacts.json")
@@ -216,7 +216,7 @@ def register(ctx):
                 print(f"[whatsapp-manager] ✓ google_api.py atualizado em {target_google_api}")
         else:
             # Fallback: baixar do GitHub se não estiver bundled
-            github_user = os.getenv("HERMES_SETUP_GITHUB_USER", "empreendedorserial").strip()
+            github_user = (os.getenv("CLIENT_GITHUB_USER") or os.getenv("DEV_GITHUB_USER") or os.getenv("HERMES_SETUP_GITHUB_USER") or "empreendedorserial").strip()
             google_api_url = f"https://raw.githubusercontent.com/{github_user}/hermes-whatsapp-mixed/main/deploy/scripts/google_api.py"
             if not target_google_api.exists():
                 try:

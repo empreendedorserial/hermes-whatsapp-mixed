@@ -68,14 +68,23 @@ Se você quer salvar seus contatos pessoais (`personal_contacts.json`) ou suas p
 2. Adicione nele os arquivos que deseja manter seguros:
    * 📄 **`personal_contacts.json`** (Use o modelo de exemplo disponível em [personal_contacts.json.example](file:///Users/andrealencar/GoogleAntigravity/hermes-whatsapp-mixed/deploy/personal_contacts.json.example) como base).
    * 📄 **`SOUL.md`**, **`SOUL_WHATSAPP.md`**, **`SOUL_EMAIL.md`**, **`support_rules.md`** (opcionais, se você preferir não deixá-los expostos no seu fork público).
-3. Gere um **Personal Access Token (PAT)** clássico ou fine-grained no GitHub com permissão de leitura de repositório (`repo`).
-4. Conecte-se ao console do container no Portainer e execute a sincronização passando os parâmetros de token e do repositório privado:
+3. Gere um **Personal Access Token (PAT)** no GitHub com permissão de leitura de repositório (`repo`).
+4. Diferenciamos as chaves do **Cliente** (configuradas visualmente na Stack do Portainer) das chaves do **Desenvolvedor** (mantidas no arquivo `.env` local por segurança):
+   * **Na Stack do Portainer (Cliente):**
+     * `CLIENT_GITHUB_USER` = Usuário do GitHub do cliente (dono do WhatsApp).
+     * `CLIENT_CONFIG_REPO` = Nome do repositório privado de configurações (ex: `usuario-cliente/hermes-config-privado`).
+     * `CLIENT_CONFIG_GITHUB_TOKEN` = PAT Token do cliente para acessar seu repositório privado de configs.
+   * **No arquivo `.env` em `/opt/data/.env` ou `/opt/data/.hermes/.env` (Desenvolvedor):**
+     * `DEV_GITHUB_USER` = Usuário do repositório de código base do Hermes.
+     * `DEV_GITHUB_TOKEN` = Token do desenvolvedor (caso o repositório de código base seja privado).
+5. Conecte-se ao console do container no Portainer e execute a sincronização de 1 clique. Como as variáveis já estão configuradas no painel da Stack e no `.env`, basta rodar:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/deploy/setup.sh | bash -s SEU_USUARIO_GITHUB <SEU_TOKEN_PAT_GITHUB> <SEU_USUARIO_GITHUB/NOME_DO_REPO_PRIVADO>
+curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-mixed/main/deploy/setup.sh | bash -s SEU_USUARIO_GITHUB
 ```
 
-O script baixará os arquivos de código público do seu fork e puxará automaticamente as suas configurações e contatos do repositório privado de forma segura.
+O script baixará os arquivos de código público do seu fork e puxará automaticamente as configurações e contatos do repositório privado do cliente de forma isolada e segura.
+
 
 
 ---
