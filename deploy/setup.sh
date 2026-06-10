@@ -1,12 +1,20 @@
 #!/bin/bash
 set -e
 
-# Pega o usuário do GitHub via parâmetro. Se não for passado, usa 'empreendedorserial' como padrão.
+# Parâmetros:
+# $1: Usuário do GitHub (ex: empreendedorserial)
+# $2: Token de Acesso Pessoal (PAT) do GitHub (opcional, para repositórios privados)
+# $3: Repositório de configurações privado (opcional, formato: usuario/repo-nome)
 GITHUB_USER="${1:-empreendedorserial}"
+GITHUB_TOKEN="${2:-$GITHUB_TOKEN}"
+CONFIG_REPO="${3:-$CONFIG_REPO}"
 
 echo "=========================================================="
 echo "🤖 CONFIGURADOR DE MODO MISTO DO EMPREENDEDOR SERIAL 🤖"
 echo "           GitHub Fork de: $GITHUB_USER"
+if [ -n "$CONFIG_REPO" ]; then
+echo "           Repo de Configs Privado: $CONFIG_REPO"
+fi
 echo "=========================================================="
 
 # Define o caminho base do Hermes dentro do container
@@ -14,62 +22,108 @@ BASE_DIR="/opt/data/.hermes"
 mkdir -p "$BASE_DIR"
 mkdir -p "/opt/data"
 
-# URL Base para os arquivos do GitHub
+# Configura cabeçalho de autenticação se o token estiver presente
+CURL_AUTH_HEADER=""
+if [ -n "$GITHUB_TOKEN" ]; then
+    CURL_AUTH_HEADER="Authorization: token $GITHUB_TOKEN"
+fi
+
+# URL Base para os arquivos de código (bridge, plugins, etc.) do GitHub
 RAW_ROOT="https://raw.githubusercontent.com/$GITHUB_USER/hermes-whatsapp-mixed/main"
 RAW_URL="$RAW_ROOT/deploy"
 
-echo "⏳ 1. Baixando arquivos de configuração e personas de $RAW_URL..."
+# URL para os arquivos de configuração (SOULs, regras, contatos)
+if [ -n "$CONFIG_REPO" ]; then
+    CONFIG_URL="https://raw.githubusercontent.com/$CONFIG_REPO/main"
+else
+    CONFIG_URL="$RAW_URL"
+fi
 
-# Baixa e atualiza o arquivo de persona (SOUL.md) direto do repositório/fork do aluno
-curl -sSL "$RAW_URL/SOUL.md" -o "/opt/data/SOUL.md"
-cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
-echo "  ✓ Persona SOUL.md sincronizada com seu GitHub"
+# Função auxiliar para fazer download via curl tratando autenticação e erros
+download_file() {
+    local url="$1"
+    local output="$2"
+    if [ -n "$CURL_AUTH_HEADER" ]; then
+        curl -f -H "$CURL_AUTH_HEADER" -sSL "$url" -o "$output"
+    else
+        curl -f -sSL "$url" -o "$output"
+    fi
+}
+
+echo "⏳ 1. Baixando arquivos de configuração e personas..."
+
+# Baixa e atualiza o arquivo de persona (SOUL.md)
+if download_file "$CONFIG_URL/SOUL.md" "/opt/data/SOUL.md"; then
+    cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
+    echo "  ✓ Persona SOUL.md sincronizada"
+else
+    echo "  ⚠️ Falha ao baixar SOUL.md do repositório"
+fi
 
 # Baixa e atualiza o arquivo de persona do suporte do WhatsApp
-curl -sSL "$RAW_URL/SOUL_WHATSAPP.md" -o "/opt/data/SOUL_WHATSAPP.md"
-echo "  ✓ Persona do WhatsApp SOUL_WHATSAPP.md sincronizada"
+if download_file "$CONFIG_URL/SOUL_WHATSAPP.md" "/opt/data/SOUL_WHATSAPP.md"; then
+    echo "  ✓ Persona do WhatsApp SOUL_WHATSAPP.md sincronizada"
+else
+    echo "  ⚠️ Falha ao baixar SOUL_WHATSAPP.md"
+fi
 
 # Baixa e atualiza o arquivo de persona do suporte de E-mail
-curl -sSL "$RAW_URL/SOUL_EMAIL.md" -o "/opt/data/SOUL_EMAIL.md"
-echo "  ✓ Persona de E-mail SOUL_EMAIL.md sincronizada"
+if download_file "$CONFIG_URL/SOUL_EMAIL.md" "/opt/data/SOUL_EMAIL.md"; then
+    echo "  ✓ Persona de E-mail SOUL_EMAIL.md sincronizada"
+else
+    echo "  ⚠️ Falha ao baixar SOUL_EMAIL.md"
+fi
 
 # Baixa e atualiza a base de conhecimento de suporte (support_rules.md)
-curl -sSL "$RAW_URL/support_rules.md" -o "/opt/data/support_rules.md"
-echo "  ✓ Regras de suporte support_rules.md sincronizadas com seu GitHub"
+if download_file "$CONFIG_URL/support_rules.md" "/opt/data/support_rules.md"; then
+    echo "  ✓ Regras de suporte support_rules.md sincronizadas"
+else
+    echo "  ⚠️ Falha ao baixar support_rules.md"
+fi
+
+# Baixa personal_contacts.json se estiver usando repositório privado
+if [ -n "$CONFIG_REPO" ]; then
+    if download_file "$CONFIG_URL/personal_contacts.json" "/opt/data/personal_contacts.json"; then
+        echo "  ✓ Contatos pessoais personal_contacts.json sincronizados com sucesso"
+    else
+        echo "  - personal_contacts.json não encontrado no repositório, mantendo o arquivo local se existir"
+    fi
+fi
 
 # Instala o plugin whatsapp-manager automaticamente caso não esteja presente no volume
 if [ ! -d "/opt/data/.hermes/plugins/whatsapp-manager" ]; then
     echo "⏳ Instalando o plugin whatsapp-manager..."
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager"
-    curl -sSL "$RAW_ROOT/plugin.yaml"     -o "/opt/data/.hermes/plugins/whatsapp-manager/plugin.yaml"
-    curl -sSL "$RAW_ROOT/__init__.py"     -o "/opt/data/.hermes/plugins/whatsapp-manager/__init__.py"
-    curl -sSL "$RAW_ROOT/bridge.js"       -o "/opt/data/.hermes/plugins/whatsapp-manager/bridge.js"
-    curl -sSL "$RAW_ROOT/package.json"    -o "/opt/data/.hermes/plugins/whatsapp-manager/package.json"
-    curl -sSL "$RAW_ROOT/google_api.py"   -o "/opt/data/.hermes/plugins/whatsapp-manager/google_api.py"
+    download_file "$RAW_ROOT/plugin.yaml"     "/opt/data/.hermes/plugins/whatsapp-manager/plugin.yaml"
+    download_file "$RAW_ROOT/__init__.py"     "/opt/data/.hermes/plugins/whatsapp-manager/__init__.py"
+    download_file "$RAW_ROOT/bridge.js"       "/opt/data/.hermes/plugins/whatsapp-manager/bridge.js"
+    download_file "$RAW_ROOT/package.json"    "/opt/data/.hermes/plugins/whatsapp-manager/package.json"
+    download_file "$RAW_ROOT/google_api.py"   "/opt/data/.hermes/plugins/whatsapp-manager/google_api.py"
+    
     # Instalar skills bundled do plugin
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth"
-    curl -sSL "$RAW_ROOT/skills/google-oauth/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
+    download_file "$RAW_ROOT/skills/google-oauth/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources"
-    curl -sSL "$RAW_ROOT/skills/research-sources/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
+    download_file "$RAW_ROOT/skills/research-sources/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics"
-    curl -sSL "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
+    download_file "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
     echo "  ✓ Plugin whatsapp-manager instalado com sucesso (incluindo skills e google_api)."
 else
     echo "  - Plugin whatsapp-manager já instalado. Atualizando __init__.py, skills e módulos..."
-    curl -sSL "$RAW_ROOT/__init__.py"   -o "/opt/data/.hermes/plugins/whatsapp-manager/__init__.py"
-    curl -sSL "$RAW_ROOT/google_api.py" -o "/opt/data/.hermes/plugins/whatsapp-manager/google_api.py"
+    download_file "$RAW_ROOT/__init__.py"   "/opt/data/.hermes/plugins/whatsapp-manager/__init__.py"
+    download_file "$RAW_ROOT/google_api.py" "/opt/data/.hermes/plugins/whatsapp-manager/google_api.py"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth"
-    curl -sSL "$RAW_ROOT/skills/google-oauth/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
+    download_file "$RAW_ROOT/skills/google-oauth/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/google-oauth/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources"
-    curl -sSL "$RAW_ROOT/skills/research-sources/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
+    download_file "$RAW_ROOT/skills/research-sources/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/research-sources/SKILL.md"
     mkdir -p "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics"
-    curl -sSL "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" -o "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
+    download_file "$RAW_ROOT/skills/whatsapp-logs-diagnostics/SKILL.md" "/opt/data/.hermes/plugins/whatsapp-manager/skills/whatsapp-logs-diagnostics/SKILL.md"
     echo "  ✓ __init__.py, google_api.py e skills atualizados."
 fi
 
 # Baixa o modelo de config.yaml se ele não existir localmente
 if [ ! -f "$BASE_DIR/config.yaml" ]; then
-    curl -sSL "$RAW_URL/config.yaml.example" -o "$BASE_DIR/config.yaml"
+    download_file "$RAW_URL/config.yaml.example" "$BASE_DIR/config.yaml"
     echo "  ✓ config.yaml inicial configurado."
 else
     echo "  - config.yaml já existe localmente, pulando."
@@ -77,7 +131,7 @@ fi
 
 # Baixa o modelo de chaves de API (.env) se ele não existir localmente
 if [ ! -f "$BASE_DIR/.env" ]; then
-    curl -sSL "$RAW_URL/env.example" -o "$BASE_DIR/.env" || curl -sSL "$RAW_URL/.env.example" -o "$BASE_DIR/.env"
+    download_file "$RAW_URL/env.example" "$BASE_DIR/.env" || download_file "$RAW_URL/.env.example" "$BASE_DIR/.env"
     echo "  ✓ Arquivo de chaves .env inicial criado."
 else
     echo "  - Arquivo .env já existe localmente, pulando."
@@ -86,8 +140,8 @@ fi
 echo "⏳ 2. Baixando e aplicando o Patch do WhatsApp..."
 # Sincroniza o arquivo bridge.js modificado diretamente do repositório
 mkdir -p "/opt/data/.hermes/platforms/whatsapp/bridge"
-curl -sSL "$RAW_ROOT/docs/bridge-artifacts/bridge.js" -o "/opt/data/.hermes/platforms/whatsapp/bridge/bridge.js"
-curl -sSL "$RAW_ROOT/docs/bridge-artifacts/package.json" -o "/opt/data/.hermes/platforms/whatsapp/bridge/package.json"
+download_file "$RAW_ROOT/docs/bridge-artifacts/bridge.js" "/opt/data/.hermes/platforms/whatsapp/bridge/bridge.js"
+download_file "$RAW_ROOT/docs/bridge-artifacts/package.json" "/opt/data/.hermes/platforms/whatsapp/bridge/package.json"
 echo "  ✓ Arquivos bridge.js e package.json sincronizados."
 
 # Corrige o desalinhamento de caminhos da sessão do WhatsApp (symlink antiga -> nova)
@@ -104,22 +158,22 @@ fi
 
 # Baixa os scripts do agente de suporte de e-mail direto do repositório
 mkdir -p "/opt/data/.hermes/scripts"
-curl -sSL "$RAW_URL/scripts/support_agent.py" -o "/opt/data/.hermes/scripts/support_agent.py"
+download_file "$RAW_URL/scripts/support_agent.py" "/opt/data/.hermes/scripts/support_agent.py"
 chmod +x "/opt/data/.hermes/scripts/support_agent.py"
 echo "  ✓ support_agent.py sincronizado."
 
 # Baixa o módulo google_api.py (autenticação OAuth2 Gmail)
 mkdir -p "/opt/data/.hermes/skills/productivity/google-workspace/scripts"
-curl -sSL "$RAW_URL/scripts/google_api.py" -o "/opt/data/.hermes/skills/productivity/google-workspace/scripts/google_api.py"
+download_file "$RAW_URL/scripts/google_api.py" "/opt/data/.hermes/skills/productivity/google-workspace/scripts/google_api.py"
 echo "  ✓ google_api.py sincronizado."
 
 # Baixa o script de autorização OAuth2 (necessário na primeira vez)
-curl -sSL "$RAW_URL/scripts/authorize_google.py" -o "/opt/data/.hermes/scripts/authorize_google.py"
+download_file "$RAW_URL/scripts/authorize_google.py" "/opt/data/.hermes/scripts/authorize_google.py"
 chmod +x "/opt/data/.hermes/scripts/authorize_google.py"
 echo "  ✓ authorize_google.py sincronizado."
 
 # Baixa e executa o patch_whatsapp.py para verificar a integridade
-curl -sSL "$RAW_URL/patch_whatsapp.py" -o "/tmp/patch_whatsapp.py"
+download_file "$RAW_URL/patch_whatsapp.py" "/tmp/patch_whatsapp.py"
 python3 /tmp/patch_whatsapp.py
 
 echo "⏳ 3. Instalando dependências da ponte e de geração de imagem do QR Code..."
@@ -133,13 +187,13 @@ else
     echo "  - Pasta whatsapp-bridge não encontrada, pulando npm install."
 fi
 
-# Instala qrcode e pillow no venv do Hermes (necessário para enviar QR Code como imagem PNG)
+# Instala qrcode e pillow no venv do Hermes
 if [ -x "/opt/hermes/.venv/bin/python" ]; then
     uv pip install --python /opt/hermes/.venv/bin/python qrcode pillow --quiet 2>/dev/null \
         && echo "  ✓ Bibliotecas qrcode e pillow instaladas no ambiente virtual." \
         || echo "  ⚠️  uv pip install falhou (pode ser seguro ignorar se já instalado)."
 
-    # Instala dependências do Gmail API (necessárias para support_agent.py)
+    # Instala dependências do Gmail API
     uv pip install --python /opt/hermes/.venv/bin/python \
         google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client \
         --quiet 2>/dev/null \
@@ -149,13 +203,13 @@ else
     echo "  - Ambiente virtual do Hermes não encontrado em /opt/hermes/.venv, pulando."
 fi
 
-# Se o profile de WhatsApp do Hermes já existir, sincroniza também o SOUL_WHATSAPP para lá automaticamente
+# Se o profile de WhatsApp do Hermes já existir, sincroniza também o SOUL_WHATSAPP
 if [ -d "/opt/data/.hermes/profiles/whatsapp" ]; then
     cp "/opt/data/SOUL_WHATSAPP.md" "/opt/data/.hermes/profiles/whatsapp/SOUL.md"
     echo "  ✓ Profile de WhatsApp atualizado com a persona SOUL_WHATSAPP.md"
 fi
 
-# Se o profile de E-mail do Hermes já existir, sincroniza também o SOUL_EMAIL para lá automaticamente
+# Se o profile de E-mail do Hermes já existir, sincroniza também o SOUL_EMAIL
 if [ -d "/opt/data/.hermes/profiles/email" ]; then
     cp "/opt/data/SOUL_EMAIL.md" "/opt/data/.hermes/profiles/email/SOUL.md"
     echo "  ✓ Profile de E-mail atualizado com a persona SOUL_EMAIL.md"
@@ -165,18 +219,7 @@ echo "=========================================================="
 echo "🎉 SINCRONIZAÇÃO E CONFIGURAÇÃO CONCLUÍDAS COM SUCESSO!"
 echo "=========================================================="
 echo "Seu Hermes foi sincronizado com o seu GitHub Fork ($GITHUB_USER)!"
-echo ""
-echo "Para deixar seu Hermes 100% operacional:"
-echo "1. Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no Portainer Stack Env"
-echo "   (ou em /opt/data/.env)"
-echo ""
-echo "2. ⚠️  PRIMEIRA VEZ com o Gmail? Autorize o acesso OAuth2:"
-echo "   PYTHONPATH=/opt/hermes/.venv/lib/python3.13/site-packages \\"
-echo "   python3 /opt/data/.hermes/scripts/authorize_google.py"
-echo "   (Gera o token em /opt/data/.hermes/google_token.json — só precisa fazer UMA VEZ)"
-echo ""
-echo "3. Para atualizar regras de negócio ou persona:"
-echo "   Edite no GitHub e execute este setup novamente!"
-echo ""
-echo "4. Abra o console do Portainer e digite 'hermes' para iniciar!"
+if [ -n "$CONFIG_REPO" ]; then
+echo "Configurações e personas sincronizadas com $CONFIG_REPO!"
+fi
 echo "=========================================================="
