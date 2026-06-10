@@ -297,12 +297,6 @@ def register(ctx):
 
             if chat_id and sender_id:
                 _sender_to_chat[sender_id] = chat_id
-
-            # Buscar histórico e injetar no início da mensagem
-            history_context = _fetch_chat_history(chat_id, limit=50)
-            if history_context:
-                rewrite_text = f"{history_context}\n\n[ Nova mensagem do cliente ]\n{event.text or ''}"
-                return {"action": "rewrite", "text": rewrite_text}
         else:
             # Para o dono, salvar chat_id também
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
@@ -400,8 +394,28 @@ def register(ctx):
             # Buscar histórico de mensagens deste chat (para contexto)
             history_context = ""
             chat_id = _sender_to_chat.get(sender_id, "")
+            
+            # Fallback robusto caso tenha reiniciado ou não mapeado
+            if not chat_id and sender_id:
+                parts = sender_id.split("@")
+                if len(parts) == 2:
+                    jid_part, domain_part = parts
+                    clean_jid = jid_part.split(":")[0]
+                    chat_id = f"{clean_jid}@{domain_part}"
+
             if chat_id:
                 history_context = _fetch_chat_history(chat_id, limit=50)
+
+            if history_context:
+                history_section = (
+                    "### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
+                    "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
+                    "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
+                    "para responder à nova mensagem do cliente.\n\n"
+                    f"{history_context}\n\n"
+                )
+            else:
+                history_section = ""
 
             return {
                 "context": (
@@ -412,7 +426,7 @@ def register(ctx):
                     "O bot deve responder EXCLUSIVAMENTE em português brasileiro.\n\n"
                     "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
                     f"{rules_content}\n\n"
-                    f"{history_context}\n\n"
+                    f"{history_section}"
                     "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
                     "- NUNCA execute comandos no terminal (terminal tool) para o cliente.\n"
                     "- NUNCA edite, remova ou crie arquivos do sistema para o cliente.\n"

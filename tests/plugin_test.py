@@ -121,6 +121,49 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
             self.assertIn("SUPORTE WHATSAPP", res["context"])
             self.assertIn("Soul client rules", res["context"])
 
+    async def test_pre_gateway_dispatch_does_not_rewrite_or_fetch(self):
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = "5511888888888@s.whatsapp.net" # Client
+        event.text = "Hello client query"
+        event.source.chat_id = "5511888888888@s.whatsapp.net"
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "session_3"
+        gateway._session_model_overrides = {}
+
+        context = {
+            "event": event,
+            "gateway": gateway
+        }
+
+        with patch("whatsapp_manager._check_bot_paused", return_value=False), \
+             patch("whatsapp_manager._check_chat_silenced", return_value=False), \
+             patch("whatsapp_manager._fetch_chat_history") as mock_fetch:
+            res = await pre_dispatch("pre_gateway_dispatch", context)
+            self.assertIsNone(res) # Should not skip or rewrite (returns None)
+            mock_fetch.assert_not_called() # Should not fetch history at dispatch stage
+
+    def test_pre_llm_call_injects_history_with_fallback(self):
+        pre_llm = self.ctx.hooks.get("pre_llm_call")
+
+        context = {
+            "platform": "whatsapp",
+            "sender_id": "5511888888888:3@s.whatsapp.net" # Client JID with device suffix
+        }
+
+        with patch("os.path.exists", return_value=True), \
+             patch("builtins.open", unittest.mock.mock_open(read_data="Soul client rules")), \
+             patch("whatsapp_manager._fetch_chat_history", return_value="Chat history content") as mock_fetch:
+            res = pre_llm("pre_llm_call", context)
+            self.assertIsNotNone(res)
+            self.assertIn("### HISTÓRICO DE MENSAGENS ANTERIORES ###", res["context"])
+            self.assertIn("Chat history content", res["context"])
+            # Assert fallback JID derivation was used
+            mock_fetch.assert_called_once_with("5511888888888@s.whatsapp.net", limit=50)
+
     def test_non_whatsapp_platforms_are_ignored(self):
         pre_llm = self.ctx.hooks.get("pre_llm_call")
         
