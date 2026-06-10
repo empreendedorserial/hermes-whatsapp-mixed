@@ -118,8 +118,7 @@ services:
       - HERMES_DASHBOARD_PORT=9119
       - HERMES_DASHBOARD_TUI=1
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-empreendedorserial}
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - CONFIG_REPO=${CONFIG_REPO:-}
+      - CONFIG_REPO=${CONFIG_REPO:-hermes_agent_context_contatcs}
       - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN:-}
 
       # Timeouts

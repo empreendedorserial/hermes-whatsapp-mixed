@@ -1,33 +1,49 @@
 #!/bin/bash
 set -e
 
+# Define o caminho base do Hermes dentro do container
+BASE_DIR="/opt/data/.hermes"
+
+# Carrega variáveis do arquivo .env local se existirem (para ler chaves de desenvolvedor)
+if [ -f "/opt/data/.env" ]; then
+    # Filtra linhas vazias ou comentários antes de exportar
+    export $(grep -v '^#' /opt/data/.env | xargs) 2>/dev/null || true
+fi
+if [ -f "$BASE_DIR/.env" ]; then
+    export $(grep -v '^#' "$BASE_DIR/.env" | xargs) 2>/dev/null || true
+fi
+
 # Parâmetros:
-# $1: Usuário do GitHub (ex: empreendedorserial)
-# $2: Token do GitHub para o código/fork (opcional, se privado)
-# $3: Repositório de configurações privado (opcional, formato: usuario/repo-nome)
-# $4: Token do GitHub para o repositório de configurações (opcional, se privado. Fallback para $GITHUB_TOKEN)
-GITHUB_USER="${1:-${HERMES_SETUP_GITHUB_USER:-empreendedorserial}}"
-GITHUB_TOKEN="${2:-$GITHUB_TOKEN}"
-CONFIG_REPO="${3:-$CONFIG_REPO}"
-CONFIG_GITHUB_TOKEN="${4:-${CONFIG_GITHUB_TOKEN:-$GITHUB_TOKEN}}"
+# $1: Usuário do GitHub do Cliente para o Fork do Código (opcional)
+# $2: Token do GitHub do Desenvolvedor para baixar o código privado (opcional, do .env)
+# $3: Repositório de configurações privado do Cliente (opcional)
+# $4: Token do GitHub do Cliente para o repositório de configurações (opcional)
+
+CLIENT_GITHUB_USER="${1:-${CLIENT_GITHUB_USER:-${HERMES_SETUP_GITHUB_USER:-}}}"
+DEV_GITHUB_TOKEN="${2:-$DEV_GITHUB_TOKEN}"
+CONFIG_REPO="${3:-${CONFIG_REPO:-hermes_agent_context_contatcs}}"
+CONFIG_GITHUB_TOKEN="${4:-$CONFIG_GITHUB_TOKEN}"
+
+# Consolidação dos repositórios e tokens:
+# Código base: se o cliente tiver fork próprio (CLIENT_GITHUB_USER), baixa de lá. Se não, usa DEV_GITHUB_USER ou padrão.
+CODE_USER="${CLIENT_GITHUB_USER:-${DEV_GITHUB_USER:-empreendedorserial}}"
+CODE_TOKEN="$DEV_GITHUB_TOKEN"
 
 echo "=========================================================="
 echo "🤖 CONFIGURADOR DE MODO MISTO DO EMPREENDEDOR SERIAL 🤖"
-echo "           GitHub Fork de: $GITHUB_USER"
+echo "           GitHub Fork de: $CODE_USER"
 if [ -n "$CONFIG_REPO" ]; then
 echo "           Repo de Configs Privado: $CONFIG_REPO"
 fi
 echo "=========================================================="
 
-# Define o caminho base do Hermes dentro do container
-BASE_DIR="/opt/data/.hermes"
 mkdir -p "$BASE_DIR"
 mkdir -p "/opt/data"
 
 # Configura cabeçalhos de autenticação
 CURL_CODE_AUTH_HEADER=""
-if [ -n "$GITHUB_TOKEN" ]; then
-    CURL_CODE_AUTH_HEADER="Authorization: token $GITHUB_TOKEN"
+if [ -n "$CODE_TOKEN" ]; then
+    CURL_CODE_AUTH_HEADER="Authorization: token $CODE_TOKEN"
 fi
 
 CURL_CONFIG_AUTH_HEADER=""
@@ -36,11 +52,11 @@ if [ -n "$CONFIG_GITHUB_TOKEN" ]; then
 fi
 
 # URL Base para os arquivos de código (bridge, plugins, etc.) do GitHub
-RAW_ROOT="https://raw.githubusercontent.com/$GITHUB_USER/hermes-whatsapp-mixed/main"
+RAW_ROOT="https://raw.githubusercontent.com/$CODE_USER/hermes-whatsapp-mixed/main"
 RAW_URL="$RAW_ROOT/deploy"
 
 # URL para os arquivos de configuração (SOULs, regras, contatos)
-if [ -n "$CONFIG_REPO" ]; then
+if [ -n "$CONFIG_REPO" ] && [ "$CONFIG_REPO" != "hermes_agent_context_contatcs" ]; then
     CONFIG_URL="https://raw.githubusercontent.com/$CONFIG_REPO/main"
 else
     CONFIG_URL="$RAW_URL"
@@ -60,37 +76,62 @@ download_file() {
 
 echo "⏳ 1. Baixando arquivos de configuração e personas..."
 
-# Baixa e atualiza o arquivo de persona (SOUL.md)
+# Baixa e atualiza o arquivo de persona (SOUL.md) com fallback para o repositório do código base caso a URL de configuração falhe
 if download_file "$CONFIG_URL/SOUL.md" "/opt/data/SOUL.md" "$CURL_CONFIG_AUTH_HEADER"; then
     cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
     echo "  ✓ Persona SOUL.md sincronizada"
 else
-    echo "  ⚠️ Falha ao baixar SOUL.md do repositório"
+    echo "  ⚠️ Falha ao baixar SOUL.md de CONFIG_URL ($CONFIG_URL)"
+    if [ "$CONFIG_URL" != "$RAW_URL" ]; then
+        echo "  🔄 Tentando baixar do repositório de código público..."
+        if download_file "$RAW_URL/SOUL.md" "/opt/data/SOUL.md" "$CURL_CODE_AUTH_HEADER"; then
+            cp "/opt/data/SOUL.md" "$BASE_DIR/SOUL.md"
+            echo "  ✓ Persona SOUL.md sincronizada (código base)"
+        fi
+    fi
 fi
 
 # Baixa e atualiza o arquivo de persona do suporte do WhatsApp
 if download_file "$CONFIG_URL/SOUL_WHATSAPP.md" "/opt/data/SOUL_WHATSAPP.md" "$CURL_CONFIG_AUTH_HEADER"; then
     echo "  ✓ Persona do WhatsApp SOUL_WHATSAPP.md sincronizada"
 else
-    echo "  ⚠️ Falha ao baixar SOUL_WHATSAPP.md"
+    echo "  ⚠️ Falha ao baixar SOUL_WHATSAPP.md de CONFIG_URL"
+    if [ "$CONFIG_URL" != "$RAW_URL" ]; then
+        echo "  🔄 Tentando baixar do repositório de código público..."
+        if download_file "$RAW_URL/SOUL_WHATSAPP.md" "/opt/data/SOUL_WHATSAPP.md" "$CURL_CODE_AUTH_HEADER"; then
+            echo "  ✓ Persona do WhatsApp SOUL_WHATSAPP.md sincronizada (código base)"
+        fi
+    fi
 fi
 
 # Baixa e atualiza o arquivo de persona do suporte de E-mail
 if download_file "$CONFIG_URL/SOUL_EMAIL.md" "/opt/data/SOUL_EMAIL.md" "$CURL_CONFIG_AUTH_HEADER"; then
     echo "  ✓ Persona de E-mail SOUL_EMAIL.md sincronizada"
 else
-    echo "  ⚠️ Falha ao baixar SOUL_EMAIL.md"
+    echo "  ⚠️ Falha ao baixar SOUL_EMAIL.md de CONFIG_URL"
+    if [ "$CONFIG_URL" != "$RAW_URL" ]; then
+        echo "  🔄 Tentando baixar do repositório de código público..."
+        if download_file "$RAW_URL/SOUL_EMAIL.md" "/opt/data/SOUL_EMAIL.md" "$CURL_CODE_AUTH_HEADER"; then
+            echo "  ✓ Persona de E-mail SOUL_EMAIL.md sincronizada (código base)"
+        fi
+    fi
 fi
 
 # Baixa e atualiza a base de conhecimento de suporte (support_rules.md)
 if download_file "$CONFIG_URL/support_rules.md" "/opt/data/support_rules.md" "$CURL_CONFIG_AUTH_HEADER"; then
     echo "  ✓ Regras de suporte support_rules.md sincronizadas"
 else
-    echo "  ⚠️ Falha ao baixar support_rules.md"
+    echo "  ⚠️ Falha ao baixar support_rules.md de CONFIG_URL"
+    if [ "$CONFIG_URL" != "$RAW_URL" ]; then
+        echo "  🔄 Tentando baixar do repositório de código público..."
+        if download_file "$RAW_URL/support_rules.md" "/opt/data/support_rules.md" "$CURL_CODE_AUTH_HEADER"; then
+            echo "  ✓ Regras de suporte support_rules.md sincronizadas (código base)"
+        fi
+    fi
 fi
 
-# Baixa personal_contacts.json se estiver usando repositório privado
-if [ -n "$CONFIG_REPO" ]; then
+# Baixa personal_contacts.json se estiver usando repositório privado válido
+if [ -n "$CONFIG_REPO" ] && [ "$CONFIG_REPO" != "hermes_agent_context_contatcs" ]; then
     if download_file "$CONFIG_URL/personal_contacts.json" "/opt/data/personal_contacts.json" "$CURL_CONFIG_AUTH_HEADER"; then
         echo "  ✓ Contatos pessoais personal_contacts.json sincronizados com sucesso"
     else
