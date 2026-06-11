@@ -57,6 +57,140 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         return ""
 
 
+def _sync_contacts_from_db_internal() -> str:
+    """Sincroniza contatos do SQLite local para personal_contacts.json e envia para o GitHub."""
+    import sqlite3
+    from pathlib import Path
+    base_dir = Path("/opt/data/.hermes")
+    db_path = base_dir / "whatsapp_messages.db"
+    pc_path = Path("/opt/data/personal_contacts.json")
+
+    # 1. Carregar arquivo JSON local existente
+    personal_contacts = {}
+    if pc_path.exists():
+        try:
+            with open(pc_path, "r", encoding="utf-8") as f:
+                personal_contacts = json.load(f)
+        except Exception as e:
+            print(f"[whatsapp-manager] Erro ao ler {pc_path}: {e}")
+
+    # 2. Ler contatos únicos do SQLite
+    if not db_path.exists():
+        return "Erro: Banco de dados SQLite whatsapp_messages.db não encontrado."
+
+    db_contacts = {}
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT chat_id, MAX(sender_name) as name
+            FROM messages
+            WHERE chat_id NOT LIKE '%@g.us%' AND chat_id IS NOT NULL
+            GROUP BY chat_id
+        """)
+        rows = cursor.fetchall()
+        for chat_id, name in rows:
+            if chat_id:
+                db_contacts[chat_id] = name
+        conn.close()
+    except Exception as e:
+        return f"Erro ao ler banco de dados SQLite: {e}"
+
+    # 3. Mesclar dados mantendo os já existentes
+    updated = False
+    added_count = 0
+    for chat_id, name in db_contacts.items():
+        phone = chat_id.split("@")[0]
+        
+        # Verificar se já existe por JID ou por número
+        exists = False
+        for key in list(personal_contacts.keys()):
+            if key == chat_id or key == phone:
+                exists = True
+                break
+                
+        if not exists:
+            personal_contacts[chat_id] = {
+                "name": name or f"Contato {phone}",
+                "relationship": "cliente/contato",
+                "tone": "polido e profissional",
+                "guidelines": "Responda de forma prestativa."
+            }
+            added_count += 1
+            updated = True
+
+    if not updated:
+        result_str = "Nenhum contato novo encontrado para adicionar."
+    else:
+        # Salvar JSON localmente
+        try:
+            with open(pc_path, "w", encoding="utf-8") as f:
+                json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
+            result_str = f"Sucesso! Mapeados e mesclados {added_count} novos contatos localmente."
+        except Exception as e:
+            return f"Erro ao salvar personal_contacts.json localmente: {e}"
+
+    # 4. Sincronizar com GitHub
+    config_repo = os.getenv("CONFIG_REPO", "").strip()
+    config_token = os.getenv("CONFIG_GITHUB_TOKEN", "").strip()
+    setup_user = os.getenv("HERMES_SETUP_GITHUB_USER", "").strip()
+
+    if config_repo and config_token:
+        if "/" in config_repo:
+            repo_parts = config_repo.split("/")
+            repo_user = repo_parts[0]
+            repo_name = repo_parts[1]
+        else:
+            repo_user = setup_user or "empreendedorserial"
+            repo_name = config_repo
+
+        try:
+            with open(pc_path, "rb") as f:
+                content = f.read()
+            content_b64 = base64.b64encode(content).decode("utf-8")
+            
+            # Buscar SHA atual do arquivo no GitHub para evitar conflito
+            get_url = f"https://api.github.com/repos/{repo_user}/{repo_name}/contents/personal_contacts.json"
+            req_get = urllib.request.Request(get_url)
+            req_get.add_header("Authorization", f"token {config_token}")
+            req_get.add_header("Accept", "application/vnd.github+json")
+            req_get.add_header("User-Agent", "Hermes-Agent-Plugin")
+            
+            sha = None
+            try:
+                with urllib.request.urlopen(req_get, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    sha = data.get("sha")
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    print(f"[whatsapp-manager] Erro ao buscar SHA: {e}")
+            
+            # Atualizar conteúdo
+            put_data = {
+                "message": "Update personal_contacts.json from WhatsApp database history",
+                "content": content_b64,
+                "branch": "main"
+            }
+            if sha:
+                put_data["sha"] = sha
+                
+            req_put = urllib.request.Request(get_url, data=json.dumps(put_data).encode("utf-8"), method="PUT")
+            req_put.add_header("Authorization", f"token {config_token}")
+            req_put.add_header("Accept", "application/vnd.github+json")
+            req_put.add_header("User-Agent", "Hermes-Agent-Plugin")
+            req_put.add_header("Content-Type", "application/json")
+            
+            with urllib.request.urlopen(req_put, timeout=10) as resp:
+                if resp.status in [200, 201]:
+                    result_str += "\n✓ personal_contacts.json sincronizado com o GitHub com sucesso!"
+        except Exception as e:
+            result_str += f"\n⚠️ Falha ao sincronizar com GitHub: {e}"
+    else:
+        result_str += "\nℹ️ GitHub não configurado na stack, sincronizado apenas localmente."
+
+    return result_str
+
+
 
 def _ensure_google_libs():
     """
@@ -392,25 +526,16 @@ def register(ctx):
         ]
         if is_owner and normalized_msg in sync_commands:
             print("[whatsapp-manager] Comando de sincronização detectado.")
-            import subprocess
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             
             try:
-                script_path = "/opt/data/.hermes/scripts/sync_contacts_from_db.py"
-                python_bin = "/opt/hermes/.venv/bin/python"
-                if not os.path.exists(python_bin):
-                    python_bin = "python3"
-                
-                result = subprocess.run([python_bin, script_path], capture_output=True, text=True, timeout=60)
+                result_info = _sync_contacts_from_db_internal()
                 response_msg = (
                     "👤 *Sincronização de Contatos*\n\n"
-                    f"Status: {'Sucesso' if result.returncode == 0 else 'Falha'}\n\n"
-                    f"Saída:\n```\n{result.stdout.strip()}\n```"
+                    f"{result_info}"
                 )
-                if result.stderr:
-                    response_msg += f"\nErros:\n```\n{result.stderr.strip()}\n```"
             except Exception as e:
-                response_msg = f"❌ Erro ao executar script de sincronização: {e}"
+                response_msg = f"❌ Erro na sincronização interna: {e}"
             
             # Enviar de volta
             if chat_id:
