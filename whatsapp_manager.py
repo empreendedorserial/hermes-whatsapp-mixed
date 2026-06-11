@@ -96,22 +96,54 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         return ""
 
 def _extract_json_from_text(text: str) -> dict:
-    """Extrai o primeiro objeto JSON válido de um texto, removendo blocos markdown e texto extra ao redor."""
+    """Extrai o primeiro objeto JSON válido de um texto usando balanceamento de chaves."""
     import re
     # Remove blocos markdown ```json ... ``` ou ``` ... ```
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```", "", text)
     text = text.strip()
+
     # Tenta parse direto primeiro
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Extrai primeiro bloco { ... } encontrado
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    raise ValueError(f"Nenhum JSON válido encontrado no texto: {text[:200]}")
+
+    # Encontra o início do primeiro objeto JSON
+    start = text.find("{")
+    if start == -1:
+        raise ValueError(f"Nenhum JSON encontrado no texto: {text[:300]}")
+
+    # Balanceia chaves para encontrar o fim exato do objeto JSON
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start=start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as e:
+                    print(f"[whatsapp-manager] JSON inválido extraído: {e} | conteúdo: {candidate[:300]}")
+                    raise
+
+    raise ValueError(f"JSON incompleto ou malformado no texto: {text[:300]}")
+
 
 
 def _sanitize_classification_result(res: dict) -> dict:
