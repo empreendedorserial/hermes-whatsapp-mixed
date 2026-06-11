@@ -188,7 +188,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
     }
 
 
-def _sync_contacts_from_db_internal() -> str:
+def _sync_contacts_from_db_internal(force: bool = False) -> str:
     """Sincroniza contatos do SQLite local para personal_contacts.json e envia para o GitHub."""
     import sqlite3
     import datetime
@@ -246,7 +246,10 @@ def _sync_contacts_from_db_internal() -> str:
                 is_stale = False
                 if exists and existing_key:
                     existing_data = personal_contacts[existing_key]
-                    if not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
+                    old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Conversa inicial."]
+                    has_old_default_summary = existing_data.get("summary") in old_defaults
+                    
+                    if force or has_old_default_summary or not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
                         needs_update = True
                         is_stale = True
                 
@@ -807,12 +810,23 @@ def register(ctx):
             "sync contatos", "sync_contatos",
             "sincronizar contatos", "sincronizar_contatos"
         ]
-        if is_owner and normalized_msg in sync_commands:
-            print("[whatsapp-manager] Comando de sincronização detectado.")
+        
+        is_sync_cmd = False
+        is_force = False
+        for cmd in sync_commands:
+            cmd_norm = cmd.replace("_", " ").replace("-", " ")
+            if normalized_msg.startswith(cmd_norm):
+                is_sync_cmd = True
+                if "force" in normalized_msg or "forçar" in normalized_msg or "reset" in normalized_msg:
+                    is_force = True
+                break
+
+        if is_owner and is_sync_cmd:
+            print(f"[whatsapp-manager] Comando de sincronização detectado (force={is_force}).")
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             
             try:
-                result_info = _sync_contacts_from_db_internal()
+                result_info = _sync_contacts_from_db_internal(force=is_force)
                 response_msg = (
                     "👤 *Sincronização de Contatos*\n\n"
                     f"{result_info}"
