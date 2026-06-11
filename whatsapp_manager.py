@@ -68,6 +68,61 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         return ""
 
 
+def _rule_based_classify(name: str, chat_history: str) -> dict:
+    """Classifica contatos baseado em heurísticas de texto na conversa histórica."""
+    history_lower = (chat_history or "").lower()
+    name_lower = (name or "").lower()
+    
+    # 1. Identificar relacionamento amoroso / namorada
+    love_words = ["amor", "te amo", "beijo", "beijos", "linda", "lindo", "vida", "querido", "querida", "namorada", "namorado", "fofo", "fofa"]
+    love_count = sum(history_lower.count(w) for w in love_words)
+    
+    # 2. Identificar família
+    family_words = ["mãe", "pai", "filho", "filha", "irmão", "irmã", "tio", "tia", "primo", "prima", "vó", "vô"]
+    family_count = sum(history_lower.count(w) for w in family_words)
+    
+    # 3. Identificar gírias / informalidade extrema (amigos)
+    slang_words = ["mano", "cara", "brother", "véi", "velho", "parça", "blz", "beleza", "eae", "iaí", "kkk", "haha", "valeu", "flw", "tmj", "fala ae", "bora", "partiu"]
+    slang_count = sum(history_lower.count(w) for w in slang_words)
+    
+    # 4. Identificar termos de negócios / clientes
+    business_words = ["site", "orçamento", "valor", "preço", "comprar", "api", "sistema", "plataforma", "integração", "teste", "bot", "webhook", "contrato", "serviço", "suporte", "dashboard", "portainer", "easypanel", "vps", "empresa", "negócio", "projeto", "desenvolvimento", "código", "programar"]
+    business_count = sum(history_lower.count(w) for w in business_words)
+
+    # Decidir com base nas pontuações
+    if love_count > 0 or "namorada" in name_lower or "amor" in name_lower:
+        return {
+            "relationship": "amigo/namorada",
+            "tone": "informal e carinhoso",
+            "guidelines": "Você é o André conversando de forma carinhosa, informal e próxima. Use emojis de coração, mande beijos e responda com carinho."
+        }
+    elif family_count > 1 or "mãe" in name_lower or "pai" in name_lower:
+        return {
+            "relationship": "família",
+            "tone": "informal e amigável",
+            "guidelines": "Você é o André conversando com um familiar. Seja informal, prestativo e afetuoso."
+        }
+    elif slang_count > 1:
+        return {
+            "relationship": "amigo/namorada",
+            "tone": "informal e amigável",
+            "guidelines": "Você é o André conversando com um amigo próximo. Responda de forma descontraída, curta e informal. Use abreviações normais como 'vc', 'tb', 'pq', 'blz'."
+        }
+    elif business_count > 0:
+        return {
+            "relationship": "cliente/contato",
+            "tone": "polido e profissional",
+            "guidelines": "Você é o suporte do André. Responda de forma polida, prestativa e profissional, focando em ajudar o cliente com dúvidas sobre Chatkanban, Chatcommerce ou Api Connector."
+        }
+    
+    # Default fallback
+    return {
+        "relationship": "cliente/contato",
+        "tone": "polido e profissional",
+        "guidelines": "Responda de forma prestativa e profissional."
+    }
+
+
 def _sync_contacts_from_db_internal() -> str:
     """Sincroniza contatos do SQLite local para personal_contacts.json e envia para o GitHub."""
     import sqlite3
@@ -102,33 +157,56 @@ def _sync_contacts_from_db_internal() -> str:
         rows = cursor.fetchall()
         for chat_id, name in rows:
             if chat_id:
-                db_contacts[chat_id] = name
+                phone = chat_id.split("@")[0]
+                
+                # Verificar se já existe por JID ou por número
+                exists = False
+                for key in list(personal_contacts.keys()):
+                    if key == chat_id or key == phone:
+                        exists = True
+                        break
+                
+                if not exists:
+                    # Buscar as últimas 15 mensagens da conversa
+                    try:
+                        cursor.execute("""
+                            SELECT body FROM messages
+                            WHERE chat_id = ? AND body IS NOT NULL AND body != ''
+                            ORDER BY timestamp DESC LIMIT 15
+                        """, (chat_id,))
+                        msgs = [r[0] for r in cursor.fetchall()]
+                        chat_history = " ".join(msgs)
+                    except Exception as db_err:
+                        print(f"[whatsapp-manager] Erro ao ler histórico para {chat_id}: {db_err}")
+                        chat_history = ""
+                    
+                    db_contacts[chat_id] = {
+                        "name": name,
+                        "history": chat_history
+                    }
         conn.close()
     except Exception as e:
         return f"Erro ao ler banco de dados SQLite: {e}"
 
-    # 3. Mesclar dados mantendo os já existentes
+    # 3. Mesclar dados mantendo os já existentes com classificação inteligente
     updated = False
     added_count = 0
-    for chat_id, name in db_contacts.items():
+    for chat_id, info in db_contacts.items():
+        name = info["name"]
+        chat_history = info["history"]
         phone = chat_id.split("@")[0]
         
-        # Verificar se já existe por JID ou por número
-        exists = False
-        for key in list(personal_contacts.keys()):
-            if key == chat_id or key == phone:
-                exists = True
-                break
-                
-        if not exists:
-            personal_contacts[chat_id] = {
-                "name": name or f"Contato {phone}",
-                "relationship": "cliente/contato",
-                "tone": "polido e profissional",
-                "guidelines": "Responda de forma prestativa."
-            }
-            added_count += 1
-            updated = True
+        # Classificação baseada no nome e histórico de conversas
+        classification = _rule_based_classify(name, chat_history)
+        
+        personal_contacts[chat_id] = {
+            "name": name or f"Contato {phone}",
+            "relationship": classification["relationship"],
+            "tone": classification["tone"],
+            "guidelines": classification["guidelines"]
+        }
+        added_count += 1
+        updated = True
 
     if not updated:
         result_str = "Nenhum contato novo encontrado para adicionar."

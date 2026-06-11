@@ -263,5 +263,29 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         # Should not raise exception
         self.assertIsNone(res)
 
+    def test_rule_based_classify_love_words(self):
+        from whatsapp_manager import _rule_based_classify
+        res = _rule_based_classify("Bruna", "oi amor te amo beijo")
+        self.assertEqual(res["relationship"], "amigo/namorada")
+        self.assertEqual(res["tone"], "informal e carinhoso")
+
+    def test_rule_based_classify_slang(self):
+        from whatsapp_manager import _rule_based_classify
+        res = _rule_based_classify("Carlos", "eae mano beleza blz kkk")
+        self.assertEqual(res["relationship"], "amigo/namorada")
+        self.assertEqual(res["tone"], "informal e amigável")
+
+    def test_rule_based_classify_business(self):
+        from whatsapp_manager import _rule_based_classify
+        res = _rule_based_classify("Contato", "gostaria de um orçamento do site api")
+        self.assertEqual(res["relationship"], "cliente/contato")
+        self.assertEqual(res["tone"], "polido e profissional")
+
+    def test_rule_based_classify_default(self):
+        from whatsapp_manager import _rule_based_classify
+        res = _rule_based_classify("José", "olá tudo bem")
+        self.assertEqual(res["relationship"], "cliente/contato")
+        self.assertEqual(res["tone"], "polido e profissional")
+
 if __name__ == "__main__":
     unittest.main()
