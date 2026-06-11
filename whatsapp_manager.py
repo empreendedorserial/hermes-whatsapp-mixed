@@ -369,6 +369,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
 
     # 1. Carregar arquivo JSON local existente
     personal_contacts = {}
+    metadata_updated = False
     if pc_path.exists():
         try:
             with open(pc_path, "r", encoding="utf-8") as f:
@@ -466,21 +467,6 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     existing_key = key
                     break
             
-            # Decidir se precisa de atualização (novo contato ou contato existente sem os novos campos)
-            needs_update = not exists
-            is_stale = False
-            if exists and existing_key:
-                existing_data = personal_contacts[existing_key]
-                old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Conversa inicial."]
-                has_old_default_summary = existing_data.get("summary") in old_defaults
-                
-                if force or has_old_default_summary or not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
-                    needs_update = True
-                    is_stale = True
-            
-            if not needs_update:
-                continue
-
             # Coletar estatisticas e nome das duas fontes
             name = None
             msg_count = 0
@@ -503,6 +489,33 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         max_ts = state_last
                     if min_ts is None or state_last < min_ts:
                         min_ts = state_last
+
+            # Decidir se precisa de atualização (novo contato ou contato existente sem os novos campos, ou com novas mensagens)
+            needs_update = not exists
+            is_stale = False
+            if exists and existing_key:
+                existing_data = personal_contacts[existing_key]
+                old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Conversa inicial."]
+                has_old_default_summary = existing_data.get("summary") in old_defaults
+                
+                # Verifica se houve novas mensagens desde a última classificação
+                has_new_messages = False
+                if "last_interaction" in existing_data:
+                    if max_ts and max_ts > existing_data.get("last_interaction", 0):
+                        has_new_messages = True
+                else:
+                    # Se não tem last_interaction no arquivo, mas já está totalmente classificado,
+                    # inicializamos com o timestamp atual sem re-classificar via LLM
+                    if existing_data.get("summary") and not has_old_default_summary and existing_data.get("intent") and existing_data.get("frequency"):
+                        existing_data["last_interaction"] = max_ts or 0
+                        metadata_updated = True
+                
+                if force or has_old_default_summary or has_new_messages or not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
+                    needs_update = True
+                    is_stale = True
+            
+            if not needs_update:
+                continue
 
             # Resolucao de nome: tenta bridge Baileys quando o nome for generico/ausente.
             # Isso preenche o "Contato {phone}" que aparecia para quem nao tem sender_name no log.
@@ -544,7 +557,8 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     "summary": existing_data.get("summary") or "Conversa muito curta.",
                     "intent": existing_data.get("intent") or "Contato inicial.",
                     "frequency": existing_data.get("frequency") or "esporádica",
-                    "guidelines": guide_val
+                    "guidelines": guide_val,
+                    "last_interaction": max_ts or existing_data.get("last_interaction", 0)
                 }
                 continue
 
@@ -576,7 +590,8 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     "summary": existing_data.get("summary") or "Pendente de classificação.",
                     "intent": existing_data.get("intent") or "Contato recente.",
                     "frequency": existing_data.get("frequency") or "esporádica",
-                    "guidelines": guide_val
+                    "guidelines": guide_val,
+                    "last_interaction": max_ts or existing_data.get("last_interaction", 0)
                 }
                 continue
 
@@ -674,13 +689,14 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "notes": existing_data.get("notes"),
                 "product": existing_data.get("product") or classification.get("product"),
                 "tone": classification.get("tone", "polido e profissional"),
-                "nickname": classification.get("nickname"),
-                "pet_name": classification.get("pet_name"),
-                "frequent_greeting": classification.get("frequent_greeting"),
+                "nickname": existing_data.get("nickname") or classification.get("nickname"),
+                "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
+                "frequent_greeting": classification.get("frequent_greeting") or classification.get("frequent_greeting"),
                 "summary": classification.get("summary", "Conversa inicial."),
                 "intent": classification.get("intent", "Suporte/Atendimento."),
                 "frequency": classification.get("frequency", "esporádica"),
-                "guidelines": classification.get("guidelines", "Responda de forma prestativa.")
+                "guidelines": classification.get("guidelines", "Responda de forma prestativa."),
+                "last_interaction": max_ts or existing_data.get("last_interaction", 0)
             }
         else:
             # Migração se o relacionamento existente for manual/específico
@@ -701,14 +717,15 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "summary": existing_data.get("summary") or classification.get("summary", "Conversa inicial."),
                 "intent": existing_data.get("intent") or classification.get("intent", "Suporte/Atendimento."),
                 "frequency": existing_data.get("frequency") or classification.get("frequency", "esporádica"),
-                "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa.")
+                "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa."),
+                "last_interaction": max_ts or existing_data.get("last_interaction", 0)
             }
         added_count += 1
         updated = True
 
     # Preparar mensagem de resultado
     result_messages = []
-    if updated or skipped_few_msgs > 0 or skipped_due_to_limit > 0:
+    if updated or metadata_updated or skipped_few_msgs > 0 or skipped_due_to_limit > 0:
         # Salvar JSON localmente
         try:
             with open(pc_path, "w", encoding="utf-8") as f:
@@ -788,6 +805,76 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         result_str += "\nℹ️ GitHub não configurado na stack, sincronizado apenas localmente."
 
     return result_str
+
+
+
+def _push_personal_contacts_to_github() -> bool:
+    """Envia o arquivo personal_contacts.json local diretamente para o repositório do GitHub."""
+    import base64
+    import json
+    import urllib.request
+    import urllib.error
+    from pathlib import Path
+    pc_path = Path("/opt/data/personal_contacts.json")
+    if not pc_path.exists():
+        return False
+
+    config_repo = os.getenv("CONFIG_REPO", "").strip()
+    config_token = os.getenv("CONFIG_GITHUB_TOKEN", "").strip()
+    setup_user = os.getenv("HERMES_SETUP_GITHUB_USER", "").strip()
+
+    if not config_repo or not config_token:
+        return False
+
+    if "/" in config_repo:
+        repo_parts = config_repo.split("/")
+        repo_user = repo_parts[0]
+        repo_name = repo_parts[1]
+    else:
+        repo_user = setup_user or "empreendedorserial"
+        repo_name = config_repo
+
+    try:
+        with open(pc_path, "rb") as f:
+            content = f.read()
+        content_b64 = base64.b64encode(content).decode("utf-8")
+        
+        get_url = f"https://api.github.com/repos/{repo_user}/{repo_name}/contents/personal_contacts.json"
+        req_get = urllib.request.Request(get_url)
+        req_get.add_header("Authorization", f"token {config_token}")
+        req_get.add_header("Accept", "application/vnd.github+json")
+        req_get.add_header("User-Agent", "Hermes-Agent-Plugin")
+        
+        sha = None
+        try:
+            with urllib.request.urlopen(req_get, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                sha = data.get("sha")
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                print(f"[whatsapp-manager] Erro ao buscar SHA no push manual: {e}")
+        
+        put_data = {
+            "message": "Manual/Agent update of personal_contacts.json",
+            "content": content_b64,
+            "branch": "main"
+        }
+        if sha:
+            put_data["sha"] = sha
+            
+        req_put = urllib.request.Request(get_url, data=json.dumps(put_data).encode("utf-8"), method="PUT")
+        req_put.add_header("Authorization", f"token {config_token}")
+        req_put.add_header("Accept", "application/vnd.github+json")
+        req_put.add_header("User-Agent", "Hermes-Agent-Plugin")
+        req_put.add_header("Content-Type", "application/json")
+        
+        with urllib.request.urlopen(req_put, timeout=10) as resp:
+            if resp.status in [200, 201]:
+                print("[whatsapp-manager] ✓ personal_contacts.json sincronizado com o GitHub com sucesso via push detectado.")
+                return True
+    except Exception as e:
+        print(f"[whatsapp-manager] ⚠️ Falha ao sincronizar personal_contacts.json manual com o GitHub: {e}")
+    return False
 
 
 
@@ -1946,29 +2033,61 @@ def register(ctx):
     # Agendador periódico de sincronização de contatos e código (executa a cada 1 hora em segundo plano)
     def _run_periodic_sync():
         import time
-        # Aguarda 1 hora antes do primeiro ciclo periódico, já que o boot acabou de rodar
+        from pathlib import Path
+        pc_path = Path("/opt/data/personal_contacts.json")
+        
         last_code_check = time.time()
         last_contact_sync = time.time()
-        time.sleep(3600)
-        while True:
-            # 1. Puxar configurações do GitHub
+        last_git_pull = time.time()
+        
+        last_pc_mtime = 0.0
+        if pc_path.exists():
             try:
-                print("[whatsapp-manager] Iniciando puxada periódica de configurações do GitHub...")
-                _pull_and_merge_configurations()
-            except Exception as e:
-                print(f"[whatsapp-manager] ⚠️ Erro na puxada periódica de configurações: {e}")
+                last_pc_mtime = os.path.getmtime(pc_path)
+            except Exception:
+                pass
 
-            # 2. Sincronizar contatos (executa apenas a cada 24 horas)
+        # Aguarda 60 segundos após o boot antes de iniciar as verificações em loop
+        time.sleep(60)
+        
+        while True:
+            # 1. Verificar se personal_contacts.json foi modificado localmente (ex: pelo agente via ferramenta write_file)
+            if pc_path.exists():
+                try:
+                    current_mtime = os.path.getmtime(pc_path)
+                    if current_mtime > last_pc_mtime:
+                        print(f"[whatsapp-manager] Modificação local detectada em {pc_path}. Sincronizando com o GitHub...")
+                        if _push_personal_contacts_to_github():
+                            last_pc_mtime = current_mtime
+                        else:
+                            last_pc_mtime = current_mtime
+                except Exception as e:
+                    print(f"[whatsapp-manager] Erro ao monitorar modificações locais de contatos: {e}")
+
+            # 2. Puxar configurações do GitHub (a cada 1 hora / 3600 segundos)
+            if time.time() - last_git_pull >= 3600:
+                last_git_pull = time.time()
+                try:
+                    print("[whatsapp-manager] Iniciando puxada periódica de configurações do GitHub...")
+                    _pull_and_merge_configurations()
+                    if pc_path.exists():
+                        last_pc_mtime = os.path.getmtime(pc_path)
+                except Exception as e:
+                    print(f"[whatsapp-manager] ⚠️ Erro na puxada periódica de configurações: {e}")
+
+            # 3. Sincronizar contatos (executa apenas a cada 24 horas)
             if time.time() - last_contact_sync >= 86400:
                 last_contact_sync = time.time()
                 try:
                     print("[whatsapp-manager] Iniciando sincronização periódica automática de contatos...")
                     res = _sync_contacts_from_db_internal(force=False)
                     print(f"[whatsapp-manager] Sincronização periódica concluída: {res}")
+                    if pc_path.exists():
+                        last_pc_mtime = os.path.getmtime(pc_path)
                 except Exception as e:
                     print(f"[whatsapp-manager] ⚠️ Erro na sincronização periódica: {e}")
 
-            # 3. Verificar atualizações de código a cada 24 horas (86400 segundos)
+            # 4. Verificar atualizações de código a cada 24 horas (86400 segundos)
             if time.time() - last_code_check >= 86400:
                 last_code_check = time.time()
                 try:
@@ -1979,7 +2098,7 @@ def register(ctx):
                 except Exception as e:
                     print(f"[whatsapp-manager] ⚠️ Erro ao checar auto-update de código: {e}")
 
-            time.sleep(3600)
+            time.sleep(60)
 
     try:
         import threading
