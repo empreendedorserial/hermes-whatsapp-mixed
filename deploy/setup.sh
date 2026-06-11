@@ -19,33 +19,25 @@ fi
 # $3: Repositório de configurações privado do Cliente (opcional)
 # $4: Token do GitHub do Cliente para o repositório de configurações (opcional)
 
-CLIENT_GITHUB_USER="${1:-${CLIENT_GITHUB_USER:-${HERMES_SETUP_GITHUB_USER:-}}}"
+HERMES_SETUP_GITHUB_USER="${1:-${HERMES_SETUP_GITHUB_USER:-}}"
 DEV_GITHUB_TOKEN="${2:-$DEV_GITHUB_TOKEN}"
-CONFIG_REPO="${3:-${CLIENT_CONFIG_REPO:-${CONFIG_REPO:-hermes_agent_context_contatcs}}}"
-CONFIG_GITHUB_TOKEN="${4:-${CLIENT_CONFIG_GITHUB_TOKEN:-$CONFIG_GITHUB_TOKEN}}"
+CONFIG_REPO="${3:-${CONFIG_REPO:-hermes_agent_context_contatcs}}"
+CONFIG_GITHUB_TOKEN="${4:-$CONFIG_GITHUB_TOKEN}"
 
 # Consolidação dos repositórios e tokens:
-# Código base: se o cliente tiver fork próprio (CLIENT_GITHUB_USER), baixa de lá. Se não, usa DEV_GITHUB_USER ou padrão.
-CODE_USER="${CLIENT_GITHUB_USER:-${DEV_GITHUB_USER:-empreendedorserial}}"
+CODE_USER="${HERMES_SETUP_GITHUB_USER:-${DEV_GITHUB_USER:-empreendedorserial}}"
 CODE_TOKEN="$DEV_GITHUB_TOKEN"
 
 echo "=========================================================="
 echo "🤖 CONFIGURADOR DE MODO MISTO DO EMPREENDEDOR SERIAL 🤖"
-echo "           GitHub Fork de: $CODE_USER"
-if [ -n "$CONFIG_REPO" ]; then
-echo "           Repo de Configs Privado: $CONFIG_REPO"
-fi
-echo "----------------------------------------------------------"
-echo "ℹ️  DIAGNÓSTICO DE VARIÁVEIS DETECTADAS NO CONTAINER:"
-echo "  - CLIENT_GITHUB_USER : '$CLIENT_GITHUB_USER'"
-echo "  - CONFIG_REPO        : '$CONFIG_REPO'"
+echo "           GitHub User  : $CODE_USER"
+echo "           Config Repo  : $CONFIG_REPO"
 if [ -n "$CONFIG_GITHUB_TOKEN" ]; then
-echo "  - CONFIG_GITHUB_TOKEN: CONFIGURADO (tamanho: ${#CONFIG_GITHUB_TOKEN} caracteres)"
+echo "           Config Token : CONFIGURADO (tamanho: ${#CONFIG_GITHUB_TOKEN} caracteres)"
 else
-echo "  - CONFIG_GITHUB_TOKEN: ⚠️ VAZIO OU NÃO CONFIGURADO NA STACK"
+echo "           Config Token : ⚠️ VAZIO OU NÃO CONFIGURADO NA STACK"
 fi
 echo "=========================================================="
-
 
 mkdir -p "$BASE_DIR"
 mkdir -p "/opt/data"
@@ -83,7 +75,7 @@ if [ -n "$CONFIG_REPO" ] && [ -n "$CONFIG_GITHUB_TOKEN" ]; then
         REPO_USER=$(echo "$CONFIG_REPO" | cut -d'/' -f1)
         REPO_NAME=$(echo "$CONFIG_REPO" | cut -d'/' -f2)
     else
-        REPO_USER="${CLIENT_GITHUB_USER:-$CODE_USER}"
+        REPO_USER="$CODE_USER"
         REPO_NAME="$CONFIG_REPO"
         CONFIG_REPO="$REPO_USER/$REPO_NAME"
     fi
@@ -160,6 +152,7 @@ if [ -n "$CONFIG_REPO" ] && [ -n "$CONFIG_GITHUB_TOKEN" ]; then
 else
     CONFIG_URL="$RAW_URL"
 fi
+
 
 
 echo "⏳ 1. Baixando arquivos de configuração e personas..."
