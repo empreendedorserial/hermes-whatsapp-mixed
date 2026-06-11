@@ -1,6 +1,7 @@
 """Python unit tests for the whatsapp-manager plugin."""
 
 import os
+import json
 import unittest
 import sys
 from unittest.mock import patch, MagicMock
@@ -263,29 +264,117 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         # Should not raise exception
         self.assertIsNone(res)
 
-    def test_rule_based_classify_love_words(self):
-        from whatsapp_manager import _rule_based_classify
-        res = _rule_based_classify("Bruna", "oi amor te amo beijo")
-        self.assertEqual(res["relationship"], "amigo/namorada")
-        self.assertEqual(res["tone"], "informal e carinhoso")
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "fake-key"})
+    def test_classify_contact_via_llm_gemini(self, mock_urlopen):
+        from whatsapp_manager import _classify_contact_via_llm
+        
+        # Mocking Gemini response
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": '{"relationship": "amigo/namorada", "tone": "informal e carinhoso", "nickname": "Bru", "pet_name": "amor", "frequent_greeting": "Oi linda", "summary": "Conversa carinhosa", "intent": "Saudação", "frequency": "diária", "guidelines": "Seja romântico."}'
+                    }]
+                }
+            }]
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
 
-    def test_rule_based_classify_slang(self):
-        from whatsapp_manager import _rule_based_classify
-        res = _rule_based_classify("Carlos", "eae mano beleza blz kkk")
+        res = _classify_contact_via_llm("Bruna", "oi amor te amo", "Total messages: 10")
         self.assertEqual(res["relationship"], "amigo/namorada")
-        self.assertEqual(res["tone"], "informal e amigável")
+        self.assertEqual(res["nickname"], "Bru")
+        self.assertEqual(res["pet_name"], "amor")
+        self.assertEqual(res["frequent_greeting"], "Oi linda")
+        self.assertEqual(res["summary"], "Conversa carinhosa")
+        self.assertEqual(res["intent"], "Saudação")
+        self.assertEqual(res["frequency"], "diária")
 
-    def test_rule_based_classify_business(self):
-        from whatsapp_manager import _rule_based_classify
-        res = _rule_based_classify("Contato", "gostaria de um orçamento do site api")
+    @patch.dict(os.environ, {}, clear=True)
+    def test_classify_contact_via_llm_fallback(self):
+        from whatsapp_manager import _classify_contact_via_llm
+        res = _classify_contact_via_llm("José", "olá tudo bem", "Total messages: 1")
         self.assertEqual(res["relationship"], "cliente/contato")
         self.assertEqual(res["tone"], "polido e profissional")
+        self.assertIsNone(res["nickname"])
 
-    def test_rule_based_classify_default(self):
-        from whatsapp_manager import _rule_based_classify
-        res = _rule_based_classify("José", "olá tudo bem")
-        self.assertEqual(res["relationship"], "cliente/contato")
-        self.assertEqual(res["tone"], "polido e profissional")
+    @patch("sqlite3.connect")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("pathlib.Path.exists")
+    @patch("builtins.open")
+    def test_sync_contacts_from_db_internal_with_updates(self, mock_open, mock_exists, mock_classify, mock_sqlite_connect):
+        from whatsapp_manager import _sync_contacts_from_db_internal
+        
+        # Mock paths exists
+        mock_exists.return_value = True
+        
+        # Mock personal_contacts.json content
+        existing_contacts = {
+            "5511777777777@s.whatsapp.net": {
+                "name": "Bruna",
+                "relationship": "namorada",
+                "tone": "romantico",
+                "guidelines": "Seja fofo"
+            }
+        }
+        
+        mock_file = unittest.mock.mock_open(read_data=json.dumps(existing_contacts))
+        mock_open.side_effect = lambda path, *args, **kwargs: mock_file(path, *args, **kwargs)
+        
+        # Mock SQLite cursor and fetchall results
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_sqlite_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # Mock rows returned by SELECT
+        mock_cursor.fetchall.side_effect = [
+            [("5511777777777@s.whatsapp.net", "Bruna")], # Rows for the contacts list
+            [("oi amor te amo",)] # last 15 messages body
+        ]
+        mock_cursor.fetchone.return_value = (10, 1686440000, 1686450000)
+        
+        # Mock LLM classification response
+        mock_classify.return_value = {
+            "relationship": "amigo/namorada",
+            "tone": "informal e carinhoso",
+            "nickname": "Bru",
+            "pet_name": "amor",
+            "frequent_greeting": "Oi linda",
+            "summary": "Conversa carinhosa",
+            "intent": "Saudação",
+            "frequency": "diária",
+            "guidelines": "Seja romântico."
+        }
+        
+        # Call the sync function
+        with patch.dict(os.environ, {"CONFIG_REPO": ""}):
+            result = _sync_contacts_from_db_internal()
+            
+        # Verify the classification was called
+        mock_classify.assert_called_once()
+        
+        # Verify write to personal_contacts.json occurred
+        mock_open.assert_any_call(Path("/opt/data/personal_contacts.json"), "w", encoding="utf-8")
+        
+        # Retrieve what was written
+        write_calls = mock_file().write.call_args_list
+        written_data = "".join(call[0][0] for call in write_calls)
+        written_json = json.loads(written_data)
+        
+        bruna_data = written_json["5511777777777@s.whatsapp.net"]
+        # Existing fields are preserved
+        self.assertEqual(bruna_data["name"], "Bruna")
+        self.assertEqual(bruna_data["relationship"], "namorada")
+        self.assertEqual(bruna_data["tone"], "romantico")
+        self.assertEqual(bruna_data["guidelines"], "Seja fofo")
+        # New fields are populated
+        self.assertEqual(bruna_data["nickname"], "Bru")
+        self.assertEqual(bruna_data["pet_name"], "amor")
+        self.assertEqual(bruna_data["summary"], "Conversa carinhosa")
+        self.assertEqual(bruna_data["intent"], "Saudação")
+        self.assertEqual(bruna_data["frequency"], "diária")
 
 if __name__ == "__main__":
     unittest.main()

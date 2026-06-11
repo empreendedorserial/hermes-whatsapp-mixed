@@ -68,64 +68,130 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         return ""
 
 
-def _rule_based_classify(name: str, chat_history: str) -> dict:
-    """Classifica contatos baseado em heurísticas de texto na conversa histórica."""
-    history_lower = (chat_history or "").lower()
-    name_lower = (name or "").lower()
-    
-    # 1. Identificar relacionamento amoroso / namorada
-    love_words = ["amor", "te amo", "beijo", "beijos", "linda", "lindo", "vida", "querido", "querida", "namorada", "namorado", "fofo", "fofa"]
-    love_count = sum(history_lower.count(w) for w in love_words)
-    
-    # 2. Identificar família
-    family_words = ["mãe", "pai", "filho", "filha", "irmão", "irmã", "tio", "tia", "primo", "prima", "vó", "vô"]
-    family_count = sum(history_lower.count(w) for w in family_words)
-    
-    # 3. Identificar gírias / informalidade extrema (amigos)
-    slang_words = ["mano", "cara", "brother", "véi", "velho", "parça", "blz", "beleza", "eae", "iaí", "kkk", "haha", "valeu", "flw", "tmj", "fala ae", "bora", "partiu"]
-    slang_count = sum(history_lower.count(w) for w in slang_words)
-    
-    # 4. Identificar termos de negócios / clientes
-    business_words = ["site", "orçamento", "valor", "preço", "comprar", "api", "sistema", "plataforma", "integração", "teste", "bot", "webhook", "contrato", "serviço", "suporte", "dashboard", "portainer", "easypanel", "vps", "empresa", "negócio", "projeto", "desenvolvimento", "código", "programar"]
-    business_count = sum(history_lower.count(w) for w in business_words)
+def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> dict:
+    """Classifica contatos usando a API do LLM (Gemini, OpenAI ou OpenRouter) com base no histórico e estatísticas."""
+    google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
-    # Decidir com base nas pontuações
-    if love_count > 0 or "namorada" in name_lower or "amor" in name_lower:
-        return {
-            "relationship": "amigo/namorada",
-            "tone": "informal e carinhoso",
-            "guidelines": "Você é o André conversando de forma carinhosa, informal e próxima. Use emojis de coração, mande beijos e responda com carinho."
-        }
-    elif family_count > 1 or "mãe" in name_lower or "pai" in name_lower:
-        return {
-            "relationship": "família",
-            "tone": "informal e amigável",
-            "guidelines": "Você é o André conversando com um familiar. Seja informal, prestativo e afetuoso."
-        }
-    elif slang_count > 1:
-        return {
-            "relationship": "amigo/namorada",
-            "tone": "informal e amigável",
-            "guidelines": "Você é o André conversando com um amigo próximo. Responda de forma descontraída, curta e informal. Use abreviações normais como 'vc', 'tb', 'pq', 'blz'."
-        }
-    elif business_count > 0:
-        return {
-            "relationship": "cliente/contato",
-            "tone": "polido e profissional",
-            "guidelines": "Você é o suporte do André. Responda de forma polida, prestativa e profissional, focando em ajudar o cliente com dúvidas sobre Chatkanban, Chatcommerce ou Api Connector."
-        }
-    
-    # Default fallback
+    prompt = (
+        "You are a classification assistant for a WhatsApp bot.\n"
+        "The owner of the WhatsApp account is named André Alencar.\n"
+        f"Your task is to analyze the recent conversation history and statistics between André and a contact named '{name or 'Unknown'}' "
+        "to classify their relationship, tone, nickname, pet names (terms of endearment), frequent greetings, "
+        "conversation summary, the intent of their latest interactions, the frequency of their conversations, "
+        "and specific guidelines for the bot when responding to them.\n\n"
+        f"Conversation Statistics:\n{stats_info}\n\n"
+        "Recent Chat history:\n"
+        f"{chat_history or '(No history available)'}\n\n"
+        "Classify into one of the following profiles:\n"
+        "1. \"amigo/namorada\":\n"
+        "   - Use this if they are friends, a girlfriend, close romantic contacts, or talk very informally/intimately.\n"
+        "   - Recommended tone: \"informal e amigável\" or \"informal e carinhoso\".\n"
+        "2. \"família\":\n"
+        "   - Use this if they are a family member (mother, father, sibling, etc.).\n"
+        "   - Recommended tone: \"informal e amigável\".\n"
+        "3. \"cliente/contato\":\n"
+        "   - Use this if they are a customer, client, business contact, lead, or inquiring about systems, API, support, development, or price.\n"
+        "   - Recommended tone: \"polido e profissional\".\n\n"
+        "Extract/determine the following details:\n"
+        "- \"nickname\" (apelido): Any nickname used by André to refer to this contact (e.g. \"Bru\", \"Carlos\", etc.). null if none.\n"
+        "- \"pet_name\" (nome carinhoso): Terms of endearment used by André (e.g. \"amor\", \"vida\", \"querida\", etc.). null if none.\n"
+        "- \"frequent_greeting\" (saudação frequente): The typical greeting phrase used when starting a conversation (e.g. \"Eae mano\", \"Oi amor\", \"Olá\", etc.). null if none.\n"
+        "- \"summary\" (resumo): A brief summary of what they usually talk about (in Portuguese).\n"
+        "- \"intent\" (intenção): The main intent or topic of their latest messages (in Portuguese).\n"
+        "- \"frequency\" (frequência): The frequency of their conversations (e.g. \"diária\", \"semanal\", \"mensal\", \"esporádica\") based on the statistics and history.\n\n"
+        "Return a JSON object with this exact structure (do NOT wrap it in markdown code blocks like ```json, just raw JSON):\n"
+        "{\n"
+        "  \"relationship\": \"amigo/namorada\" | \"família\" | \"cliente/contato\",\n"
+        "  \"tone\": \"informal e carinhoso\" | \"informal e amigável\" | \"polido e profissional\" | \"técnico e direto\",\n"
+        "  \"nickname\": string | null,\n"
+        "  \"pet_name\": string | null,\n"
+        "  \"frequent_greeting\": string | null,\n"
+        "  \"summary\": string,\n"
+        "  \"intent\": string,\n"
+        "  \"frequency\": string,\n"
+        "  \"guidelines\": \"...\"\n"
+        "}"
+    )
+
+    # 1. Tentar Gemini API
+    if google_key:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={google_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"responseMimeType": "application/json"}
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text_content.strip())
+        except Exception as e:
+            print(f"[whatsapp-manager] Falha ao classificar via Gemini: {e}")
+
+    # 2. Tentar OpenAI API
+    if openai_key:
+        try:
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {openai_key}"
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"}
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                text_content = result["choices"][0]["message"]["content"]
+                return json.loads(text_content.strip())
+        except Exception as e:
+            print(f"[whatsapp-manager] Falha ao classificar via OpenAI: {e}")
+
+    # 3. Tentar OpenRouter API
+    if openrouter_key:
+        try:
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {openrouter_key}"
+            }
+            payload = {
+                "model": "google/gemini-2.5-flash",
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"}
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                text_content = result["choices"][0]["message"]["content"]
+                return json.loads(text_content.strip())
+        except Exception as e:
+            print(f"[whatsapp-manager] Falha ao classificar via OpenRouter: {e}")
+
+    # Fallback default se nenhuma API key estiver disponível ou todas falharem
     return {
         "relationship": "cliente/contato",
         "tone": "polido e profissional",
-        "guidelines": "Responda de forma prestativa e profissional."
+        "nickname": None,
+        "pet_name": None,
+        "frequent_greeting": None,
+        "summary": "Conversa inicial de suporte/atendimento.",
+        "intent": "Obter ajuda ou informações sobre os sistemas do André.",
+        "frequency": "esporádica",
+        "guidelines": "Responda de forma prestativa."
     }
 
 
 def _sync_contacts_from_db_internal() -> str:
     """Sincroniza contatos do SQLite local para personal_contacts.json e envia para o GitHub."""
     import sqlite3
+    import datetime
     from pathlib import Path
     base_dir = Path("/opt/data/.hermes")
     db_path = base_dir / "whatsapp_messages.db"
@@ -161,12 +227,41 @@ def _sync_contacts_from_db_internal() -> str:
                 
                 # Verificar se já existe por JID ou por número
                 exists = False
+                existing_key = None
                 for key in list(personal_contacts.keys()):
                     if key == chat_id or key == phone:
                         exists = True
+                        existing_key = key
                         break
                 
-                if not exists:
+                # Decidir se precisa de atualização (novo contato ou contato existente sem os novos campos)
+                needs_update = not exists
+                if exists and existing_key:
+                    existing_data = personal_contacts[existing_key]
+                    if not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
+                        needs_update = True
+                
+                if needs_update:
+                    # Obter estatísticas adicionais da conversa no SQLite
+                    try:
+                        cursor.execute("""
+                            SELECT COUNT(*), MIN(timestamp), MAX(timestamp)
+                            FROM messages
+                            WHERE chat_id = ?
+                        """, (chat_id,))
+                        msg_count, min_ts, max_ts = cursor.fetchone()
+                    except Exception:
+                        msg_count, min_ts, max_ts = 0, 0, 0
+                    
+                    stats_info = f"Total messages: {msg_count or 0}."
+                    if min_ts and max_ts:
+                        try:
+                            first_date = datetime.datetime.fromtimestamp(min_ts).strftime('%Y-%m-%d')
+                            last_date = datetime.datetime.fromtimestamp(max_ts).strftime('%Y-%m-%d')
+                            stats_info += f" First message date: {first_date}. Last message date: {last_date}."
+                        except Exception:
+                            pass
+                    
                     # Buscar as últimas 15 mensagens da conversa
                     try:
                         cursor.execute("""
@@ -182,28 +277,41 @@ def _sync_contacts_from_db_internal() -> str:
                     
                     db_contacts[chat_id] = {
                         "name": name,
-                        "history": chat_history
+                        "history": chat_history,
+                        "stats": stats_info,
+                        "existing_key": existing_key
                     }
         conn.close()
     except Exception as e:
         return f"Erro ao ler banco de dados SQLite: {e}"
 
-    # 3. Mesclar dados mantendo os já existentes com classificação inteligente
+    # 3. Mesclar dados mantendo os já existentes com classificação inteligente via LLM
     updated = False
     added_count = 0
     for chat_id, info in db_contacts.items():
         name = info["name"]
         chat_history = info["history"]
+        stats_info = info["stats"]
+        existing_key = info["existing_key"]
         phone = chat_id.split("@")[0]
         
-        # Classificação baseada no nome e histórico de conversas
-        classification = _rule_based_classify(name, chat_history)
+        # Classificação baseada no nome, estatísticas e histórico de conversas via LLM
+        classification = _classify_contact_via_llm(name, chat_history, stats_info)
         
-        personal_contacts[chat_id] = {
-            "name": name or f"Contato {phone}",
-            "relationship": classification["relationship"],
-            "tone": classification["tone"],
-            "guidelines": classification["guidelines"]
+        target_key = existing_key if existing_key else chat_id
+        existing_data = personal_contacts.get(target_key, {})
+        
+        personal_contacts[target_key] = {
+            "name": existing_data.get("name") or name or f"Contato {phone}",
+            "relationship": existing_data.get("relationship") or classification.get("relationship", "cliente/contato"),
+            "tone": existing_data.get("tone") or classification.get("tone", "polido e profissional"),
+            "nickname": existing_data.get("nickname") or classification.get("nickname"),
+            "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
+            "frequent_greeting": existing_data.get("frequent_greeting") or classification.get("frequent_greeting"),
+            "summary": existing_data.get("summary") or classification.get("summary", "Conversa inicial."),
+            "intent": existing_data.get("intent") or classification.get("intent", "Suporte/Atendimento."),
+            "frequency": existing_data.get("frequency") or classification.get("frequency", "esporádica"),
+            "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa.")
         }
         added_count += 1
         updated = True
@@ -858,6 +966,27 @@ def register(ctx):
                 relationship = contact_info.get("relationship", "amigo/namorada")
                 tone = contact_info.get("tone", "informal e amigável")
                 guidelines = contact_info.get("guidelines", "Responda como André.")
+                
+                nickname = contact_info.get("nickname")
+                pet_name = contact_info.get("pet_name")
+                frequent_greeting = contact_info.get("frequent_greeting")
+                summary = contact_info.get("summary")
+                intent = contact_info.get("intent")
+                frequency = contact_info.get("frequency")
+
+                details_section = ""
+                if nickname:
+                    details_section += f"Apelido do contato: {nickname}\n"
+                if pet_name:
+                    details_section += f"Nome carinhoso/Apelido afetivo: {pet_name}\n"
+                if frequent_greeting:
+                    details_section += f"Saudação frequente: {frequent_greeting}\n"
+                if summary:
+                    details_section += f"Resumo das conversas anteriores: {summary}\n"
+                if intent:
+                    details_section += f"Intenção das últimas conversas: {intent}\n"
+                if frequency:
+                    details_section += f"Frequência das conversas: {frequency}\n"
 
                 return {
                     "context": (
@@ -867,12 +996,14 @@ def register(ctx):
                         f"Nome do contato: {name}\n"
                         f"Relação com o André: {relationship}\n"
                         f"Tom de voz recomendado: {tone}\n"
+                        f"{details_section}"
                         f"Diretrizes específicas: {guidelines}\n\n"
                         "### DIRETRIZES IMPORTANTES DE COMPORTAMENTO ###\n"
                         "1. Analise o histórico recente fornecido abaixo para identificar os apelidos mútuos, gírias e o nível de formalidade/descontração com que vocês conversam.\n"
                         "2. Adote o mesmo estilo de escrita do André nas mensagens anteriores. Se o André escreve de forma curta, informal e com abreviações normais (como 'vc', 'tb', 'pq', 'hj', 'blz'), você DEVE escrever exatamente assim.\n"
                         "3. Responda de forma extremamente natural e fluida. Seja breve e direto (evite textos longos, a menos que o contexto exija).\n"
-                        "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n\n"
+                        "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n"
+                        "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n\n"
                         f"{history_section}"
                         "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
                         "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"
