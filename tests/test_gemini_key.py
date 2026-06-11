@@ -5,6 +5,21 @@ import urllib.request
 import urllib.error
 
 def test_gemini_connection():
+    # Tenta carregar .env local se existir no diretório raiz
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_path = os.path.join(root_dir, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ[k.strip()] = v.strip().strip('"').strip("'")
+            print(f"✓ Carregado .env local de {env_path}")
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar .env local: {e}")
+
     api_key = os.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key:
         print("❌ Error: GOOGLE_API_KEY environment variable is empty or not set.")
@@ -12,8 +27,8 @@ def test_gemini_connection():
 
     print(f"Checking API key: {api_key[:8]}...{api_key[-5:] if len(api_key) > 5 else ''}")
     
-    # We use gemini-1.5-flash as the standard stable endpoint
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # We use gemini-3.5-flash as the standard stable endpoint
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": "Hello, this is a test. Reply with the word 'OK' if you receive this."}]}]
@@ -51,6 +66,19 @@ def test_gemini_connection():
         print(f"❌ API Request Failed (HTTP {status_code}):")
         print(f"   Status : {error_status}")
         print(f"   Message: {error_msg}")
+
+        # If 404, let's query the models list to see what is allowed!
+        if status_code == 404:
+            print("\n🔍 Diagnosing 404: Querying ListModels endpoint...")
+            try:
+                list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                list_req = urllib.request.Request(list_url, method="GET")
+                with urllib.request.urlopen(list_req, timeout=10) as list_resp:
+                    models_data = json.loads(list_resp.read().decode("utf-8"))
+                    models_list = [m.get("name") for m in models_data.get("models", [])]
+                    print(f"✅ Allowed models for this key: {models_list[:10]}")
+            except Exception as list_e:
+                print(f"❌ ListModels also failed: {list_e}")
         
         # Specific diagnostic hints
         if status_code == 400:
