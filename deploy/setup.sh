@@ -68,7 +68,7 @@ RAW_ROOT="https://raw.githubusercontent.com/$CODE_USER/hermes-whatsapp-mixed/mai
 RAW_URL="$RAW_ROOT/deploy"
 
 # URL para os arquivos de configuração (SOULs, regras, contatos)
-if [ -n "$CONFIG_REPO" ] && [ "$CONFIG_REPO" != "hermes_agent_context_contatcs" ]; then
+if [ -n "$CONFIG_REPO" ] && [ -n "$CONFIG_GITHUB_TOKEN" ]; then
     if [[ "$CONFIG_REPO" == *"/"* ]]; then
         REPO_USER=$(echo "$CONFIG_REPO" | cut -d'/' -f1)
         REPO_NAME=$(echo "$CONFIG_REPO" | cut -d'/' -f2)
@@ -209,7 +209,7 @@ else
 fi
 
 # Baixa personal_contacts.json se estiver usando repositório privado válido
-if [ -n "$CONFIG_REPO" ] && [ "$CONFIG_REPO" != "hermes_agent_context_contatcs" ]; then
+if [ -n "$CONFIG_REPO" ] && [ -n "$CONFIG_GITHUB_TOKEN" ]; then
     if download_file "$CONFIG_URL/personal_contacts.json" "/opt/data/personal_contacts.json" "$CURL_CONFIG_AUTH_HEADER"; then
         echo "  ✓ Contatos pessoais personal_contacts.json sincronizados com sucesso"
     else
