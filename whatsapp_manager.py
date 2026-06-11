@@ -67,6 +67,17 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
     except Exception:
         return ""
 
+def _sanitize_classification_result(res: dict) -> dict:
+    """Evita que nomes possessivos/parentesco do André (como 'pai', 'mãe', etc.) sejam classificados como pet_name/nickname do contato."""
+    if not isinstance(res, dict):
+        return res
+    forbidden = {"pai", "mãe", "mae", "tio", "tia", "vô", "vó", "dono", "chefe", "patrão"}
+    for field in ["pet_name", "nickname"]:
+        val = res.get(field)
+        if isinstance(val, str) and val.lower().strip() in forbidden:
+            res[field] = None
+    return res
+
 
 def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> dict:
     """Classifica contatos usando a API do LLM (Gemini, OpenAI ou OpenRouter) com base no histórico e estatísticas."""
@@ -104,8 +115,8 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
         "   - Use this if they are a salesperson, vendor, or offering/selling products, services, platforms, tools, or partnerships to André.\n"
         "   - Recommended tone: \"técnico e direto\" or \"polido e profissional\".\n\n"
         "Extract/determine the following details:\n"
-        "- \"nickname\" (apelido): Any nickname used by André to refer to this contact (e.g. \"Bru\", \"Carlos\", etc.). null if none.\n"
-        "- \"pet_name\" (nome carinhoso): Terms of endearment used by André (e.g. \"amor\", \"vida\", \"querida\", etc.). null if none.\n"
+        "- \"nickname\" (apelido): Any nickname used by André to refer to this contact (e.g. \"Bru\", \"Carlos\", etc.). NEVER extract terms the contact uses to refer to André (like \"pai\", \"mãe\", \"tio\", etc.). null if none.\n"
+        "- \"pet_name\" (nome carinhoso): Terms of endearment used by André to refer to this contact (e.g. \"amor\", \"vida\", \"querida\", etc.). NEVER extract terms the contact uses to refer to André (like \"pai\", \"mãe\", \"tio\", etc.). null if none.\n"
         "- \"frequent_greeting\" (saudação frequente): The typical greeting phrase used when starting a conversation (e.g. \"Eae mano\", \"Oi amor\", \"Olá\", etc.). null if none.\n"
         "- \"summary\" (resumo): A brief summary of what they usually talk about (in Portuguese).\n"
         "- \"intent\" (intenção): The main intent or topic of their latest messages (in Portuguese).\n"
@@ -139,7 +150,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text_content.strip())
+                return _sanitize_classification_result(json.loads(text_content.strip()))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via Gemini: {e}")
 
@@ -160,7 +171,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["choices"][0]["message"]["content"]
-                return json.loads(text_content.strip())
+                return _sanitize_classification_result(json.loads(text_content.strip()))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via OpenAI: {e}")
 
@@ -181,7 +192,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["choices"][0]["message"]["content"]
-                return json.loads(text_content.strip())
+                return _sanitize_classification_result(json.loads(text_content.strip()))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via OpenRouter: {e}")
 
@@ -215,6 +226,9 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         try:
             with open(pc_path, "r", encoding="utf-8") as f:
                 personal_contacts = json.load(f)
+                for k, v in personal_contacts.items():
+                    if isinstance(v, dict):
+                        personal_contacts[k] = _sanitize_classification_result(v)
         except Exception as e:
             print(f"[whatsapp-manager] Erro ao ler {pc_path}: {e}")
 
@@ -634,6 +648,9 @@ def _pull_and_merge_configurations():
         try:
             with open(personal_contacts_path, "r", encoding="utf-8") as f:
                 local_contacts = json.load(f)
+                for k, v in local_contacts.items():
+                    if isinstance(v, dict):
+                        local_contacts[k] = _sanitize_classification_result(v)
         except Exception as e:
             print(f"[whatsapp-manager] Erro ao carregar local personal_contacts.json: {e}")
 
@@ -646,6 +663,10 @@ def _pull_and_merge_configurations():
         req.add_header("User-Agent", "Hermes-Agent-Plugin")
         with urllib.request.urlopen(req, timeout=10) as response:
             remote_contacts = json.loads(response.read().decode("utf-8"))
+            if isinstance(remote_contacts, dict):
+                for k, v in remote_contacts.items():
+                    if isinstance(v, dict):
+                        remote_contacts[k] = _sanitize_classification_result(v)
             print(f"[whatsapp-manager] ✓ personal_contacts.json remoto carregado com sucesso.")
     except Exception as e:
         print(f"[whatsapp-manager] ⚠️ Não foi possível baixar personal_contacts.json do GitHub: {e}")
@@ -1261,6 +1282,9 @@ def register(ctx):
                 if os.path.exists(pc_file):
                     with open(pc_file, "r", encoding="utf-8") as f:
                         personal_contacts = json.load(f)
+                        for k, v in personal_contacts.items():
+                            if isinstance(v, dict):
+                                personal_contacts[k] = _sanitize_classification_result(v)
             except Exception as pc_load_err:
                 print(f"[whatsapp-manager] ⚠️ Erro ao carregar personal_contacts.json: {pc_load_err}")
 

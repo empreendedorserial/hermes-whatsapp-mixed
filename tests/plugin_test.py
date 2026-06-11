@@ -564,5 +564,71 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Produto/Serviço envolvido: Curso de Inglês", res["context"])
         self.assertIn("Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária", res["context"])
 
+    def test_sanitize_classification_result_function(self):
+        from whatsapp_manager import _sanitize_classification_result
+        
+        # Test sanitization with forbidden terms (various cases)
+        forbidden_test = {
+            "nickname": "pai",
+            "pet_name": "MÃE",
+            "relationship": "Filho",
+            "tone": "informal"
+        }
+        res = _sanitize_classification_result(forbidden_test)
+        self.assertIsNone(res["nickname"])
+        self.assertIsNone(res["pet_name"])
+        self.assertEqual(res["relationship"], "Filho")
+
+        # Test with allowed/normal values
+        allowed_test = {
+            "nickname": "Bru",
+            "pet_name": "amor",
+            "relationship": "AmigoProximo"
+        }
+        res2 = _sanitize_classification_result(allowed_test)
+        self.assertEqual(res2["nickname"], "Bru")
+        self.assertEqual(res2["pet_name"], "amor")
+
+    def test_pre_llm_call_sanitizes_legacy_forbidden_pet_names(self):
+        pre_llm = self.ctx.hooks.get("pre_llm_call")
+
+        context = {
+            "platform": "whatsapp",
+            "sender_id": "5511444444444@s.whatsapp.net"
+        }
+
+        # JSON containing legacy forbidden values
+        personal_json = (
+            '{"5511444444444@s.whatsapp.net": {'
+            '"name": "Filho do André", '
+            '"relationship": "Filho", '
+            '"pet_name": "pai", '
+            '"nickname": "pai", '
+            '"tone": "informal e carinhoso", '
+            '"guidelines": "Seja legal.", '
+            '"summary": "Conversas familiares.", '
+            '"intent": "Falar com pai.", '
+            '"frequency": "diária"}}'
+        )
+        mock_pc_open = unittest.mock.mock_open(read_data=personal_json)
+        mock_rules_open = unittest.mock.mock_open(read_data="Soul/Rules content")
+
+        def mock_open_file(path, *args, **kwargs):
+            if "personal_contacts.json" in str(path):
+                return mock_pc_open(path, *args, **kwargs)
+            return mock_rules_open(path, *args, **kwargs)
+
+        with patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open_file), \
+             patch("whatsapp_manager._fetch_chat_history", return_value=""):
+            res = pre_llm("pre_llm_call", context)
+
+        self.assertIsNotNone(res)
+        self.assertIn("Nome do contato: Filho do André", res["context"])
+        # Ensure 'pai' is not included in the context as nickname or pet_name
+        self.assertNotIn("Apelido do contato: pai", res["context"])
+        self.assertNotIn("Nome carinhoso/Apelido afetivo: pai", res["context"])
+
 if __name__ == "__main__":
     unittest.main()
+
