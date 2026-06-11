@@ -237,6 +237,54 @@ let connectionState = 'disconnected';
 let currentQr = '';
 let currentQrAt = null;
 
+// Cache de nomes de contatos: { jid -> { name, expiresAt } }
+const contactNameCache = new Map();
+const CONTACT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+async function resolveContactName(jid) {
+  if (!sock || !jid) return null;
+  const cleanJid = String(jid).split(':')[0].split('@')[0];
+  const cached = contactNameCache.get(cleanJid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.name;
+  }
+  try {
+    // Tenta varias fontes de nome em ordem de preferencia
+    let name = null;
+
+    // 1) contacts map do Baileys (carregado no boot via sock.contacts)
+    if (sock.contacts && typeof sock.contacts === 'object') {
+      const stored = sock.contacts[jid] || sock.contacts[cleanJid + '@s.whatsapp.net'] || sock.contacts[cleanJid + '@lid'];
+      if (stored) {
+        name = stored.name || stored.verifiedName || stored.pushName || stored.notify || null;
+      }
+    }
+
+    // 2) onWhatsApp: retorna presence/numero, nao o nome, mas confirma existencia
+    if (!name) {
+      try {
+        const result = await sock.onWhatsApp(jid);
+        if (Array.isArray(result) && result[0] && result[0].exists) {
+          // existence confirmed; nome ainda nao veio
+        }
+      } catch {}
+    }
+
+    // 3) fetchStatus como sanity check (nao retorna nome, mas confirma vivo)
+    // deixado como comentario para nao atrasar sync
+    // if (!name) { try { await sock.fetchStatus(jid); } catch {} }
+
+    if (name) {
+      contactNameCache.set(cleanJid, { name, expiresAt: Date.now() + CONTACT_CACHE_TTL_MS });
+      console.log(`[bridge] Nome resolvido para ${cleanJid}: ${name}`);
+    }
+    return name;
+  } catch (err) {
+    console.error(`[bridge] Erro ao resolver nome de ${jid}:`, err.message);
+    return null;
+  }
+}
+
 const isMain = process.argv[1] && (
   fileURLToPath(import.meta.url) === process.argv[1] ||
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -1048,9 +1096,7 @@ app.post('/typing', async (req, res) => {
 // Chat info
 app.get('/chat/:id', async (req, res) => {
   const chatId = req.params.id;
-  const isGroup = chatId.endsWith('@g.us');
-
-  if (isGroup && sock) {
+  const isGroup = chatId.endsWith('@g.us');  if (isGroup && sock) {
     try {
       const metadata = await sock.groupMetadata(chatId);
       return res.json({
@@ -1068,6 +1114,23 @@ app.get('/chat/:id', async (req, res) => {
     isGroup,
     participants: [],
   });
+});
+
+// Resolver nome de contato via WhatsApp (consulta sock.contacts)
+app.get('/contact/:jid', async (req, res) => {
+  const jid = req.params.jid;
+  if (!jid) {
+    return res.status(400).json({ error: 'jid required' });
+  }
+  if (!sock) {
+    return res.status(503).json({ error: 'bridge not connected' });
+  }
+  try {
+    const name = await resolveContactName(decodeURIComponent(jid));
+    res.json({ jid, name, cached: name !== null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Health check

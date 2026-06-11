@@ -95,6 +95,60 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
     except Exception:
         return ""
 
+
+def _resolve_contact_name_from_bridge(jid: str) -> str | None:
+    """Consulta o Baileys via bridge para obter o pushName/contact name de um JID.
+
+    Retorna None se nao conseguir resolver (contato nao existe, bridge offline, etc).
+    """
+    if not jid:
+        return None
+    try:
+        import urllib.parse
+        safe = urllib.parse.quote(jid, safe="")
+        url = f"{BRIDGE_URL}/contact/{safe}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            name = data.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+            return None
+    except Exception as e:
+        print(f"[whatsapp-manager] bridge contact lookup falhou para {jid}: {e}")
+        return None
+
+
+def _best_contact_name(jid: str, bridge_name: str | None, db_name: str | None, phone: str) -> tuple[str, str]:
+    """Resolve o melhor nome disponivel para um contato.
+
+    Ordem de prioridade:
+    1. Nome vindo do Baileys (pushName) se for real (nao for o proprio JID/numero)
+    2. Nome vindo do bridge log (whatsapp_messages.db.sender_name) se for real
+    3. Fallback: "Contato {phone}"
+
+    Retorna (nome, fonte) onde fonte e um de: "bridge", "log", "fallback".
+    """
+    def is_generic(name):
+        if not name or not isinstance(name, str):
+            return True
+        n = name.strip()
+        if not n:
+            return True
+        # Numeros puros sao genericos
+        if n.replace("+", "").replace(" ", "").isdigit():
+            return True
+        # JIDs ou numeros puros nao contam
+        if "@" in n or n.startswith("+"):
+            return True
+        return False
+
+    if not is_generic(bridge_name):
+        return bridge_name.strip(), "bridge"
+    if not is_generic(db_name):
+        return db_name.strip(), "log"
+    return f"Contato {phone}", "fallback"
+
 def _extract_json_from_text(text: str) -> dict:
     """Extrai o primeiro objeto JSON válido de um texto usando balanceamento de chaves."""
     import re
@@ -419,13 +473,13 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
             
             if not needs_update:
                 continue
-            
+
             # Coletar estatisticas e nome das duas fontes
             name = None
             msg_count = 0
             min_ts = None
             max_ts = None
-            
+
             # Bridge: nome + contagem + timestamps reais
             if chat_id in bridge_contacts:
                 name = bridge_contacts[chat_id].get("name")
@@ -442,7 +496,18 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         max_ts = state_last
                     if min_ts is None or state_last < min_ts:
                         min_ts = state_last
-            
+
+            # Resolucao de nome: tenta bridge Baileys quando o nome for generico/ausente.
+            # Isso preenche o "Contato {phone}" que aparecia para quem nao tem sender_name no log.
+            bridge_name = None
+            existing_name = personal_contacts.get(existing_key, {}).get("name") if existing_key else None
+            if not name or (isinstance(name, str) and name.startswith("Contato ")):
+                bridge_name = _resolve_contact_name_from_bridge(chat_id)
+            best_name, name_source = _best_contact_name(chat_id, bridge_name, name, phone)
+            if name_source == "bridge":
+                print(f"[whatsapp-manager] Nome resolvido via Baileys para {chat_id}: {best_name}")
+            name = best_name
+
             if msg_count < min_msg_threshold:
                 # Criar fallback direto sem gastar chamada de IA para conversas com pouquíssimas mensagens
                 skipped_few_msgs += 1
@@ -460,7 +525,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
                 
                 personal_contacts[target_key] = {
-                    "name": existing_data.get("name") or name or f"Contato {phone}",
+                    "name": existing_data.get("name") or name,
                     "relationship": rel_val,
                     "manual_relationship": man_rel,
                     "notes": existing_data.get("notes"),
@@ -492,7 +557,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
                 
                 personal_contacts[target_key] = {
-                    "name": existing_data.get("name") or name or f"Contato {phone}",
+                    "name": existing_data.get("name") or name,
                     "relationship": rel_val,
                     "manual_relationship": man_rel,
                     "notes": existing_data.get("notes"),
