@@ -340,22 +340,20 @@ let onMessagesUpsert = async ({ messages, type }) => {
       }
     }
 
-    // If bot is paused, drop messages from non-owner users immediately
-    // (don't enqueue them — the Python gateway should never see them)
+    // If bot is paused, do NOT drop messages from non-owner users (so they can be enqueued and persisted to SQLite history),
+    // but log it so the gateway/hook can know it should be skipped from LLM response.
     if (botPaused && !isOwner) {
       if (WHATSAPP_DEBUG) {
-        try { console.log(JSON.stringify({ event: 'ignored', reason: 'bot_paused', chatId, senderId })); } catch {}
+        try { console.log(JSON.stringify({ event: 'logged_paused', chatId, senderId })); } catch {}
       }
-      continue;
     }
 
     // If this specific chat is silenced (owner is actively reading/responding),
-    // drop the message at bridge level — don't enqueue it.
+    // do NOT drop it at bridge level, let it flow to queue for history persistence.
     if (!isOwner && !isGroup) {
       const silencedUntil = silencedChats[chatId] || 0;
       if (silencedUntil > Date.now()) {
-        console.log(`🔇 Mensagem de ${chatId} ignorada — chat silenciado (${Math.round((silencedUntil - Date.now()) / 1000)}s restantes).`);
-        continue;
+        console.log(`🔇 Mensagem de ${chatId} recebida em chat silenciado (enfileirada para histórico).`);
       }
     }
 
@@ -378,13 +376,14 @@ let onMessagesUpsert = async ({ messages, type }) => {
         }
       }
 
-      if (WHATSAPP_MODE === 'bot' && !isSelfChat) {
-        // Bot mode: separate number. ALL fromMe to other users are echo-backs of our own replies — skip.
-        continue;
-      }
-
       // Self-chat mode or self-chat in bot mode: only allow messages in the user's own self-chat
-      if (!isSelfChat) continue;
+      if (!isSelfChat) {
+        const isBotReply = recentlySentIds.has(msg.key.id) || (REPLY_PREFIX && getMessageContent(msg).conversation?.startsWith(REPLY_PREFIX));
+        if (isBotReply || WHATSAPP_MODE === 'bot') {
+          continue;
+        }
+        // Manual message sent by owner on their phone: let it flow to queue so it can be saved in SQLite history.
+      }
     }
 
     // Handle !fromMe messages (from other people) based on mode.
@@ -675,6 +674,7 @@ app.use((req, res, next) => {
 app.get('/bot-status', (req, res) => {
   res.json({
     botPaused,
+    lidToPhone,
     uptime: process.uptime(),
   });
 });

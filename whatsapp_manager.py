@@ -12,6 +12,29 @@ from pathlib import Path
 # Mapeamento temporário sender_id -> chat_id (usado entre pre_gateway_dispatch e pre_llm_call)
 _sender_to_chat: dict[str, str] = {}
 
+# Mapeamento LID -> telefone obtido da ponte no bot-status
+_lid_to_phone: dict[str, str] = {}
+
+
+def _resolve_phone_from_jid(jid: str) -> str:
+    """Traduz JID do WhatsApp (seja LID ou formato padrão) para JID com telefone clássico usando cache de LIDs."""
+    if not jid:
+        return jid
+    # Remover device suffix se houver
+    clean_jid = jid.split(":")[0]
+    if "@" in clean_jid:
+        jid_part, domain_part = clean_jid.split("@", 1)
+    else:
+        jid_part, domain_part = clean_jid, "s.whatsapp.net"
+
+    # Se for LID, tentar mapear
+    if domain_part == "lid" or jid_part in _lid_to_phone:
+        phone = _lid_to_phone.get(jid_part)
+        if phone:
+            return f"{phone}@s.whatsapp.net"
+    
+    return f"{jid_part}@{domain_part}"
+
 # URL do servidor de mensagens
 MESSAGE_SERVER_URL = os.getenv("MESSAGE_SERVER_URL", "http://127.0.0.1:18732")
 
@@ -31,15 +54,20 @@ def _normalize_brazilian_phone(phone: str) -> str:
 
 
 def _check_bot_paused() -> bool:
-    """Verifica se o bot está pausado via endpoint do bridge."""
+    """Verifica se o bot está pausado via endpoint do bridge e atualiza o mapa de LIDs."""
+    global _lid_to_phone
     try:
         url = f"{BRIDGE_URL}/bot-status"
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+            new_map = data.get("lidToPhone")
+            if isinstance(new_map, dict):
+                _lid_to_phone.update(new_map)
             return data.get("botPaused", False)
     except Exception:
         return False
+
 
 
 def _check_chat_silenced(chat_id: str) -> bool:
@@ -216,6 +244,13 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
     import sqlite3
     import datetime
     from pathlib import Path
+    
+    # Atualizar mapa de LIDs no início da sincronização
+    try:
+        _check_bot_paused()
+    except Exception:
+        pass
+        
     base_dir = Path("/opt/data/.hermes")
     db_path = base_dir / "whatsapp_messages.db"
     pc_path = Path("/opt/data/personal_contacts.json")
@@ -257,13 +292,14 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         rows = cursor.fetchall()
         for chat_id, name, msg_count, min_ts, max_ts in rows:
             if chat_id:
-                phone = chat_id.split("@")[0]
+                resolved_chat = _resolve_phone_from_jid(chat_id)
+                phone = resolved_chat.split("@")[0]
                 
-                # Verificar se já existe por JID ou por número
+                # Verificar se já existe por JID, JID resolvido ou por número
                 exists = False
                 existing_key = None
                 for key in list(personal_contacts.keys()):
-                    if key == chat_id or key == phone:
+                    if key in [chat_id, resolved_chat, phone]:
                         exists = True
                         existing_key = key
                         break
@@ -284,7 +320,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     if msg_count < min_msg_threshold:
                         # Criar fallback direto sem gastar chamada de IA para conversas com pouquíssimas mensagens
                         skipped_few_msgs += 1
-                        target_key = existing_key if existing_key else chat_id
+                        target_key = existing_key if existing_key else resolved_chat
                         existing_data = personal_contacts.get(target_key, {})
                         
                         # Preservação/migração de manual_relationship
@@ -317,7 +353,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     if classification_count >= max_classifications:
                         hit_limit = True
                         skipped_due_to_limit += 1
-                        target_key = existing_key if existing_key else chat_id
+                        target_key = existing_key if existing_key else resolved_chat
                         existing_data = personal_contacts.get(target_key, {})
                         
                         # Preservação/migração de manual_relationship
@@ -396,12 +432,13 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         stats_info = info["stats"]
         existing_key = info["existing_key"]
         is_stale = info.get("is_stale", False)
-        phone = chat_id.split("@")[0]
+        resolved_chat = _resolve_phone_from_jid(chat_id)
+        phone = resolved_chat.split("@")[0]
         
         # Classificação baseada no nome, estatísticas e histórico de conversas via LLM
         classification = _classify_contact_via_llm(name, chat_history, stats_info)
         
-        target_key = existing_key if existing_key else chat_id
+        target_key = existing_key if existing_key else resolved_chat
         existing_data = personal_contacts.get(target_key, {})
         
         if is_stale:
@@ -582,6 +619,12 @@ def _ensure_google_libs():
 
 def _pull_and_merge_configurations():
     """Baixa as configurações do repositório privado do GitHub do cliente e faz merge com o local."""
+    # Atualizar mapa de LIDs no início da puxada periódica
+    try:
+        _check_bot_paused()
+    except Exception:
+        pass
+
     config_repo = os.getenv("CONFIG_REPO", "").strip()
     config_token = os.getenv("CONFIG_GITHUB_TOKEN", "").strip()
     setup_user = os.getenv("HERMES_SETUP_GITHUB_USER", "").strip()
@@ -1035,20 +1078,24 @@ def register(ctx):
         if platform_val != "whatsapp":
             return None
 
-        # Identificar remetente
+        # Identificar remetente (com resolução de LID para número de telefone clássico)
         sender_id = event.source.user_id or ""
-        clean_sender = "".join(c for c in sender_id.split("@")[0].split(":")[0] if c.isdigit())
+        resolved_sender = _resolve_phone_from_jid(sender_id)
+        clean_sender = "".join(c for c in resolved_sender.split("@")[0].split(":")[0] if c.isdigit())
 
         # Identificar dono (André)
         owner_number = os.getenv("WHATSAPP_OWNER_NUMBER", "").strip()
-        print(f"[whatsapp-manager] DEBUG: owner_number='{owner_number}', sender_id='{sender_id}', clean_sender='{clean_sender}'")
         if not owner_number:
-            print("[whatsapp-manager] DEBUG: owner_number vazio, returning None")
             return None  # Não definido → plugin não faz nada
 
         clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
         is_owner = (_normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner))
-        print(f"[whatsapp-manager] DEBUG: clean_owner='{clean_owner}', is_owner={is_owner}")
+
+        # Identificar chat
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        resolved_chat = _resolve_phone_from_jid(chat_id)
+        clean_chat = "".join(c for c in resolved_chat.split("@")[0].split(":")[0] if c.isdigit())
+        is_self_chat = (clean_sender == clean_chat)
 
         msg_text = (event.text or "").strip()
 
@@ -1104,6 +1151,10 @@ def register(ctx):
             
             return {"action": "skip", "reason": "sync-contacts-command"}
 
+        # Se for mensagem manual enviada pelo dono no WhatsApp para outro contato, pulamos a resposta do LLM
+        if is_owner and not is_self_chat:
+            return {"action": "skip", "reason": "owner-manual-message"}
+
         # Ignorar mensagens de status do bot (stop_bot/start_bot responses)
         if msg_text in [
             "🐼 *Bot Paused*\n\nO chatbot está descansando. Use `start_bot` para retomar.",
@@ -1113,8 +1164,6 @@ def register(ctx):
         ]:
             return {"action": "skip", "reason": "bot-status-message"}
 
-        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
-        clean_chat = "".join(c for c in chat_id.split("@")[0].split(":")[0] if c.isdigit())
         is_personal_chat = (clean_chat == clean_owner)
 
         # Se não for o dono, verificar status de pausa e injetar histórico da conversa
@@ -1270,8 +1319,18 @@ def register(ctx):
 
             # Carregar contatos pessoais
             personal_contacts = {}
-            clean_jid = sender_id
-            parts = sender_id.split("@")
+            
+            # db_query_jid é o JID bruto vindo da plataforma (pode ser LID)
+            db_query_jid = sender_id
+            parts_db = sender_id.split("@")
+            if len(parts_db) == 2:
+                jid_part, domain_part = parts_db
+                db_query_jid = f"{jid_part.split(':')[0]}@{domain_part}"
+                
+            # clean_jid é o JID resolvido para número de telefone
+            resolved_sender = _resolve_phone_from_jid(sender_id)
+            clean_jid = resolved_sender
+            parts = resolved_sender.split("@")
             if len(parts) == 2:
                 jid_part, domain_part = parts
                 clean_jid = f"{jid_part.split(':')[0]}@{domain_part}"
@@ -1321,7 +1380,7 @@ def register(ctx):
                             SELECT COUNT(*), MIN(timestamp), MAX(timestamp), MAX(sender_name)
                             FROM messages
                             WHERE chat_id = ?
-                        """, (clean_jid,))
+                        """, (db_query_jid,))
                         msg_count, min_ts, max_ts, db_name = cursor.fetchone()
                         
                         if (not msg_count or msg_count == 0) and phone_number:
@@ -1363,7 +1422,7 @@ def register(ctx):
                                 SELECT from_me, sender_name, body FROM messages
                                 WHERE chat_id = ? AND body IS NOT NULL AND body != ''
                                 ORDER BY timestamp DESC LIMIT 15
-                            """, (clean_jid,))
+                            """, (db_query_jid,))
                             rows_msgs = cursor.fetchall()
                             rows_msgs.reverse()
                             

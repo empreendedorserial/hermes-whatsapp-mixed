@@ -629,6 +629,120 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Apelido do contato: pai", res["context"])
         self.assertNotIn("Nome carinhoso/Apelido afetivo: pai", res["context"])
 
+    def test_resolve_phone_from_jid_with_lid(self):
+        """LID presente no cache deve ser convertido para JID de telefone clássico."""
+        import whatsapp_manager
+        # Preencher cache de LIDs artificialmente
+        whatsapp_manager._lid_to_phone["164291240063173"] = "5511777777777"
+        
+        result = whatsapp_manager._resolve_phone_from_jid("164291240063173@lid")
+        self.assertEqual(result, "5511777777777@s.whatsapp.net")
+        
+        # Com device suffix (formato LID:device@lid)
+        result2 = whatsapp_manager._resolve_phone_from_jid("164291240063173:0@lid")
+        self.assertEqual(result2, "5511777777777@s.whatsapp.net")
+        
+        # Limpar cache após teste
+        whatsapp_manager._lid_to_phone.pop("164291240063173", None)
+
+    def test_resolve_phone_from_jid_standard_jid_unchanged(self):
+        """JIDs de telefone padrão devem passar sem alteração."""
+        import whatsapp_manager
+        result = whatsapp_manager._resolve_phone_from_jid("5511888888888@s.whatsapp.net")
+        self.assertEqual(result, "5511888888888@s.whatsapp.net")
+        
+        # Com device suffix
+        result2 = whatsapp_manager._resolve_phone_from_jid("5511888888888:3@s.whatsapp.net")
+        self.assertEqual(result2, "5511888888888@s.whatsapp.net")
+
+    def test_resolve_phone_from_jid_unknown_lid_returns_as_is(self):
+        """LID não presente no cache deve ser retornado sem alteração de formato."""
+        import whatsapp_manager
+        # Garantir que o LID não está no cache
+        whatsapp_manager._lid_to_phone.pop("999999999999999", None)
+        
+        result = whatsapp_manager._resolve_phone_from_jid("999999999999999@lid")
+        # Sem mapeamento, retorna o JID original (sem conversão)
+        self.assertEqual(result, "999999999999999@lid")
+
+    def test_owner_manual_message_to_third_party_is_skipped(self):
+        """Mensagem manual do dono para terceiro (chat_id != owner) deve retornar skip."""
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        self.assertIsNotNone(pre_dispatch)
+
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        # Dono enviando mensagem para terceiro
+        event.source.user_id = "5511999999999@s.whatsapp.net"
+        event.text = "Olá, tudo bem?"
+        # Chat com um terceiro (não é self-chat)
+        event.source.chat_id = "5511111111111@s.whatsapp.net"
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "session_manual"
+        gateway._session_model_overrides = {}
+
+        context = {"event": event, "gateway": gateway}
+
+        res = pre_dispatch("pre_gateway_dispatch", context)
+        # Deve pular o LLM pois é mensagem manual do dono para terceiro
+        self.assertIsNotNone(res)
+        self.assertEqual(res.get("action"), "skip")
+        self.assertEqual(res.get("reason"), "owner-manual-message")
+
+    def test_silenced_chat_client_message_is_skipped(self):
+        """Mensagem de cliente em chat silenciado deve retornar skip."""
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        self.assertIsNotNone(pre_dispatch)
+
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = "5511888888888@s.whatsapp.net"  # Cliente
+        event.text = "Olá, tem novidades?"
+        event.source.chat_id = "5511888888888@s.whatsapp.net"
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "session_silenced"
+        gateway._session_model_overrides = {}
+
+        context = {"event": event, "gateway": gateway}
+
+        with patch("whatsapp_manager._check_bot_paused", return_value=False), \
+             patch("whatsapp_manager._check_chat_silenced", return_value=True):
+            res = pre_dispatch("pre_gateway_dispatch", context)
+            self.assertIsNotNone(res)
+            self.assertEqual(res.get("action"), "skip")
+            self.assertEqual(res.get("reason"), "conversa-silenciada")
+
+    @patch("urllib.request.urlopen")
+    def test_check_bot_paused_updates_lid_cache(self, mock_urlopen):
+        """_check_bot_paused deve atualizar _lid_to_phone quando a resposta contiver lidToPhone."""
+        import whatsapp_manager
+        
+        bridge_response = {
+            "botPaused": False,
+            "lidToPhone": {
+                "111111111111111": "5511222222222",
+                "333333333333333": "5511444444444"
+            }
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(bridge_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        
+        # Limpar cache antes do teste
+        whatsapp_manager._lid_to_phone.clear()
+        
+        result = whatsapp_manager._check_bot_paused()
+        
+        self.assertFalse(result)
+        self.assertEqual(whatsapp_manager._lid_to_phone.get("111111111111111"), "5511222222222")
+        self.assertEqual(whatsapp_manager._lid_to_phone.get("333333333333333"), "5511444444444")
+        
+        # Limpar cache após teste
+        whatsapp_manager._lid_to_phone.clear()
+
+
 if __name__ == "__main__":
     unittest.main()
 
