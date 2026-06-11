@@ -251,7 +251,7 @@ def register(ctx):
         print(f"[whatsapp-manager] ⚠️ Erro ao registrar skills: {skills_err}")
 
     # Hook 1: pre_gateway_dispatch (Filtro e controle de comandos)
-    async def pre_gateway_dispatch(event_type, context):
+    async def pre_gateway_dispatch(event_type, context, *args, **kwargs):
         event = context.get("event")
         gateway = context.get("gateway")
         if not event or not gateway:
@@ -335,7 +335,7 @@ def register(ctx):
         return None
 
     # Hook 2: pre_llm_call (Direcionamento de comportamento)
-    def pre_llm_call(event_type, context):
+    def pre_llm_call(event_type, context, *args, **kwargs):
         platform = context.get("platform")
         sender_id = context.get("sender_id")
         if platform != "whatsapp":
