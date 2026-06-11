@@ -273,15 +273,20 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         target_key = existing_key if existing_key else chat_id
                         existing_data = personal_contacts.get(target_key, {})
                         
+                        # Preservação/migração de manual_relationship
+                        man_rel = existing_data.get("manual_relationship")
+                        if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                            man_rel = existing_data.get("relationship")
+                        
                         # Se for stale (antigo e incompleto), não reaproveitamos as propriedades padrão antigas
-                        rel_val = "Cliente" if is_stale else (existing_data.get("relationship") or "Cliente")
+                        rel_val = man_rel or ("Cliente" if is_stale else (existing_data.get("relationship") or "Cliente"))
                         tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
                         guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
                         
                         personal_contacts[target_key] = {
                             "name": existing_data.get("name") or name or f"Contato {phone}",
                             "relationship": rel_val,
-                            "manual_relationship": existing_data.get("manual_relationship"),
+                            "manual_relationship": man_rel,
                             "notes": existing_data.get("notes"),
                             "product": existing_data.get("product"),
                             "tone": tone_val,
@@ -301,14 +306,19 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         target_key = existing_key if existing_key else chat_id
                         existing_data = personal_contacts.get(target_key, {})
                         
-                        rel_val = "Cliente" if is_stale else (existing_data.get("relationship") or "Cliente")
+                        # Preservação/migração de manual_relationship
+                        man_rel = existing_data.get("manual_relationship")
+                        if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                            man_rel = existing_data.get("relationship")
+                        
+                        rel_val = man_rel or ("Cliente" if is_stale else (existing_data.get("relationship") or "Cliente"))
                         tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
                         guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
                         
                         personal_contacts[target_key] = {
                             "name": existing_data.get("name") or name or f"Contato {phone}",
                             "relationship": rel_val,
-                            "manual_relationship": existing_data.get("manual_relationship"),
+                            "manual_relationship": man_rel,
                             "notes": existing_data.get("notes"),
                             "product": existing_data.get("product"),
                             "tone": tone_val,
@@ -380,14 +390,16 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         target_key = existing_key if existing_key else chat_id
         existing_data = personal_contacts.get(target_key, {})
         
-        # Se o contato era "stale" (tinha classificação rule-based ou incompleta), sobrescrevemos
-        # as propriedades originais com a classificação precisa da IA, mas mantendo o nome manual
-        # e as propriedades de configuração manual do usuário
         if is_stale:
+            # Migração se o relacionamento existente for manual/específico
+            man_rel = existing_data.get("manual_relationship")
+            if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                man_rel = existing_data.get("relationship")
+
             personal_contacts[target_key] = {
                 "name": existing_data.get("name") or name or f"Contato {phone}",
-                "relationship": classification.get("relationship", "Cliente"),
-                "manual_relationship": existing_data.get("manual_relationship"),
+                "relationship": man_rel or classification.get("relationship", "Cliente"),
+                "manual_relationship": man_rel,
                 "notes": existing_data.get("notes"),
                 "product": existing_data.get("product") or classification.get("product"),
                 "tone": classification.get("tone", "polido e profissional"),
@@ -400,10 +412,15 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "guidelines": classification.get("guidelines", "Responda de forma prestativa.")
             }
         else:
+            # Migração se o relacionamento existente for manual/específico
+            man_rel = existing_data.get("manual_relationship")
+            if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                man_rel = existing_data.get("relationship")
+
             personal_contacts[target_key] = {
                 "name": existing_data.get("name") or name or f"Contato {phone}",
-                "relationship": existing_data.get("relationship") or classification.get("relationship", "Cliente"),
-                "manual_relationship": existing_data.get("manual_relationship"),
+                "relationship": man_rel or existing_data.get("relationship") or classification.get("relationship", "Cliente"),
+                "manual_relationship": man_rel,
                 "notes": existing_data.get("notes"),
                 "product": existing_data.get("product") or classification.get("product"),
                 "tone": existing_data.get("tone") or classification.get("tone", "polido e profissional"),
@@ -1336,10 +1353,14 @@ def register(ctx):
 
                         conn.close()
 
+                        man_rel = (contact_info.get("manual_relationship") if contact_info else None)
+                        if not man_rel and contact_info and contact_info.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                            man_rel = contact_info.get("relationship")
+
                         new_data = {
                             "name": name,
-                            "relationship": classification.get("relationship", "Cliente"),
-                            "manual_relationship": contact_info.get("manual_relationship") if contact_info else None,
+                            "relationship": man_rel or classification.get("relationship", "Cliente"),
+                            "manual_relationship": man_rel,
                             "notes": contact_info.get("notes") if contact_info else None,
                             "product": (contact_info.get("product") if contact_info else None) or classification.get("product"),
                             "tone": classification.get("tone", "polido e profissional"),
@@ -1465,7 +1486,8 @@ def register(ctx):
                         "2. Adote o mesmo estilo de escrita do André nas mensagens anteriores. Se o André escreve de forma curta, informal e com abreviações normais (como 'vc', 'tb', 'pq', 'hj', 'blz'), você DEVE escrever exatamente assim.\n"
                         "3. Responda de forma extremamente natural e fluida. Seja breve e direto (evite textos longos, a menos que o contexto exija).\n"
                         "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n"
-                        "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n\n"
+                        "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n"
+                        "6. Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária (por exemplo, se disser para agradecer e recusar ofertas, aja exatamente conforme instruído).\n\n"
                         f"{history_section}"
                         "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
                         "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"

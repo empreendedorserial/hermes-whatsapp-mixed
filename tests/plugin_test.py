@@ -562,6 +562,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         # Notes e Product devem ser injetados
         self.assertIn("Observação importante sobre o contato: Não tenho interesse no momento", res["context"])
         self.assertIn("Produto/Serviço envolvido: Curso de Inglês", res["context"])
+        self.assertIn("Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária", res["context"])
 
 if __name__ == "__main__":
     unittest.main()
