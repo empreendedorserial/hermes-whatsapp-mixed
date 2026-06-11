@@ -309,6 +309,11 @@ safe_download "$RAW_URL/scripts/support_agent.py" "/opt/data/.hermes/scripts/sup
 chmod +x "/opt/data/.hermes/scripts/support_agent.py"
 echo "  ✓ support_agent.py sincronizado."
 
+# Baixa o script de sincronização de contatos a partir do banco de dados SQLite
+safe_download "$RAW_URL/scripts/sync_contacts_from_db.py" "/opt/data/.hermes/scripts/sync_contacts_from_db.py" "$CURL_CODE_AUTH_HEADER" "sync_contacts_from_db.py"
+chmod +x "/opt/data/.hermes/scripts/sync_contacts_from_db.py"
+echo "  ✓ sync_contacts_from_db.py sincronizado."
+
 # Baixa o módulo google_api.py (autenticação OAuth2 Gmail)
 mkdir -p "/opt/data/.hermes/skills/productivity/google-workspace/scripts"
 safe_download "$RAW_URL/scripts/google_api.py" "/opt/data/.hermes/skills/productivity/google-workspace/scripts/google_api.py" "$CURL_CODE_AUTH_HEADER" "google_api.py"

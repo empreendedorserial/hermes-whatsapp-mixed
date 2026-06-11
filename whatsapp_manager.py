@@ -382,6 +382,46 @@ def register(ctx):
 
         msg_text = (event.text or "").strip()
 
+        # Comando para sincronizar e importar contatos do SQLite para personal_contacts.json e GitHub
+        if is_owner and msg_text.lower() in ["sync_contacts", "importar_contatos", "sync_contatos"]:
+            print("[whatsapp-manager] Comando de sincronização detectado.")
+            import subprocess
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            
+            try:
+                script_path = "/opt/data/.hermes/scripts/sync_contacts_from_db.py"
+                python_bin = "/opt/hermes/.venv/bin/python"
+                if not os.path.exists(python_bin):
+                    python_bin = "python3"
+                
+                result = subprocess.run([python_bin, script_path], capture_output=True, text=True, timeout=60)
+                response_msg = (
+                    "👤 *Sincronização de Contatos*\n\n"
+                    f"Status: {'Sucesso' if result.returncode == 0 else 'Falha'}\n\n"
+                    f"Saída:\n```\n{result.stdout.strip()}\n```"
+                )
+                if result.stderr:
+                    response_msg += f"\nErros:\n```\n{result.stderr.strip()}\n```"
+            except Exception as e:
+                response_msg = f"❌ Erro ao executar script de sincronização: {e}"
+            
+            # Enviar de volta
+            if chat_id:
+                try:
+                    url = f"{BRIDGE_URL}/send"
+                    payload = json.dumps({
+                        "chatId": chat_id,
+                        "text": response_msg
+                    }).encode("utf-8")
+                    req = urllib.request.Request(url, data=payload, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        pass
+                except Exception as send_err:
+                    print(f"[whatsapp-manager] Erro ao enviar resposta do comando: {send_err}")
+            
+            return {"action": "skip", "reason": "sync-contacts-command"}
+
         # Ignorar mensagens de status do bot (stop_bot/start_bot responses)
         if msg_text in [
             "🐼 *Bot Paused*\n\nO chatbot está descansando. Use `start_bot` para retomar.",
