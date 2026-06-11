@@ -85,25 +85,35 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
         "Recent Chat history:\n"
         f"{chat_history or '(No history available)'}\n\n"
         "Classify into one of the following profiles:\n"
-        "1. \"amigo/namorada\":\n"
-        "   - Use this if they are friends, a girlfriend, close romantic contacts, or talk very informally/intimately.\n"
-        "   - Recommended tone: \"informal e amigável\" or \"informal e carinhoso\".\n"
-        "2. \"família\":\n"
-        "   - Use this if they are a family member (mother, father, sibling, etc.).\n"
+        "1. \"Amigo\":\n"
+        "   - Use this if they are a regular friend (casual communication, casual topics).\n"
         "   - Recommended tone: \"informal e amigável\".\n"
-        "3. \"cliente/contato\":\n"
-        "   - Use this if they are a customer, client, business contact, lead, or inquiring about systems, API, support, development, or price.\n"
-        "   - Recommended tone: \"polido e profissional\".\n\n"
+        "2. \"AmigoProximo\":\n"
+        "   - Use this if they are a close friend, girlfriend, romantic partner, or close personal/intimate contacts.\n"
+        "   - Recommended tone: \"informal e carinhoso\" or \"informal e amigável\".\n"
+        "3. \"Parente\":\n"
+        "   - Use this if they are a family member (mother, father, sibling, cousin, uncle, etc.).\n"
+        "   - Recommended tone: \"informal e amigável\".\n"
+        "4. \"Filho\":\n"
+        "   - Use this if they are André's child/son.\n"
+        "   - Recommended tone: \"informal e amigável\" or \"informal e carinhoso\".\n"
+        "5. \"Cliente\":\n"
+        "   - Use this if they are a customer, client, business contact, lead, or inquiring about purchasing André's systems, API, support, development, or price.\n"
+        "   - Recommended tone: \"polido e profissional\".\n"
+        "6. \"Vendedor\":\n"
+        "   - Use this if they are a salesperson, vendor, or offering/selling products, services, platforms, tools, or partnerships to André.\n"
+        "   - Recommended tone: \"técnico e direto\" or \"polido e profissional\".\n\n"
         "Extract/determine the following details:\n"
         "- \"nickname\" (apelido): Any nickname used by André to refer to this contact (e.g. \"Bru\", \"Carlos\", etc.). null if none.\n"
         "- \"pet_name\" (nome carinhoso): Terms of endearment used by André (e.g. \"amor\", \"vida\", \"querida\", etc.). null if none.\n"
         "- \"frequent_greeting\" (saudação frequente): The typical greeting phrase used when starting a conversation (e.g. \"Eae mano\", \"Oi amor\", \"Olá\", etc.). null if none.\n"
         "- \"summary\" (resumo): A brief summary of what they usually talk about (in Portuguese).\n"
         "- \"intent\" (intenção): The main intent or topic of their latest messages (in Portuguese).\n"
-        "- \"frequency\" (frequência): The frequency of their conversations (e.g. \"diária\", \"semanal\", \"mensal\", \"esporádica\") based on the statistics and history.\n\n"
+        "- \"frequency\" (frequência): The frequency of their conversations (e.g. \"diária\", \"semanal\", \"mensal\", \"esporádica\") based on the statistics and history.\n"
+        "- \"product\" (produto): If the relationship is classified as \"Vendedor\", extract the name/type of product or service they are trying to sell. null otherwise.\n\n"
         "Return a JSON object with this exact structure (do NOT wrap it in markdown code blocks like ```json, just raw JSON):\n"
         "{\n"
-        "  \"relationship\": \"amigo/namorada\" | \"família\" | \"cliente/contato\",\n"
+        "  \"relationship\": \"Amigo\" | \"AmigoProximo\" | \"Parente\" | \"Filho\" | \"Cliente\" | \"Vendedor\",\n"
         "  \"tone\": \"informal e carinhoso\" | \"informal e amigável\" | \"polido e profissional\" | \"técnico e direto\",\n"
         "  \"nickname\": string | null,\n"
         "  \"pet_name\": string | null,\n"
@@ -111,6 +121,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
         "  \"summary\": string,\n"
         "  \"intent\": string,\n"
         "  \"frequency\": string,\n"
+        "  \"product\": string | null,\n"
         "  \"guidelines\": \"...\"\n"
         "}"
     )
@@ -176,7 +187,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
 
     # Fallback default se nenhuma API key estiver disponível ou todas falharem
     return {
-        "relationship": "cliente/contato",
+        "relationship": "Cliente",
         "tone": "polido e profissional",
         "nickname": None,
         "pet_name": None,
@@ -184,6 +195,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
         "summary": "Conversa inicial de suporte/atendimento.",
         "intent": "Obter ajuda ou informações sobre os sistemas do André.",
         "frequency": "esporádica",
+        "product": None,
         "guidelines": "Responda de forma prestativa."
     }
 
@@ -261,13 +273,16 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         existing_data = personal_contacts.get(target_key, {})
                         
                         # Se for stale (antigo e incompleto), não reaproveitamos as propriedades padrão antigas
-                        rel_val = "cliente/contato" if is_stale else (existing_data.get("relationship") or "cliente/contato")
+                        rel_val = "Cliente" if is_stale else (existing_data.get("relationship") or "Cliente")
                         tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
                         guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
                         
                         personal_contacts[target_key] = {
                             "name": existing_data.get("name") or name or f"Contato {phone}",
                             "relationship": rel_val,
+                            "manual_relationship": existing_data.get("manual_relationship"),
+                            "notes": existing_data.get("notes"),
+                            "product": existing_data.get("product"),
                             "tone": tone_val,
                             "nickname": existing_data.get("nickname"),
                             "pet_name": existing_data.get("pet_name"),
@@ -343,10 +358,14 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         
         # Se o contato era "stale" (tinha classificação rule-based ou incompleta), sobrescrevemos
         # as propriedades originais com a classificação precisa da IA, mas mantendo o nome manual
+        # e as propriedades de configuração manual do usuário
         if is_stale:
             personal_contacts[target_key] = {
                 "name": existing_data.get("name") or name or f"Contato {phone}",
-                "relationship": classification.get("relationship", "cliente/contato"),
+                "relationship": classification.get("relationship", "Cliente"),
+                "manual_relationship": existing_data.get("manual_relationship"),
+                "notes": existing_data.get("notes"),
+                "product": existing_data.get("product") or classification.get("product"),
                 "tone": classification.get("tone", "polido e profissional"),
                 "nickname": classification.get("nickname"),
                 "pet_name": classification.get("pet_name"),
@@ -359,7 +378,10 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         else:
             personal_contacts[target_key] = {
                 "name": existing_data.get("name") or name or f"Contato {phone}",
-                "relationship": existing_data.get("relationship") or classification.get("relationship", "cliente/contato"),
+                "relationship": existing_data.get("relationship") or classification.get("relationship", "Cliente"),
+                "manual_relationship": existing_data.get("manual_relationship"),
+                "notes": existing_data.get("notes"),
+                "product": existing_data.get("product") or classification.get("product"),
                 "tone": existing_data.get("tone") or classification.get("tone", "polido e profissional"),
                 "nickname": existing_data.get("nickname") or classification.get("nickname"),
                 "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
@@ -1223,6 +1245,7 @@ def register(ctx):
                 try:
                     import sqlite3
                     import datetime
+                    min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
                     db_path = Path("/opt/data/.hermes/whatsapp_messages.db")
                     if db_path.exists():
                         conn = sqlite3.connect(str(db_path))
@@ -1256,10 +1279,9 @@ def register(ctx):
 
                         name = (contact_info.get("name") if contact_info else None) or db_name or f"Contato {phone_number}"
 
-                        min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
                         if msg_count < min_msg_threshold:
                             classification = {
-                                "relationship": "cliente/contato",
+                                "relationship": "Cliente",
                                 "tone": "polido e profissional",
                                 "nickname": None,
                                 "pet_name": None,
@@ -1290,7 +1312,10 @@ def register(ctx):
 
                         new_data = {
                             "name": name,
-                            "relationship": classification.get("relationship", "cliente/contato"),
+                            "relationship": classification.get("relationship", "Cliente"),
+                            "manual_relationship": contact_info.get("manual_relationship") if contact_info else None,
+                            "notes": contact_info.get("notes") if contact_info else None,
+                            "product": (contact_info.get("product") if contact_info else None) or classification.get("product"),
                             "tone": classification.get("tone", "polido e profissional"),
                             "nickname": classification.get("nickname"),
                             "pet_name": classification.get("pet_name"),
@@ -1367,7 +1392,8 @@ def register(ctx):
 
             if contact_info:
                 name = contact_info.get("name", "Contato Pessoal")
-                relationship = contact_info.get("relationship", "amigo/namorada")
+                # Relação Manual tem precedência sobre a classificada automaticamente
+                relationship = contact_info.get("manual_relationship") or contact_info.get("relationship") or "Cliente"
                 tone = contact_info.get("tone", "informal e amigável")
                 guidelines = contact_info.get("guidelines", "Responda como André.")
                 
@@ -1377,6 +1403,8 @@ def register(ctx):
                 summary = contact_info.get("summary")
                 intent = contact_info.get("intent")
                 frequency = contact_info.get("frequency")
+                notes = contact_info.get("notes")
+                product = contact_info.get("product")
 
                 details_section = ""
                 if nickname:
@@ -1391,6 +1419,10 @@ def register(ctx):
                     details_section += f"Intenção das últimas conversas: {intent}\n"
                 if frequency:
                     details_section += f"Frequência das conversas: {frequency}\n"
+                if notes:
+                    details_section += f"Observação importante sobre o contato: {notes}\n"
+                if product:
+                    details_section += f"Produto/Serviço envolvido: {product}\n"
 
                 return {
                     "context": (

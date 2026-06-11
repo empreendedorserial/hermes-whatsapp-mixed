@@ -297,7 +297,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
     def test_classify_contact_via_llm_fallback(self):
         from whatsapp_manager import _classify_contact_via_llm
         res = _classify_contact_via_llm("José", "olá tudo bem", "Total messages: 1")
-        self.assertEqual(res["relationship"], "cliente/contato")
+        self.assertEqual(res["relationship"], "Cliente")
         self.assertEqual(res["tone"], "polido e profissional")
         self.assertIsNone(res["nickname"])
 
@@ -350,7 +350,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         
         # Mock LLM classification response
         mock_classify.return_value = {
-            "relationship": "amigo/namorada",
+            "relationship": "AmigoProximo",
             "tone": "informal e carinhoso",
             "nickname": "Bru",
             "pet_name": "amor",
@@ -358,6 +358,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
             "summary": "Conversa carinhosa",
             "intent": "Saudação",
             "frequency": "diária",
+            "product": None,
             "guidelines": "Seja romântico."
         }
         
@@ -379,7 +380,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         bruna_data = written_json["5511777777777@s.whatsapp.net"]
         # Stale fields are updated by LLM classification
         self.assertEqual(bruna_data["name"], "Bruna")
-        self.assertEqual(bruna_data["relationship"], "amigo/namorada")
+        self.assertEqual(bruna_data["relationship"], "AmigoProximo")
         self.assertEqual(bruna_data["tone"], "informal e carinhoso")
         self.assertEqual(bruna_data["guidelines"], "Seja romântico.")
         # New fields are populated
@@ -438,7 +439,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         
         # Mock do LLM
         mock_classify.return_value = {
-            "relationship": "amigo/namorada",
+            "relationship": "AmigoProximo",
             "tone": "informal e amigável",
             "nickname": "Live",
             "pet_name": None,
@@ -446,6 +447,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
             "summary": "Conversa de teste ao vivo.",
             "intent": "Interagir",
             "frequency": "diária",
+            "product": None,
             "guidelines": "Seja descontraído."
         }
         
@@ -457,7 +459,51 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(res)
         self.assertIn("RESPONDENDO COMO ANDRÉ ALENCAR", res["context"])
         self.assertIn("Nome do contato: Live Test Contact", res["context"])
-        self.assertIn("Relação com o André: amigo/namorada", res["context"])
+        self.assertIn("Relação com o André: AmigoProximo", res["context"])
+
+    def test_pre_llm_call_manual_overrides(self):
+        pre_llm = self.ctx.hooks.get("pre_llm_call")
+
+        context = {
+            "platform": "whatsapp",
+            "sender_id": "5511555555555:2@s.whatsapp.net"
+        }
+
+        # JSON com campos manuais (manual_relationship, notes, product)
+        personal_json = (
+            '{"5511555555555@s.whatsapp.net": {'
+            '"name": "Marcos (Vendedor)", '
+            '"relationship": "Cliente", '
+            '"manual_relationship": "Vendedor", '
+            '"notes": "Não tenho interesse no momento", '
+            '"product": "Curso de Inglês", '
+            '"tone": "técnico e direto", '
+            '"guidelines": "Seja breve e recuse educadamente.", '
+            '"summary": "Conversa comercial.", '
+            '"intent": "Oferecer produto.", '
+            '"frequency": "esporádica"}}'
+        )
+        mock_pc_open = unittest.mock.mock_open(read_data=personal_json)
+        mock_rules_open = unittest.mock.mock_open(read_data="Soul/Rules content")
+
+        def mock_open_file(path, *args, **kwargs):
+            if "personal_contacts.json" in str(path):
+                return mock_pc_open(path, *args, **kwargs)
+            return mock_rules_open(path, *args, **kwargs)
+
+        with patch("os.path.exists", return_value=True), \
+             patch("builtins.open", mock_open_file), \
+             patch("whatsapp_manager._fetch_chat_history", return_value=""):
+            res = pre_llm("pre_llm_call", context)
+            
+        self.assertIsNotNone(res)
+        self.assertIn("RESPONDENDO COMO ANDRÉ ALENCAR", res["context"])
+        self.assertIn("Nome do contato: Marcos (Vendedor)", res["context"])
+        # manual_relationship deve prevalecer
+        self.assertIn("Relação com o André: Vendedor", res["context"])
+        # Notes e Product devem ser injetados
+        self.assertIn("Observação importante sobre o contato: Não tenho interesse no momento", res["context"])
+        self.assertIn("Produto/Serviço envolvido: Curso de Inglês", res["context"])
 
 if __name__ == "__main__":
     unittest.main()
