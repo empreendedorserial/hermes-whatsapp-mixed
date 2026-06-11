@@ -206,22 +206,29 @@ def _sync_contacts_from_db_internal() -> str:
         except Exception as e:
             print(f"[whatsapp-manager] Erro ao ler {pc_path}: {e}")
 
-    # 2. Ler contatos únicos do SQLite
+    # 2. Ler contatos únicos do SQLite com agregação de estatísticas para performance
     if not db_path.exists():
         return "Erro: Banco de dados SQLite whatsapp_messages.db não encontrado."
 
     db_contacts = {}
+    classification_count = 0
+    max_classifications = int(os.getenv("WHATSAPP_SYNC_MAX_CLASSIFICATIONS", "40").strip())
+    min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
+    skipped_few_msgs = 0
+    hit_limit = False
+
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT chat_id, MAX(sender_name) as name
+            SELECT chat_id, MAX(sender_name) as name, COUNT(*) as msg_count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
             FROM messages
             WHERE chat_id NOT LIKE '%@g.us%' AND chat_id IS NOT NULL
             GROUP BY chat_id
+            ORDER BY max_ts DESC
         """)
         rows = cursor.fetchall()
-        for chat_id, name in rows:
+        for chat_id, name, msg_count, min_ts, max_ts in rows:
             if chat_id:
                 phone = chat_id.split("@")[0]
                 
@@ -242,18 +249,31 @@ def _sync_contacts_from_db_internal() -> str:
                         needs_update = True
                 
                 if needs_update:
-                    # Obter estatísticas adicionais da conversa no SQLite
-                    try:
-                        cursor.execute("""
-                            SELECT COUNT(*), MIN(timestamp), MAX(timestamp)
-                            FROM messages
-                            WHERE chat_id = ?
-                        """, (chat_id,))
-                        msg_count, min_ts, max_ts = cursor.fetchone()
-                    except Exception:
-                        msg_count, min_ts, max_ts = 0, 0, 0
-                    
-                    stats_info = f"Total messages: {msg_count or 0}."
+                    if msg_count < min_msg_threshold:
+                        # Criar fallback direto sem gastar chamada de IA para conversas com pouquíssimas mensagens
+                        skipped_few_msgs += 1
+                        target_key = existing_key if existing_key else chat_id
+                        existing_data = personal_contacts.get(target_key, {})
+                        personal_contacts[target_key] = {
+                            "name": existing_data.get("name") or name or f"Contato {phone}",
+                            "relationship": existing_data.get("relationship") or "cliente/contato",
+                            "tone": existing_data.get("tone") or "polido e profissional",
+                            "nickname": existing_data.get("nickname"),
+                            "pet_name": existing_data.get("pet_name"),
+                            "frequent_greeting": existing_data.get("frequent_greeting"),
+                            "summary": existing_data.get("summary") or "Conversa muito curta.",
+                            "intent": existing_data.get("intent") or "Contato inicial.",
+                            "frequency": existing_data.get("frequency") or "esporádica",
+                            "guidelines": existing_data.get("guidelines") or "Responda de forma prestativa."
+                        }
+                        continue
+
+                    if classification_count >= max_classifications:
+                        hit_limit = True
+                        continue
+
+                    # Estatísticas formatadas
+                    stats_info = f"Total messages: {msg_count}."
                     if min_ts and max_ts:
                         try:
                             first_date = datetime.datetime.fromtimestamp(min_ts).strftime('%Y-%m-%d')
@@ -287,6 +307,7 @@ def _sync_contacts_from_db_internal() -> str:
                         "stats": stats_info,
                         "existing_key": existing_key
                     }
+                    classification_count += 1
         conn.close()
     except Exception as e:
         return f"Erro ao ler banco de dados SQLite: {e}"
@@ -322,16 +343,26 @@ def _sync_contacts_from_db_internal() -> str:
         added_count += 1
         updated = True
 
-    if not updated:
-        result_str = "Nenhum contato novo encontrado para adicionar."
-    else:
+    # Preparar mensagem de resultado
+    result_messages = []
+    if updated or skipped_few_msgs > 0:
         # Salvar JSON localmente
         try:
             with open(pc_path, "w", encoding="utf-8") as f:
                 json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
-            result_str = f"Sucesso! Mapeados e mesclados {added_count} novos contatos localmente."
+            
+            result_messages.append(f"Sucesso! Mapeados e mesclados {added_count + skipped_few_msgs} contatos localmente.")
+            if added_count > 0:
+                result_messages.append(f"- {added_count} contatos classificados via IA.")
+            if skipped_few_msgs > 0:
+                result_messages.append(f"- {skipped_few_msgs} contatos curtos configurados com valores padrão.")
+            if hit_limit:
+                result_messages.append(f"⚠️ Limite de {max_classifications} chamadas de IA atingido nesta execução. Os contatos restantes serão atualizados nas próximas execuções ou interações.")
+            result_str = "\n".join(result_messages)
         except Exception as e:
             return f"Erro ao salvar personal_contacts.json localmente: {e}"
+    else:
+        result_str = "Nenhum contato novo ou pendente encontrado para adicionar."
 
     # 4. Sincronizar com GitHub
     config_repo = os.getenv("CONFIG_REPO", "").strip()
