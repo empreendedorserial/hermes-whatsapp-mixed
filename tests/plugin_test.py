@@ -361,7 +361,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         
         # Call the sync function
         with patch.dict(os.environ, {"CONFIG_REPO": ""}):
-            result = _sync_contacts_from_db_internal()
+            result = _sync_contacts_from_db_internal(force=False)
             
         # Verify the classification was called only once (for Bruna)
         mock_classify.assert_called_once()

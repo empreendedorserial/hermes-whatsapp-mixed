@@ -188,7 +188,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
     }
 
 
-def _sync_contacts_from_db_internal(force: bool = False) -> str:
+def _sync_contacts_from_db_internal(force: bool = True) -> str:
     """Sincroniza contatos do SQLite local para personal_contacts.json e envia para o GitHub."""
     import sqlite3
     import datetime
