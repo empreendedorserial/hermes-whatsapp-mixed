@@ -95,6 +95,25 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
     except Exception:
         return ""
 
+def _extract_json_from_text(text: str) -> dict:
+    """Extrai o primeiro objeto JSON válido de um texto, removendo blocos markdown e texto extra ao redor."""
+    import re
+    # Remove blocos markdown ```json ... ``` ou ``` ... ```
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"```", "", text)
+    text = text.strip()
+    # Tenta parse direto primeiro
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Extrai primeiro bloco { ... } encontrado
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(0))
+    raise ValueError(f"Nenhum JSON válido encontrado no texto: {text[:200]}")
+
+
 def _sanitize_classification_result(res: dict) -> dict:
     """Evita que nomes possessivos/parentesco do André (como 'pai', 'mãe', etc.) sejam classificados como pet_name/nickname do contato."""
     if not isinstance(res, dict):
@@ -178,7 +197,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=45) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-                return _sanitize_classification_result(json.loads(text_content.strip()))
+                return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via Gemini: {e}")
 
@@ -199,11 +218,10 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["choices"][0]["message"]["content"]
-                return _sanitize_classification_result(json.loads(text_content.strip()))
+                return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via OpenAI: {e}")
 
-    # 3. Tentar OpenRouter API
     if openrouter_key:
         try:
             url = "https://openrouter.ai/api/v1/chat/completions"
@@ -220,7 +238,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
             with urllib.request.urlopen(req, timeout=10) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 text_content = result["choices"][0]["message"]["content"]
-                return _sanitize_classification_result(json.loads(text_content.strip()))
+                return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
             print(f"[whatsapp-manager] Falha ao classificar via OpenRouter: {e}")
 
