@@ -21,8 +21,8 @@ fi
 
 CLIENT_GITHUB_USER="${1:-${CLIENT_GITHUB_USER:-${HERMES_SETUP_GITHUB_USER:-}}}"
 DEV_GITHUB_TOKEN="${2:-$DEV_GITHUB_TOKEN}"
-CONFIG_REPO="${3:-${CONFIG_REPO:-hermes_agent_context_contatcs}}"
-CONFIG_GITHUB_TOKEN="${4:-$CONFIG_GITHUB_TOKEN}"
+CONFIG_REPO="${3:-${CLIENT_CONFIG_REPO:-${CONFIG_REPO:-hermes_agent_context_contatcs}}}"
+CONFIG_GITHUB_TOKEN="${4:-${CLIENT_CONFIG_GITHUB_TOKEN:-$CONFIG_GITHUB_TOKEN}}"
 
 # Consolidação dos repositórios e tokens:
 # Código base: se o cliente tiver fork próprio (CLIENT_GITHUB_USER), baixa de lá. Se não, usa DEV_GITHUB_USER ou padrão.
@@ -35,7 +35,17 @@ echo "           GitHub Fork de: $CODE_USER"
 if [ -n "$CONFIG_REPO" ]; then
 echo "           Repo de Configs Privado: $CONFIG_REPO"
 fi
+echo "----------------------------------------------------------"
+echo "ℹ️  DIAGNÓSTICO DE VARIÁVEIS DETECTADAS NO CONTAINER:"
+echo "  - CLIENT_GITHUB_USER : '$CLIENT_GITHUB_USER'"
+echo "  - CONFIG_REPO        : '$CONFIG_REPO'"
+if [ -n "$CONFIG_GITHUB_TOKEN" ]; then
+echo "  - CONFIG_GITHUB_TOKEN: CONFIGURADO (tamanho: ${#CONFIG_GITHUB_TOKEN} caracteres)"
+else
+echo "  - CONFIG_GITHUB_TOKEN: ⚠️ VAZIO OU NÃO CONFIGURADO NA STACK"
+fi
 echo "=========================================================="
+
 
 mkdir -p "$BASE_DIR"
 mkdir -p "/opt/data"
