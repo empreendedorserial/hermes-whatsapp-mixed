@@ -1614,6 +1614,7 @@ def register(ctx):
                     max_ts = None
                     db_name = None
                     chat_history_lines = []
+                    conn = None
 
                     # Fonte 1: bridge log (whatsapp_messages.db)
                     if bridge_db_path.exists():
@@ -1648,7 +1649,6 @@ def register(ctx):
                             for f_me, s_name, msg_body in rows_msgs:
                                 sender_lbl = "André" if f_me else (s_name or "Contato")
                                 chat_history_lines.append(f"[{sender_lbl}]: {msg_body}")
-                        conn.close()
 
                     # Fonte 2: state.db.sessions (autoritativo, gateway Hermes)
                     if (not msg_count or msg_count == 0) and state_db_path.exists():
@@ -1724,7 +1724,8 @@ def register(ctx):
 
                             classification = _classify_contact_via_llm(name, chat_history, stats_info)
 
-                        conn.close()
+                        if conn is not None:
+                            conn.close()
 
                         man_rel = (contact_info.get("manual_relationship") if contact_info else None)
                         if not man_rel and contact_info and contact_info.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
