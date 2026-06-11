@@ -386,15 +386,18 @@ O **Passo 1** faz o Hermes ler suas próprias variáveis de ambiente antes de ag
 
 ---
 
-## 🎙️ Como Enviar e Receber Áudio e Imagem com Visão do Bot
-O Hermes Agent já vem pré-configurado de fábrica para suportar fluxos ricos de multimídia:
+## 🎙️ Como Receber Áudio e Imagem (Transcrição e Visão Integradas)
+O plugin `whatsapp-manager` agora transcreve áudios e descreve imagens de forma **nativa e integrada** usando o **Google Gemini API** (`gemini-3.5-flash`), sem necessidade de chaves adicionais de terceiros (como OpenAI/Whisper ou Groq) ou configurações de rede complexas.
 
-### 📸 Recebimento de Imagens (Visão Ativa):
-* Quando um cliente envia um print de tela com erro ou comprovante de pagamento, o Gemini 3.5 Flash utiliza sua **visão computacional nativa** para ler a imagem e interpretá-la na hora! Não é preciso nenhuma configuração adicional.
+### 📸 Recebimento de Imagens (Visão do Bot):
+* Quando um cliente envia um print de tela, comprovante ou foto, o plugin envia a imagem para o Gemini analisar em tempo real. Ele gera uma descrição literal e textual da imagem em português (ex: `[Imagem: Uma caneca personalizada com o logo do cérebro]`) que é registrada diretamente na conversa e no banco de dados SQLite `whatsapp_messages.db`. Dessa forma, o agente consegue "enxergar" e responder contextualmente à imagem recebida!
 
-### 🎙️ Recebimento de Áudios (Transcrição Inteligente):
-* Para que seu robô ouça mensagens de voz e responda de forma inteligente, o Hermes utiliza o **OpenAI Whisper** de forma nativa. 
-* Certifique-se de que a variável de ambiente `OPENAI_API_KEY` esteja devidamente preenchida na sua Stack do Portainer ou no arquivo `.env`. O bot transcreverá a voz em milissegundos e responderá em texto!
+### 🎙️ Recebimento de Áudios (Transcrição Integrada):
+* Quando um contato envia uma mensagem de voz, o plugin captura o áudio temporário, envia para a API do Gemini e transcreve a fala textualmente em milissegundos.
+* A transcrição é gravada no banco de dados com o prefixo `[Áudio: "conteúdo transcrito..."]` e substitui o texto do evento em tempo real no gateway. O bot responderá em texto de forma imediata e coerente com a mensagem falada!
+
+> 💡 **Privacidade e Descarte**: Os arquivos físicos de fotos e mensagens de voz baixados temporariamente pelo bridge são **excluídos de forma imediata** do disco do servidor logo após serem carregados em memória para análise do Gemini, economizando espaço de armazenamento permanentemente.
+
 
 ---
 

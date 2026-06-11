@@ -280,19 +280,19 @@ grep '"gemini"' /opt/hermes/agent/auxiliary_client.py | grep "_VISION_AUTO_PROVI
 
 ---
 
-## ⚠️ STT (Transcrição de Áudio)
+## ⚠️ STT (Transcrição de Áudio) e Visão Integrada
 
-O bot detecta mensagens de voz (ptt/audio) e tenta transcrever via `_enrich_message_with_transcription` em `run.py`.
+O plugin `whatsapp-manager` agora transcreve áudios e descreve imagens de forma **nativa e integrada** usando o **Google Gemini API** (`gemini-3.5-flash`), sem necessidade de chaves extras ou patch do core.
 
-**Providers disponíveis:** `groq` (grátis), `openai` (pago), `local`, `mistral`, `xai`. **Gemini NÃO é provider de STT.**
+### Como funciona:
+1. **Áudio**: Quando uma mensagem de voz (`ptt` ou `audio`) chega, o plugin codifica o arquivo temporário em base64, envia para a API do Gemini pedindo a transcrição literal, atualiza o evento em tempo real no gateway para `[Áudio: "transcrição..."]` e atualiza a mensagem no banco de dados SQLite `whatsapp_messages.db`.
+2. **Imagens**: Imagens recebidas são processadas de forma análoga. O plugin envia a imagem para o Gemini para gerar uma descrição em português, atualizando o evento e o banco com `[Imagem: descrição...]`.
+3. **Privacidade e Economia de Espaço**: Os arquivos físicos de áudio/imagem baixados pelo bridge são **excluídos imediatamente** após a conversão em base64 na memória, garantindo que o servidor não acumule mídias pesadas.
 
-**Recomendado: Groq** — criar key em https://console.groq.com/keys, adicionar `GROQ_API_KEY` ao `credential_pool` em `auth.json`, e mudar `stt.provider: groq` em `config.yaml`.
-
-**Verificação:**
-```bash
-grep "STT provider" /opt/data/.hermes/logs/agent.log | tail -3
-grep "Transcribed.*via" /opt/data/.hermes/logs/agent.log | tail -3
-```
+### Backup Failsafe do Core (STT Tradicional):
+Caso queira usar a transcrição nativa antiga do core via `run.py` para outros fluxos:
+- **Providers clássicos:** `groq` (grátis), `openai` (pago), `local`, `mistral`, `xai`.
+- **Configuração:** Adicionar `GROQ_API_KEY` ao `credential_pool` em `auth.json` e mudar `stt.provider: groq` em `config.yaml`.
 
 ---
 

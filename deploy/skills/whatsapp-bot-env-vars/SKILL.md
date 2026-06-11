@@ -322,27 +322,21 @@ grep '"gemini"' /opt/hermes/agent/auxiliary_client.py | grep "_VISION_AUTO_PROVI
 # Testar: enviar imagem no WhatsApp → bot deve descrever corretamente
 ```
 
-## ⚠️ Áudio / Transcrição de Voz (STT)
+## ⚠️ Áudio / Transcrição de Voz (STT) e Imagens
 
-O bot detecta mensagens de voz (ptt/audio) e tenta transcrever via `_enrich_message_with_transcription` em `run.py:13402`. O pipeline **funcionou no passado** via OpenAI Whisper API (logs de Mai 28-31), mas a key se perdeu no restart.
+O plugin `whatsapp-manager` agora transcreve áudios e descreve imagens de forma **nativa e integrada** usando o **Google Gemini API** (`gemini-3.5-flash`), sem necessidade de chaves extras ou configurações adicionais de STT no core.
 
-**Providers disponíveis:** `groq` (grátis), `openai` (pago), `local`, `mistral`, `xai`. **Gemini NÃO é provider de STT.**
+### Como funciona:
+1. **Áudio**: Quando uma mensagem de voz (`ptt` ou `audio`) chega, o plugin codifica o arquivo temporário em base64, envia para a API do Gemini pedindo a transcrição literal, atualiza o evento em tempo real no gateway para `[Áudio: "transcrição..."]` e atualiza a mensagem no banco de dados SQLite `whatsapp_messages.db`.
+2. **Imagens**: Imagens recebidas são processadas de forma análoga. O plugin envia a imagem para o Gemini para gerar uma descrição em português, atualizando o evento e o banco com `[Imagem: descrição...]`.
+3. **Privacidade e Descarte**: Os arquivos físicos de áudio/imagem baixados pelo bridge são **excluídos imediatamente** após a conversão em base64 na memória, garantindo que o servidor não acumule mídias pesadas.
 
-**Recomendado: Groq** (grátis). Criar key em https://console.groq.com/keys, adicionar `GROQ_API_KEY` ao credential_pool, mudar `stt.provider: groq` em `config.yaml`.
+### Failsafe do Core (STT Tradicional):
+Caso queira usar a transcrição nativa antiga do core via `run.py` para outros fluxos:
+- **Providers clássicos:** `groq` (grátis), `openai` (pago), `local`, `mistral`, `xai`.
+- **Configuração:** Adicionar `GROQ_API_KEY` ao `credential_pool` em `auth.json` e mudar `stt.provider: groq` em `config.yaml`.
 
-> Para detalhes completos do pipeline STT, ver `hermes-architecture`.
-
-## Bug Conhecido: Imagens no WhatsApp
-
-**Sintoma:** Bot responde "não consegui visualizar a imagem" mesmo com imagem válida.
-
-**Causa:** MiniMax não tem suporte a imagem. O pipeline tenta usar o provider principal primeiro (falha), depois o fallback. Sem fallback configurado, a análise falha.
-
-**Verificação:**
-```bash
-grep "tools.vision_tools.*Image analysis completed" /opt/data/.hermes/logs/agent.log | tail -5
-grep "auxiliary_client.*Auxiliary auto-detect" /opt/data/.hermes/logs/agent.log | tail -5
-```
+---
 - `.hermes/scripts/whatsapp_message_server.py`
 - `.hermes/scripts/whatsapp_message_history.py`
 - `.hermes/plugins/whatsapp-manager/__init__.py` (dashboard-managed)

@@ -85,8 +85,10 @@ Todos os arquivos de deploy de contêineres e configurações avançadas foram m
 
 ## ✨ Funcionalidades Principais
 
+* **Transcrição e descrição de mídia integradas:** Transcreve mensagens de áudio/voz e descreve fotos/imagens recebidas automaticamente usando `gemini-3.5-flash`. Atualiza o histórico da conversa (`whatsapp_messages.db`) com prefixos claros (ex: `[Áudio: "..."]` e `[Imagem: ...]`) e injeta no fluxo em tempo real para o agente responder contextualmente.
+* **Descarte imediato de mídias físicas:** Exclui instantaneamente os arquivos de imagem e áudio do servidor logo após lê-los em memória, mantendo o consumo de disco no mínimo.
 * **Classificação inteligente de contatos:** O bot classifica cada contato WhatsApp em perfis (Amigo, Cliente, Vendedor, etc.) usando Gemini 3.5 Flash, gerando `summary`, `intent`, `tone`, `nickname`, `guidelines` personalizados.
-* **Sincronização multi-DB:** Lê de `state.db.sessions` (DB autoritativo do gateway) + `whatsapp_messages.db` (sender_name/histórico) + `state.db.messages` (fallback de histórico) para garantir que todos os 28+ contatos WhatsApp sejam classificados.
+* **Sincronização multi-DB:** Lê de `state.db.sessions` (DB autoritativo do gateway) + `whatsapp_messages.db` (sender_name/histórico) + `state.db.messages` (fallback de histórico) para garantir que todos os contatos WhatsApp sejam classificados.
 * **Resolução de nome via Baileys:** Para contatos sem `sender_name` no log, consulta `sock.contacts` do Baileys via novo endpoint `/contact/:jid` e cacheia por 24h.
 * **Auto-classificação em tempo real:** Contatos que mandam primeira mensagem são classificados "on-the-fly" durante a conversa.
 * **Comandos de controle no WhatsApp:** `stop_bot`/`start_bot` no self-chat, silenciamento automático de 10 min quando o dono lê ou responde manualmente.
