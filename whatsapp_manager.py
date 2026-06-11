@@ -1476,6 +1476,28 @@ def register(ctx):
 
         if _normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner):
             # Assistente Pessoal do André
+            history_context = ""
+            chat_id = _sender_to_chat.get(sender_id, "")
+            if not chat_id and sender_id:
+                parts = sender_id.split("@")
+                if len(parts) == 2:
+                    jid_part, domain_part = parts
+                    clean_jid = jid_part.split(":")[0]
+                    chat_id = f"{clean_jid}@{domain_part}"
+
+            if chat_id:
+                history_context = _fetch_chat_history(chat_id, limit=50)
+
+            history_section = ""
+            if history_context:
+                history_section = (
+                    "\n\n### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
+                    "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
+                    "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
+                    "para responder à nova mensagem do André.\n\n"
+                    f"{history_context}"
+                )
+
             return {
                 "context": (
                     "### DIRETRIZ CRÍTICA DE COMPORTAMENTO ###\n"
@@ -1487,6 +1509,7 @@ def register(ctx):
                     "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
                     "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
                     "deve ser 100% invisível para o usuário final."
+                    f"{history_section}"
                 )
             }
         else:
