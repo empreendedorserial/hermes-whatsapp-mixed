@@ -227,6 +227,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
     max_classifications = int(os.getenv("WHATSAPP_SYNC_MAX_CLASSIFICATIONS", "40").strip())
     min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
     skipped_few_msgs = 0
+    skipped_due_to_limit = 0
     hit_limit = False
 
     try:
@@ -296,6 +297,29 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
 
                     if classification_count >= max_classifications:
                         hit_limit = True
+                        skipped_due_to_limit += 1
+                        target_key = existing_key if existing_key else chat_id
+                        existing_data = personal_contacts.get(target_key, {})
+                        
+                        rel_val = "Cliente" if is_stale else (existing_data.get("relationship") or "Cliente")
+                        tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
+                        guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
+                        
+                        personal_contacts[target_key] = {
+                            "name": existing_data.get("name") or name or f"Contato {phone}",
+                            "relationship": rel_val,
+                            "manual_relationship": existing_data.get("manual_relationship"),
+                            "notes": existing_data.get("notes"),
+                            "product": existing_data.get("product"),
+                            "tone": tone_val,
+                            "nickname": existing_data.get("nickname"),
+                            "pet_name": existing_data.get("pet_name"),
+                            "frequent_greeting": existing_data.get("frequent_greeting"),
+                            "summary": existing_data.get("summary") or "Pendente de classificação.",
+                            "intent": existing_data.get("intent") or "Contato recente.",
+                            "frequency": existing_data.get("frequency") or "esporádica",
+                            "guidelines": guide_val
+                        }
                         continue
 
                     # Estatísticas formatadas
@@ -396,19 +420,21 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
 
     # Preparar mensagem de resultado
     result_messages = []
-    if updated or skipped_few_msgs > 0:
+    if updated or skipped_few_msgs > 0 or skipped_due_to_limit > 0:
         # Salvar JSON localmente
         try:
             with open(pc_path, "w", encoding="utf-8") as f:
                 json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
             
-            result_messages.append(f"Sucesso! Mapeados e mesclados {added_count + skipped_few_msgs} contatos localmente.")
+            result_messages.append(f"Sucesso! Mapeados e mesclados {added_count + skipped_few_msgs + skipped_due_to_limit} contatos localmente.")
             if added_count > 0:
                 result_messages.append(f"- {added_count} contatos classificados via IA.")
             if skipped_few_msgs > 0:
                 result_messages.append(f"- {skipped_few_msgs} contatos curtos configurados com valores padrão.")
+            if skipped_due_to_limit > 0:
+                result_messages.append(f"- {skipped_due_to_limit} contatos adicionados pendentes de classificação (limite de IA atingido).")
             if hit_limit:
-                result_messages.append(f"⚠️ Limite de {max_classifications} chamadas de IA atingido nesta execução. Os contatos restantes serão atualizados nas próximas execuções ou interações.")
+                result_messages.append(f"⚠️ Limite de {max_classifications} chamadas de IA atingido nesta execução. Os contatos restantes foram inseridos como pendentes e serão classificados dinamicamente.")
             result_str = "\n".join(result_messages)
         except Exception as e:
             return f"Erro ao salvar personal_contacts.json localmente: {e}"
@@ -1231,7 +1257,7 @@ def register(ctx):
             needs_live_classify = False
             target_key = clean_jid
             if contact_info:
-                old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento."]
+                old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Pendente de classificação."]
                 has_old_default_summary = contact_info.get("summary") in old_defaults
                 if has_old_default_summary or not contact_info.get("summary") or not contact_info.get("intent") or not contact_info.get("frequency"):
                     needs_live_classify = True

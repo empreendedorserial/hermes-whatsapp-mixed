@@ -400,6 +400,64 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
     @patch("sqlite3.connect")
     @patch("whatsapp_manager._classify_contact_via_llm")
     @patch("pathlib.Path.exists")
+    @patch("builtins.open")
+    def test_sync_contacts_from_db_internal_hits_limit(self, mock_open, mock_exists, mock_classify, mock_sqlite_connect):
+        from whatsapp_manager import _sync_contacts_from_db_internal
+        
+        mock_exists.return_value = True
+        mock_file = unittest.mock.mock_open(read_data="{}")
+        mock_open.side_effect = lambda path, *args, **kwargs: mock_file(path, *args, **kwargs)
+        
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_sqlite_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # 2 new contacts both with > 3 messages
+        mock_cursor.fetchall.side_effect = [
+            [
+                ("5511777777777@s.whatsapp.net", "Bruna", 10, 1686440000, 1686450000),
+                ("5511888888888@s.whatsapp.net", "Carlos", 10, 1686440000, 1686450000)
+            ],
+            [(0, "Bruna", "oi amor te amo")]
+        ]
+        
+        mock_classify.return_value = {
+            "relationship": "AmigoProximo",
+            "tone": "informal e carinhoso",
+            "nickname": "Bru",
+            "pet_name": "amor",
+            "frequent_greeting": "Oi linda",
+            "summary": "Conversa carinhosa",
+            "intent": "Saudação",
+            "frequency": "diária",
+            "product": None,
+            "guidelines": "Seja romântico."
+        }
+        
+        # Limit set to 1 classification
+        with patch.dict(os.environ, {"CONFIG_REPO": "", "WHATSAPP_SYNC_MAX_CLASSIFICATIONS": "1"}):
+            result = _sync_contacts_from_db_internal(force=False)
+            
+        # Classify should be called exactly once
+        mock_classify.assert_called_once()
+        
+        # Verify JSON write
+        write_calls = mock_file().write.call_args_list
+        written_data = "".join(call[0][0] for call in write_calls)
+        written_json = json.loads(written_data)
+        
+        # Bruna is classified
+        self.assertEqual(written_json["5511777777777@s.whatsapp.net"]["relationship"], "AmigoProximo")
+        self.assertEqual(written_json["5511777777777@s.whatsapp.net"]["summary"], "Conversa carinhosa")
+        
+        # Carlos is added as Pending
+        self.assertEqual(written_json["5511888888888@s.whatsapp.net"]["relationship"], "Cliente")
+        self.assertEqual(written_json["5511888888888@s.whatsapp.net"]["summary"], "Pendente de classificação.")
+
+    @patch("sqlite3.connect")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("pathlib.Path.exists")
     @patch("os.path.exists")
     @patch("builtins.open")
     def test_pre_llm_call_live_classification(self, mock_open, mock_os_exists, mock_path_exists, mock_classify, mock_sqlite_connect):
