@@ -812,21 +812,18 @@ def register(ctx):
         ]
         
         is_sync_cmd = False
-        is_force = False
         for cmd in sync_commands:
             cmd_norm = cmd.replace("_", " ").replace("-", " ")
             if normalized_msg.startswith(cmd_norm):
                 is_sync_cmd = True
-                if "force" in normalized_msg or "forçar" in normalized_msg or "reset" in normalized_msg:
-                    is_force = True
                 break
 
         if is_owner and is_sync_cmd:
-            print(f"[whatsapp-manager] Comando de sincronização detectado (force={is_force}).")
+            print("[whatsapp-manager] Comando de sincronização detectado (forçando atualização).")
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             
             try:
-                result_info = _sync_contacts_from_db_internal(force=is_force)
+                result_info = _sync_contacts_from_db_internal(force=True)
                 response_msg = (
                     "👤 *Sincronização de Contatos*\n\n"
                     f"{result_info}"
