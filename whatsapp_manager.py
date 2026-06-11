@@ -829,3 +829,11 @@ def register(ctx):
 
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", pre_llm_call)
+
+    # Sincronização automática no boot (100% transparente)
+    try:
+        print("[whatsapp-manager] Iniciando sincronização automática de contatos no boot...")
+        boot_result = _sync_contacts_from_db_internal()
+        print(f"[whatsapp-manager] Resultado da sincronização no boot: {boot_result}")
+    except Exception as boot_sync_err:
+        print(f"[whatsapp-manager] ⚠️ Falha na sincronização de contatos no boot: {boot_sync_err}")
