@@ -56,7 +56,7 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 
 > **Sincronização Ativa:** O seu servidor baixou a persona (`SOUL.md`) e regras de vendas (`support_rules.md`) direto do seu GitHub pessoal, configurou o `config.yaml` e corrigiu a ponte do WhatsApp. Plugins ficam para o dashboard do Hermes.
 > 
-> 💡 **Dica de Sincronização:** Sempre que quiser mudar os preços ou as regras do seu negócio de forma definitiva, o ideal é editar no seu GitHub e rodar este comando acima novamente!
+> 💡 **Automação Ativa:** O robô agora puxa e aplica atualizações do seu GitHub automaticamente a cada **1 hora**. Caso precise aplicar uma alteração imediatamente de forma instantânea, você pode rodar o comando acima.
 
 ---
 

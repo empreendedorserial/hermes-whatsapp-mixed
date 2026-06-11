@@ -482,6 +482,25 @@ Esses testes validam automaticamente:
 
 ---
 
+## 🤖 Automação Completa & Auto-Update (Zero Intervenção)
+
+Para garantir que o robô seja 100% autossuficiente e livre de manutenção para clientes leigos (mesmo que o contêiner Docker fique em execução ininterrupta por 1 ano), implementamos as seguintes rotinas automatizadas no plugin:
+
+### 1. Sincronização Periódica de Regras e Personas (GitHub ➔ Servidor)
+* **Como funciona:** A cada **1 hora**, o contêiner baixa automaticamente do seu repositório de configurações do GitHub as últimas versões de `SOUL.md`, `SOUL_WHATSAPP.md`, `SOUL_EMAIL.md`, `support_rules.md` e `personal_contacts.json`.
+* **Merge Inteligente:** No caso do `personal_contacts.json`, o plugin faz uma mesclagem inteligente: prioriza edições e nomes que você modificou diretamente no GitHub, enquanto mantém contatos recém-descobertos localmente.
+* **Benefício:** Você edita suas regras ou tons de voz visualmente no GitHub e elas entram em vigor no robô sozinhas, sem precisar abrir o console do Portainer ou digitar comandos de setup.
+
+### 2. Auto-Update de Código com Reinício Automático
+* **Como funciona:** A cada **24 horas** (e a cada inicialização), o plugin checa o repositório de código fonte do desenvolvedor em busca de correções de bug ou novos recursos.
+* **Reinício Seguro:** Se houver novas atualizações de arquivos críticos (como `whatsapp_manager.py` ou `bridge.js`), o plugin baixa as novidades e encerra o processo de forma limpa. O Docker Compose, configurado com política de restart, reinicia o contêiner automaticamente em segundos para aplicar o novo código.
+
+### 3. Classificação de Novos Contatos em Tempo Real (On-Demand)
+* **Como funciona:** Se um novo contato enviar uma mensagem, ele é classificado **imediatamente na primeira interação** (usando a análise de histórico e estatísticas via SQLite).
+* **Benefício comercial:** Evita que amigos ou parceiros recebam a primeira resposta no tom formal padrão de suporte comercial (cliente/contato). O bot assume a persona e gírias corretas na mesma hora e dispara um push em segundo plano para persistir a classificação no seu GitHub de forma permanente.
+
+---
+
 ## 👥 Configuração Avançada de Múltiplos Perfis (Profiles Nativo) 🚀
 
 Se você deseja ter **agentes totalmente independentes** rodando ao mesmo tempo (por exemplo: um perfil focado em ser seu Assistente Técnico Pessoal, outro focado 100% no Atendimento de Clientes no WhatsApp, e um terceiro focado exclusivamente em Suporte por E-mail), você pode usar o sistema nativo de **Perfis (Profiles)** do Hermes!
