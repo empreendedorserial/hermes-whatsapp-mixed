@@ -1529,6 +1529,7 @@ def register(ctx):
         import time
         # Aguarda 1 hora antes do primeiro ciclo periódico, já que o boot acabou de rodar
         last_code_check = time.time()
+        last_contact_sync = time.time()
         time.sleep(3600)
         while True:
             # 1. Puxar configurações do GitHub
@@ -1538,13 +1539,15 @@ def register(ctx):
             except Exception as e:
                 print(f"[whatsapp-manager] ⚠️ Erro na puxada periódica de configurações: {e}")
 
-            # 2. Sincronizar contatos
-            try:
-                print("[whatsapp-manager] Iniciando sincronização periódica automática de contatos...")
-                res = _sync_contacts_from_db_internal(force=False)
-                print(f"[whatsapp-manager] Sincronização periódica concluída: {res}")
-            except Exception as e:
-                print(f"[whatsapp-manager] ⚠️ Erro na sincronização periódica: {e}")
+            # 2. Sincronizar contatos (executa apenas a cada 24 horas)
+            if time.time() - last_contact_sync >= 86400:
+                last_contact_sync = time.time()
+                try:
+                    print("[whatsapp-manager] Iniciando sincronização periódica automática de contatos...")
+                    res = _sync_contacts_from_db_internal(force=False)
+                    print(f"[whatsapp-manager] Sincronização periódica concluída: {res}")
+                except Exception as e:
+                    print(f"[whatsapp-manager] ⚠️ Erro na sincronização periódica: {e}")
 
             # 3. Verificar atualizações de código a cada 24 horas (86400 segundos)
             if time.time() - last_code_check >= 86400:
