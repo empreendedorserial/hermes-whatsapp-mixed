@@ -243,10 +243,12 @@ def _sync_contacts_from_db_internal() -> str:
                 
                 # Decidir se precisa de atualização (novo contato ou contato existente sem os novos campos)
                 needs_update = not exists
+                is_stale = False
                 if exists and existing_key:
                     existing_data = personal_contacts[existing_key]
                     if not existing_data.get("summary") or not existing_data.get("intent") or not existing_data.get("frequency"):
                         needs_update = True
+                        is_stale = True
                 
                 if needs_update:
                     if msg_count < min_msg_threshold:
@@ -254,17 +256,23 @@ def _sync_contacts_from_db_internal() -> str:
                         skipped_few_msgs += 1
                         target_key = existing_key if existing_key else chat_id
                         existing_data = personal_contacts.get(target_key, {})
+                        
+                        # Se for stale (antigo e incompleto), não reaproveitamos as propriedades padrão antigas
+                        rel_val = "cliente/contato" if is_stale else (existing_data.get("relationship") or "cliente/contato")
+                        tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
+                        guide_val = "Responda de forma prestativa." if is_stale else (existing_data.get("guidelines") or "Responda de forma prestativa.")
+                        
                         personal_contacts[target_key] = {
                             "name": existing_data.get("name") or name or f"Contato {phone}",
-                            "relationship": existing_data.get("relationship") or "cliente/contato",
-                            "tone": existing_data.get("tone") or "polido e profissional",
+                            "relationship": rel_val,
+                            "tone": tone_val,
                             "nickname": existing_data.get("nickname"),
                             "pet_name": existing_data.get("pet_name"),
                             "frequent_greeting": existing_data.get("frequent_greeting"),
                             "summary": existing_data.get("summary") or "Conversa muito curta.",
                             "intent": existing_data.get("intent") or "Contato inicial.",
                             "frequency": existing_data.get("frequency") or "esporádica",
-                            "guidelines": existing_data.get("guidelines") or "Responda de forma prestativa."
+                            "guidelines": guide_val
                         }
                         continue
 
@@ -305,7 +313,8 @@ def _sync_contacts_from_db_internal() -> str:
                         "name": name,
                         "history": chat_history,
                         "stats": stats_info,
-                        "existing_key": existing_key
+                        "existing_key": existing_key,
+                        "is_stale": is_stale
                     }
                     classification_count += 1
         conn.close()
@@ -320,6 +329,7 @@ def _sync_contacts_from_db_internal() -> str:
         chat_history = info["history"]
         stats_info = info["stats"]
         existing_key = info["existing_key"]
+        is_stale = info.get("is_stale", False)
         phone = chat_id.split("@")[0]
         
         # Classificação baseada no nome, estatísticas e histórico de conversas via LLM
@@ -328,18 +338,34 @@ def _sync_contacts_from_db_internal() -> str:
         target_key = existing_key if existing_key else chat_id
         existing_data = personal_contacts.get(target_key, {})
         
-        personal_contacts[target_key] = {
-            "name": existing_data.get("name") or name or f"Contato {phone}",
-            "relationship": existing_data.get("relationship") or classification.get("relationship", "cliente/contato"),
-            "tone": existing_data.get("tone") or classification.get("tone", "polido e profissional"),
-            "nickname": existing_data.get("nickname") or classification.get("nickname"),
-            "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
-            "frequent_greeting": existing_data.get("frequent_greeting") or classification.get("frequent_greeting"),
-            "summary": existing_data.get("summary") or classification.get("summary", "Conversa inicial."),
-            "intent": existing_data.get("intent") or classification.get("intent", "Suporte/Atendimento."),
-            "frequency": existing_data.get("frequency") or classification.get("frequency", "esporádica"),
-            "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa.")
-        }
+        # Se o contato era "stale" (tinha classificação rule-based ou incompleta), sobrescrevemos
+        # as propriedades originais com a classificação precisa da IA, mas mantendo o nome manual
+        if is_stale:
+            personal_contacts[target_key] = {
+                "name": existing_data.get("name") or name or f"Contato {phone}",
+                "relationship": classification.get("relationship", "cliente/contato"),
+                "tone": classification.get("tone", "polido e profissional"),
+                "nickname": classification.get("nickname"),
+                "pet_name": classification.get("pet_name"),
+                "frequent_greeting": classification.get("frequent_greeting"),
+                "summary": classification.get("summary", "Conversa inicial."),
+                "intent": classification.get("intent", "Suporte/Atendimento."),
+                "frequency": classification.get("frequency", "esporádica"),
+                "guidelines": classification.get("guidelines", "Responda de forma prestativa.")
+            }
+        else:
+            personal_contacts[target_key] = {
+                "name": existing_data.get("name") or name or f"Contato {phone}",
+                "relationship": existing_data.get("relationship") or classification.get("relationship", "cliente/contato"),
+                "tone": existing_data.get("tone") or classification.get("tone", "polido e profissional"),
+                "nickname": existing_data.get("nickname") or classification.get("nickname"),
+                "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
+                "frequent_greeting": existing_data.get("frequent_greeting") or classification.get("frequent_greeting"),
+                "summary": existing_data.get("summary") or classification.get("summary", "Conversa inicial."),
+                "intent": existing_data.get("intent") or classification.get("intent", "Suporte/Atendimento."),
+                "frequency": existing_data.get("frequency") or classification.get("frequency", "esporádica"),
+                "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa.")
+            }
         added_count += 1
         updated = True
 

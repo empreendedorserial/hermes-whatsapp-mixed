@@ -316,6 +316,15 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
                 "relationship": "namorada",
                 "tone": "romantico",
                 "guidelines": "Seja fofo"
+            },
+            "5511888888888@s.whatsapp.net": {
+                "name": "Carlos",
+                "relationship": "amigo",
+                "tone": "descontraído",
+                "guidelines": "Fale como amigo",
+                "summary": "Conversa antiga",
+                "intent": "Ajuda",
+                "frequency": "semanal"
             }
         }
         
@@ -330,7 +339,10 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         
         # Mock rows returned by SELECT
         mock_cursor.fetchall.side_effect = [
-            [("5511777777777@s.whatsapp.net", "Bruna", 10, 1686440000, 1686450000)], # Rows for the contacts list: (chat_id, name, msg_count, min_ts, max_ts)
+            [
+                ("5511777777777@s.whatsapp.net", "Bruna", 10, 1686440000, 1686450000), # Stale contact
+                ("5511888888888@s.whatsapp.net", "Carlos", 5, 1686440000, 1686450000) # Non-stale contact (skipped)
+            ],
             [(0, "Bruna", "oi amor te amo")] # last 15 messages body (from_me=0, sender_name=Bruna, body)
         ]
         
@@ -351,7 +363,7 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"CONFIG_REPO": ""}):
             result = _sync_contacts_from_db_internal()
             
-        # Verify the classification was called
+        # Verify the classification was called only once (for Bruna)
         mock_classify.assert_called_once()
         
         # Verify write to personal_contacts.json occurred
@@ -363,17 +375,24 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         written_json = json.loads(written_data)
         
         bruna_data = written_json["5511777777777@s.whatsapp.net"]
-        # Existing fields are preserved
+        # Stale fields are updated by LLM classification
         self.assertEqual(bruna_data["name"], "Bruna")
-        self.assertEqual(bruna_data["relationship"], "namorada")
-        self.assertEqual(bruna_data["tone"], "romantico")
-        self.assertEqual(bruna_data["guidelines"], "Seja fofo")
+        self.assertEqual(bruna_data["relationship"], "amigo/namorada")
+        self.assertEqual(bruna_data["tone"], "informal e carinhoso")
+        self.assertEqual(bruna_data["guidelines"], "Seja romântico.")
         # New fields are populated
         self.assertEqual(bruna_data["nickname"], "Bru")
         self.assertEqual(bruna_data["pet_name"], "amor")
         self.assertEqual(bruna_data["summary"], "Conversa carinhosa")
         self.assertEqual(bruna_data["intent"], "Saudação")
         self.assertEqual(bruna_data["frequency"], "diária")
+        
+        # Carlos fields should remain exactly as they were (not stale, skipped)
+        carlos_data = written_json["5511888888888@s.whatsapp.net"]
+        self.assertEqual(carlos_data["relationship"], "amigo")
+        self.assertEqual(carlos_data["tone"], "descontraído")
+        self.assertEqual(carlos_data["guidelines"], "Fale como amigo")
+        self.assertEqual(carlos_data["summary"], "Conversa antiga")
 
 if __name__ == "__main__":
     unittest.main()
