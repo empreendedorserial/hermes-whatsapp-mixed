@@ -1219,7 +1219,10 @@ function isSystemError(message) {
       lowercaseMsg.includes('auto-lowered') ||
       lowercaseMsg.includes('still working') ||
       lowercaseMsg.includes('waiting for provider response') ||
-      lowercaseMsg.includes('waiting for model response')) {
+      lowercaseMsg.includes('waiting for model response') ||
+      lowercaseMsg.includes('iteration budget') ||
+      lowercaseMsg.includes('asking model to') ||
+      lowercaseMsg.includes('budget exhausted')) {
     return true;
   }
 
