@@ -751,6 +751,54 @@ async function startSocket() {
     },
   });
 
+  sock.contacts = {};
+
+  sock.ev.on('contacts.set', ({ contacts }) => {
+    if (contacts) {
+      for (const contact of contacts) {
+        if (!contact.id) continue;
+        const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+        sock.contacts[contact.id] = contact;
+        sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      }
+    }
+  });
+
+  sock.ev.on('contacts.upsert', (contacts) => {
+    if (contacts) {
+      for (const contact of contacts) {
+        if (!contact.id) continue;
+        const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+        sock.contacts[contact.id] = contact;
+        sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      }
+    }
+  });
+
+  sock.ev.on('contacts.update', (updates) => {
+    if (updates) {
+      for (const update of updates) {
+        if (!update.id) continue;
+        const cleanJid = String(update.id).split(':')[0].split('@')[0];
+        const current = sock.contacts[update.id] || {};
+        const merged = { ...current, ...update };
+        sock.contacts[update.id] = merged;
+        sock.contacts[cleanJid + '@s.whatsapp.net'] = merged;
+      }
+    }
+  });
+
+  sock.ev.on('messaging-history.set', ({ contacts }) => {
+    if (contacts) {
+      for (const contact of contacts) {
+        if (!contact.id) continue;
+        const cleanJid = String(contact.id).split(':')[0].split('@')[0];
+        sock.contacts[contact.id] = contact;
+        sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      }
+    }
+  });
+
   sock.ev.on('creds.update', () => { saveCreds(); lidToPhone = buildLidMap(); });
 
 
@@ -1386,7 +1434,8 @@ export {
   getMessageQueue,
   setSock,
   isSystemError,
-  getRecentLogs
+  getRecentLogs,
+  resolveContactName
 };
 
 function getBotPaused() { return botPaused; }

@@ -15,7 +15,8 @@ const {
   getMessageQueue,
   setSock,
   isSystemError,
-  getRecentLogs
+  getRecentLogs,
+  resolveContactName
 } = await import('../bridge.js');
 
 // Setup Mock Socket
@@ -469,5 +470,25 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     const lastErrorLog = logs[logs.length - 1];
     assert.ok(lastErrorLog.includes('Test error:'), 'Should log error message prefix');
     assert.ok(lastErrorLog.includes('Database connection failed'), 'Should serialize actual Error message/stack');
+  });
+
+  await t.test('17. Contact synchronization event listeners should correctly store names and resolve them', async () => {
+    mockSock.contacts = {};
+    
+    mockSock.contacts['558699544148@s.whatsapp.net'] = {
+      id: '558699544148@s.whatsapp.net',
+      name: 'João Silva',
+      notify: 'João'
+    };
+    
+    const resolvedName = await resolveContactName('558699544148@s.whatsapp.net');
+    assert.strictEqual(resolvedName, 'João Silva', 'Should resolve contact name from sock.contacts store');
+    
+    mockSock.contacts['558611111111@s.whatsapp.net'] = {
+      id: '558611111111@s.whatsapp.net',
+      pushName: 'Maria Cruz'
+    };
+    const resolvedPushName = await resolveContactName('558611111111');
+    assert.strictEqual(resolvedPushName, 'Maria Cruz', 'Should resolve from clean JID mapping');
   });
 });
