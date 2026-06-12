@@ -370,7 +370,8 @@ async function resolveContactName(jid) {
     }
 
     // 2) onWhatsApp: retorna presence/numero, nao o nome, mas confirma existencia
-    if (!name) {
+    // LIDs (@lid) nao sao suportados pelo onWhatsApp do Baileys — pular
+    if (!name && !jid.endsWith('@lid')) {
       try {
         const result = await sock.onWhatsApp(jid);
         if (Array.isArray(result) && result[0] && result[0].exists) {
@@ -447,56 +448,23 @@ let onMessagesUpsert = async ({ messages, type }) => {
     let senderId = msg.key.participant || chatId;
 
     // Resolve LID to phone JID if necessary
+    // onWhatsApp() nao suporta LIDs — usar apenas o mapa local (lidToPhone)
     if (senderId && senderId.endsWith('@lid')) {
       const cleanLid = senderId.split(':')[0].split('@')[0];
       if (lidToPhone[cleanLid]) {
         senderId = `${lidToPhone[cleanLid]}@s.whatsapp.net`;
-      } else {
-        try {
-          const res = await sock.onWhatsApp(senderId);
-          if (Array.isArray(res) && res[0] && res[0].exists) {
-            const phoneJid = res[0].jid;
-            const phone = phoneJid.split('@')[0];
-            lidToPhone[cleanLid] = phone;
-            senderId = phoneJid;
-            console.log(`[bridge] Dinamicamente mapeado LID ${cleanLid} para telefone ${phone}`);
-            try {
-              writeFileSync(
-                path.join(SESSION_DIR, `lid-mapping-${phone}.json`),
-                JSON.stringify(cleanLid)
-              );
-            } catch (err) {}
-          }
-        } catch (err) {
-          console.error(`[bridge] Falha ao resolver LID ${senderId}:`, err.message);
-        }
+        console.log(`[bridge] LID ${cleanLid} resolvido via cache para ${senderId}`);
       }
+      // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
     }
 
     if (chatId && chatId.endsWith('@lid')) {
       const cleanLid = chatId.split(':')[0].split('@')[0];
       if (lidToPhone[cleanLid]) {
         chatId = `${lidToPhone[cleanLid]}@s.whatsapp.net`;
-      } else {
-        try {
-          const res = await sock.onWhatsApp(chatId);
-          if (Array.isArray(res) && res[0] && res[0].exists) {
-            const phoneJid = res[0].jid;
-            const phone = phoneJid.split('@')[0];
-            lidToPhone[cleanLid] = phone;
-            chatId = phoneJid;
-            console.log(`[bridge] Dinamicamente mapeado LID ${cleanLid} para telefone ${phone}`);
-            try {
-              writeFileSync(
-                path.join(SESSION_DIR, `lid-mapping-${phone}.json`),
-                JSON.stringify(cleanLid)
-              );
-            } catch (err) {}
-          }
-        } catch (err) {
-          console.error(`[bridge] Falha ao resolver LID ${chatId}:`, err.message);
-        }
+        console.log(`[bridge] LID chatId ${cleanLid} resolvido via cache para ${chatId}`);
       }
+      // Se nao temos no cache, mantemos o LID — whatsapp_manager.py resolve via _resolve_phone_from_jid
     }
 
     const isGroup = chatId.endsWith('@g.us');
