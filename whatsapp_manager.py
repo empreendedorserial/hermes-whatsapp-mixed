@@ -111,59 +111,58 @@ def _process_media_message(event) -> str | None:
         return None
         
     media_type = media_info["media_type"]
-    file_path = media_info["media_urls"][0]
     
-    if not os.path.exists(file_path):
-        print(f"[whatsapp-manager] Arquivo de mídia não encontrado: {file_path}")
-        return None
-        
-    mime_type = _get_mime_type(file_path)
-    
-    # Decidir o prompt com base no tipo de mídia
-    if media_type in ["ptt", "audio"]:
+    # Limita a no máximo 5 imagens por mensagem, ou 1 áudio
+    if media_type == "image":
+        urls_to_process = media_info["media_urls"][:5]
+        prompt = "Descreva as imagens fornecidas detalhadamente em português (identifique textos, objetos e o contexto geral). Retorne APENAS a descrição direta de todas elas de forma unificada, sem nenhuma introdução, explicações adicionais ou metalinguagem."
+    elif media_type in ["ptt", "audio"]:
+        urls_to_process = media_info["media_urls"][:1]
         prompt = "Transcreva o áudio de forma literal e precisa, em português. Retorne APENAS o texto da transcrição, sem nenhuma introdução, explicação, aspas ou comentários."
-    elif media_type == "image":
-        prompt = "Descreva a imagem detalhadamente em português (identifique textos, objetos e o contexto geral). Retorne APENAS a descrição direta, sem nenhuma introdução, explicações adicionais ou metalinguagem."
     else:
         # Outros tipos de mídia não são suportados para transcrição/descrição direta
         return None
-        
-    try:
-        # Ler o arquivo de mídia e codificar em base64
-        with open(file_path, "rb") as f:
-            base64_data = base64.b64encode(f.read()).decode("utf-8")
-    except Exception as read_err:
-        print(f"[whatsapp-manager] Erro ao ler arquivo de mídia para envio: {read_err}")
-        # Tentar remover mesmo se der erro de leitura
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
-        return None
 
-    # Remover o arquivo físico após carregar os dados em memória para honrar a diretriz de não armazenar mídias
-    try:
-        os.remove(file_path)
-        print(f"[whatsapp-manager] Arquivo temporário de mídia removido para economizar espaço: {file_path}")
-    except Exception as delete_err:
-        print(f"[whatsapp-manager] Erro ao deletar arquivo de mídia temporário: {delete_err}")
+    parts = []
+    for file_path in urls_to_process:
+        if not os.path.exists(file_path):
+            print(f"[whatsapp-manager] Arquivo de mídia não encontrado: {file_path}")
+            continue
+            
+        mime_type = _get_mime_type(file_path)
+        
+        try:
+            with open(file_path, "rb") as f:
+                base64_data = base64.b64encode(f.read()).decode("utf-8")
+                parts.append({
+                    "inlineData": {
+                        "mimeType": mime_type,
+                        "data": base64_data
+                    }
+                })
+        except Exception as read_err:
+            print(f"[whatsapp-manager] Erro ao ler arquivo de mídia para envio: {read_err}")
+        finally:
+            # Remover o arquivo físico após carregar os dados em memória para honrar a diretriz de não armazenar mídias
+            try:
+                os.remove(file_path)
+                print(f"[whatsapp-manager] Arquivo temporário de mídia removido para economizar espaço: {file_path}")
+            except Exception as delete_err:
+                print(f"[whatsapp-manager] Erro ao deletar arquivo de mídia temporário: {delete_err}")
+
+    if not parts:
+        return None
+        
+    parts.append({
+        "text": prompt
+    })
 
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
         headers = {"Content-Type": "application/json"}
         payload = {
             "contents": [{
-                "parts": [
-                    {
-                        "inlineData": {
-                            "mimeType": mime_type,
-                            "data": base64_data
-                        }
-                    },
-                    {
-                        "text": prompt
-                    }
-                ]
+                "parts": parts
             }]
         }
         

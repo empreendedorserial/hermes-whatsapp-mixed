@@ -896,6 +896,44 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         request_obj = args[0]
         self.assertIn("gemini-custom-media-model", request_obj.full_url)
 
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open, read_data=b"mock-image-data")
+    @patch("os.remove")
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_process_media_message_multiple_images_limit(self, mock_urlopen, mock_remove, mock_open, mock_exists):
+        """Verifica que o processamento de imagens se limita a no máximo 5 imagens por mensagem."""
+        event = MagicMock()
+        event.has_media = True
+        event.media_type = "image"
+        # 7 image paths
+        event.media_urls = [f"/path/to/photo{i}.jpg" for i in range(7)]
+        
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": "Esta é uma descrição de 5 fotos unificadas."
+                    }]
+                }
+            }]
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        text = whatsapp_manager._process_media_message(event)
+        self.assertEqual(text, "Esta é uma descrição de 5 fotos unificadas.")
+        
+        # O open deve ter sido chamado exatamente 5 vezes (limite de 5 imagens)
+        self.assertEqual(mock_open.call_count, 5)
+        
+        # O remove deve ter sido chamado exatamente 5 vezes
+        self.assertEqual(mock_remove.call_count, 5)
+        
+        # Verificar se as chamadas de remoção correspondem aos primeiros 5 arquivos
+        expected_removed = [unittest.mock.call(f"/path/to/photo{i}.jpg") for i in range(5)]
+        mock_remove.assert_has_calls(expected_removed, any_order=True)
+
     @patch("sqlite3.connect")
     def test_update_db_message(self, mock_connect):
         """Verifica a atualização do banco SQLite com detecção dinâmica de colunas."""
