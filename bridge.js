@@ -1085,6 +1085,15 @@ function isSystemError(message) {
   const trimmedMessage = message.trim();
   const lowercaseMsg = trimmedMessage.toLowerCase();
 
+  // Block "Auxiliary title generation failed" and other API key/login leakages
+  if (lowercaseMsg.includes('auxiliary title') || 
+      lowercaseMsg.includes('generation failed') || 
+      lowercaseMsg.includes('x-api-key') || 
+      lowercaseMsg.includes('api secret key') || 
+      lowercaseMsg.includes('login fail')) {
+    return true;
+  }
+
   // 1. Exact status messages from self-improvement / memory skills
   if (trimmedMessage.startsWith('💾') && (lowercaseMsg.includes('self-improvement') || lowercaseMsg.includes('memory updated') || lowercaseMsg.includes('memory update'))) {
     return true;

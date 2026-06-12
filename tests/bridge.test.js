@@ -388,6 +388,8 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     assert.ok(isSystemError('Traceback (most recent call last):\n  File "agent.py", line 42, in call_llm\n    raise ValueError("API Key missing")\nValueError: API Key missing'), 'Should block python stack traces');
     assert.ok(isSystemError('Error: connection timed out while calling anthropic API'), 'Should block connection timeouts');
     assert.ok(isSystemError('{"error": "Unauthorized Access", "status": 401}'), 'Should block JSON errors');
+    assert.ok(isSystemError('⚠️ Auxiliary title generation failed: HTTP 401: login fail: Please carry the API secret key in the \'X-Api-Key\' field of the request header'), 'Should block auxiliary title generation errors');
+    assert.ok(isSystemError('HTTP 401: login fail: Please carry the API secret key in the \'X-Api-Key\' field'), 'Should block Minimax login/X-Api-Key warnings');
 
     // Allowed normal client/owner messages
     assert.ok(!isSystemError('Oi André, tudo bem?'), 'Should allow simple greeting');
