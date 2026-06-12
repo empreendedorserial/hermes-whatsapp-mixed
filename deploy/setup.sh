@@ -304,6 +304,12 @@ if [ ! -f "$BASE_DIR/config.yaml" ]; then
     echo "  ✓ config.yaml inicial configurado."
 else
     echo "  - config.yaml já existe localmente, pulando."
+    # Garantir que max_turns seja reduzido de 60 para 8 para evitar custos abusivos no Gemini
+    if grep -q "max_turns: 60" "$BASE_DIR/config.yaml"; then
+        echo "🔄 Atualizando max_turns de 60 para 8 no seu config.yaml para reduzir custos do Gemini..."
+        sed -i.bak 's/max_turns: 60/max_turns: 8/g' "$BASE_DIR/config.yaml" 2>/dev/null || sed -i 's/max_turns: 60/max_turns: 8/g' "$BASE_DIR/config.yaml"
+        rm -f "$BASE_DIR/config.yaml.bak"
+    fi
 fi
 
 # Baixa o modelo de chaves de API (.env) se ele não existir localmente
