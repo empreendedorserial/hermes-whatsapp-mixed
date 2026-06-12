@@ -934,6 +934,32 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         expected_removed = [unittest.mock.call(f"/path/to/photo{i}.jpg") for i in range(5)]
         mock_remove.assert_has_calls(expected_removed, any_order=True)
 
+    def test_custom_print_redirection(self):
+        """Verifica que mensagens com ⚠️ ou ❌ são redirecionadas para sys.stderr."""
+        import sys
+        from io import StringIO
+        
+        stdout_backup = sys.stdout
+        stderr_backup = sys.stderr
+        
+        sys.stdout = StringIO()
+        sys.stderr = StringIO()
+        
+        try:
+            print("⚠️ Test warning message")
+            print("Regular message")
+            
+            stdout_val = sys.stdout.getvalue()
+            stderr_val = sys.stderr.getvalue()
+            
+            self.assertIn("⚠️ Test warning message", stderr_val)
+            self.assertNotIn("⚠️ Test warning message", stdout_val)
+            self.assertIn("Regular message", stdout_val)
+            self.assertNotIn("Regular message", stderr_val)
+        finally:
+            sys.stdout = stdout_backup
+            sys.stderr = stderr_backup
+
     @patch("sqlite3.connect")
     def test_update_db_message(self, mock_connect):
         """Verifica a atualização do banco SQLite com detecção dinâmica de colunas."""

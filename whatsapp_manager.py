@@ -1,5 +1,21 @@
 """WhatsApp Manager Plugin for André Alencar."""
 
+import builtins
+import sys
+
+_original_print = builtins.print
+
+def _custom_print(*args, **kwargs):
+    msg = " ".join(str(arg) for arg in args)
+    if (msg.strip().startswith("⚠️") or 
+        msg.strip().startswith("❌") or 
+        "compression model" in msg.lower() or 
+        "compression threshold" in msg.lower()):
+        kwargs["file"] = sys.stderr
+    _original_print(*args, **kwargs)
+
+builtins.print = _custom_print
+
 import os
 import json
 import urllib.request
