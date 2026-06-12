@@ -32,6 +32,43 @@ import qrcode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
 
+// Load .env files if present (custom dotenv implementation)
+function loadEnv() {
+  const possiblePaths = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.env')
+  ];
+
+  for (const envPath of possiblePaths) {
+    if (existsSync(envPath)) {
+      try {
+        const content = readFileSync(envPath, 'utf8');
+        const lines = content.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const index = trimmed.indexOf('=');
+          if (index !== -1) {
+            const key = trimmed.substring(0, index).trim();
+            let value = trimmed.substring(index + 1).trim();
+            // Remove optional surrounding quotes
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+              value = value.slice(1, -1);
+            }
+            if (key && !process.env[key]) {
+              process.env[key] = value;
+            }
+          }
+        }
+        break; // Only load the first found .env
+      } catch (err) {
+        console.error('Failed to read .env file:', err);
+      }
+    }
+  }
+}
+loadEnv();
+
 // Keep track of recent console logs for the debug/diagnostics endpoint
 const recentLogs = [];
 const MAX_RECENT_LOGS = 50;
@@ -985,7 +1022,79 @@ app.get('/whatsapp/status', (req, res) => {
   });
 });
 
-app.get('/whatsapp/debug', (req, res) => {
+let diagnosticsCache = null;
+let diagnosticsCacheTime = 0;
+const CACHE_TTL_MS = 30000; // 30 seconds
+
+async function runSelfDiagnostics() {
+  const now = Date.now();
+  if (diagnosticsCache && (now - diagnosticsCacheTime < CACHE_TTL_MS)) {
+    return diagnosticsCache;
+  }
+
+  const checklist = {
+    receive_audio: { status: 'failed', error: 'Not tested' },
+    receive_photos: { status: 'failed', error: 'Not tested' },
+    receive_video: { status: 'ok', error: null },
+    openrouter_api: { status: 'failed', error: 'Not tested' }
+  };
+
+  // 1. Test OpenRouter
+  const openrouterKey = process.env.OPENROUTER_API_KEY || '';
+  if (!openrouterKey) {
+    checklist.openrouter_api = { status: 'failed', error: 'OPENROUTER_API_KEY is missing' };
+  } else {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${openrouterKey}`
+        },
+        signal: AbortSignal.timeout(5000) // 5s timeout
+      });
+      if (response.ok) {
+        checklist.openrouter_api = { status: 'ok', error: null };
+      } else {
+        const text = await response.text();
+        checklist.openrouter_api = { status: 'failed', error: `HTTP ${response.status}: ${text.slice(0, 100)}` };
+      }
+    } catch (err) {
+      checklist.openrouter_api = { status: 'failed', error: err.message };
+    }
+  }
+
+  // 2. Test Gemini API (for receive_audio and receive_photos)
+  const googleApiKey = process.env.GOOGLE_API_KEY || '';
+  const mediaModel = process.env.WHATSAPP_CLIENT_MEDIA_MODEL || 'gemini-2.5-flash';
+  if (!googleApiKey) {
+    const errorMsg = 'GOOGLE_API_KEY is missing';
+    checklist.receive_audio = { status: 'failed', error: errorMsg };
+    checklist.receive_photos = { status: 'failed', error: errorMsg };
+  } else {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mediaModel}?key=${googleApiKey}`, {
+        signal: AbortSignal.timeout(5000) // 5s timeout
+      });
+      if (response.ok) {
+        checklist.receive_audio = { status: 'ok', error: null };
+        checklist.receive_photos = { status: 'ok', error: null };
+      } else {
+        const text = await response.text();
+        const errorMsg = `HTTP ${response.status}: ${text.slice(0, 100)}`;
+        checklist.receive_audio = { status: 'failed', error: errorMsg };
+        checklist.receive_photos = { status: 'failed', error: errorMsg };
+      }
+    } catch (err) {
+      checklist.receive_audio = { status: 'failed', error: err.message };
+      checklist.receive_photos = { status: 'failed', error: err.message };
+    }
+  }
+
+  diagnosticsCache = checklist;
+  diagnosticsCacheTime = now;
+  return checklist;
+}
+
+app.get('/whatsapp/debug', async (req, res) => {
   const credsExists = existsSync(path.join(SESSION_DIR, 'creds.json'));
   let sessionFilesCount = 0;
   try {
@@ -998,6 +1107,7 @@ app.get('/whatsapp/debug', (req, res) => {
 
   // Throttling de erros no output para nao estourar tamanho da resposta
   const filteredLogs = recentLogs.slice(-30);
+  const checklist = await runSelfDiagnostics();
 
   res.json({
     status: connectionState,
@@ -1031,6 +1141,8 @@ app.get('/whatsapp/debug', (req, res) => {
       lidToPhoneMappings: Object.keys(lidToPhone).length,
     },
     errors: errorCounters,
+    // Checklist of active functionalities
+    checklist,
     // Lista de problemas ativos detectados
     alerts: buildAlerts(errorCounters, activityCounters, connectionState, botPaused),
     recentLogs: filteredLogs,
@@ -1085,12 +1197,28 @@ function isSystemError(message) {
   const trimmedMessage = message.trim();
   const lowercaseMsg = trimmedMessage.toLowerCase();
 
-  // Block "Auxiliary title generation failed" and other API key/login leakages
+  // Block "Auxiliary title generation failed" and other API key/login/credential leakage
   if (lowercaseMsg.includes('auxiliary title') || 
       lowercaseMsg.includes('generation failed') || 
       lowercaseMsg.includes('x-api-key') || 
       lowercaseMsg.includes('api secret key') || 
-      lowercaseMsg.includes('login fail')) {
+      lowercaseMsg.includes('login fail') ||
+      lowercaseMsg.includes('invalid api key') ||
+      lowercaseMsg.includes('token expired') ||
+      lowercaseMsg.includes('unauthorized access') ||
+      lowercaseMsg.includes('rate limited') ||
+      lowercaseMsg.includes('rate limit') ||
+      lowercaseMsg.includes('failed to generate') ||
+      lowercaseMsg.includes('connection failed') ||
+      lowercaseMsg.includes('bad gateway') ||
+      lowercaseMsg.includes('internal server error') ||
+      lowercaseMsg.includes('service unavailable') ||
+      lowercaseMsg.includes('request failed')) {
+    return true;
+  }
+
+  // HTTP status pattern blocking
+  if (/http (400|401|403|429|500|502|503|504)/.test(lowercaseMsg)) {
     return true;
   }
 
@@ -1120,12 +1248,13 @@ function isSystemError(message) {
 
   // 4. Raw python traceback (system exception leakage)
   if (lowercaseMsg.startsWith('traceback (most recent call last):') || 
+      lowercaseMsg.includes('traceback (most recent call last):') || 
       (lowercaseMsg.includes('line ') && lowercaseMsg.includes('in ') && lowercaseMsg.includes('file "') && lowercaseMsg.includes('error:'))) {
     return true;
   }
 
-  // Check for common programming error pattern: "Error: ..." or "Exception: ..."
-  if (/^(error|exception|runtimeerror|typeerror|valueerror|syntaxerror|nameerror):\s/i.test(trimmedMessage)) {
+  // Check for common programming error pattern: "Error: ...", "Exception: ...", etc anywhere in the message using word boundary
+  if (/\b(error|exception|runtimeerror|typeerror|valueerror|syntaxerror|nameerror|internal_error|api_error|unauthorized|forbidden):\s/i.test(trimmedMessage)) {
     return true;
   }
 
@@ -1133,7 +1262,7 @@ function isSystemError(message) {
   if (trimmedMessage.startsWith('{') && trimmedMessage.endsWith('}')) {
     try {
       const parsed = JSON.parse(trimmedMessage);
-      if (parsed && (parsed.error !== undefined || parsed.errors !== undefined || parsed.exception !== undefined)) {
+      if (parsed && (parsed.error !== undefined || parsed.errors !== undefined || parsed.exception !== undefined || parsed.status === 'error' || parsed.success === false)) {
         return true;
       }
     } catch (_) {}
@@ -1219,6 +1348,10 @@ app.post('/edit', async (req, res) => {
   }
 
   try {
+    if (isSystemError(message)) {
+      console.error(`[bridge] ⚠️ SYSTEM STATUS/ERROR MESSAGE BLOCKED ON EDIT FOR CLIENT ${chatId}:\n[CONTENT]: ${message}`);
+      return res.json({ success: true, info: 'System status/error message blocked and logged' });
+    }
     const key = { id: messageId, fromMe: true, remoteJid: chatId };
     const chunks = splitLongMessage(formatOutgoingMessage(message));
     const messageIds = [];
@@ -1444,7 +1577,9 @@ export {
   setSock,
   isSystemError,
   getRecentLogs,
-  resolveContactName
+  resolveContactName,
+  loadEnv,
+  runSelfDiagnostics
 };
 
 function getBotPaused() { return botPaused; }

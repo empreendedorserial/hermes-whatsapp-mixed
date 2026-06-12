@@ -101,6 +101,7 @@ def _process_media_message(event) -> str | None:
     Retorna a transcrição ou descrição, ou None se falhar/não for mídia.
     """
     google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    media_model = os.getenv("WHATSAPP_CLIENT_MEDIA_MODEL", "gemini-3.5-flash").strip()
     if not google_key:
         print("[whatsapp-manager] Google API Key não configurada para processamento de mídia.")
         return None
@@ -148,7 +149,7 @@ def _process_media_message(event) -> str | None:
         print(f"[whatsapp-manager] Erro ao deletar arquivo de mídia temporário: {delete_err}")
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={google_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
         headers = {"Content-Type": "application/json"}
         payload = {
             "contents": [{

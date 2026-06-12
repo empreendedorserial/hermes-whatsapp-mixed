@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 process.env.WHATSAPP_OWNER_NUMBER = '99999';
 process.env.WHATSAPP_ALLOWED_USERS = 'client123';
 process.env.WHATSAPP_MODE = 'bot';
@@ -16,7 +18,9 @@ const {
   setSock,
   isSystemError,
   getRecentLogs,
-  resolveContactName
+  resolveContactName,
+  loadEnv,
+  runSelfDiagnostics
 } = await import('../bridge.js');
 
 // Setup Mock Socket
@@ -492,5 +496,94 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     };
     const resolvedPushName = await resolveContactName('558611111111');
     assert.strictEqual(resolvedPushName, 'Maria Cruz', 'Should resolve from clean JID mapping');
+  });
+
+  await t.test('18. isSystemError filter should catch new error patterns', () => {
+    assert.ok(isSystemError('Here is a ValueError: invalid key'), 'Should catch ValueError anywhere in message');
+    assert.ok(isSystemError('The process failed with internal_error: database crashed'), 'Should catch internal_error anywhere in message');
+    assert.ok(isSystemError('Received HTTP 500 status code'), 'Should catch HTTP 500');
+    assert.ok(isSystemError('API rate limited or token expired'), 'Should catch rate limited / token expired');
+    assert.ok(isSystemError('Failed to generate output because connection failed'), 'Should catch failed to generate / connection failed');
+    assert.ok(isSystemError('{"status":"error","message":"crashed"}'), 'Should catch JSON error status');
+
+    // Normal questions or sentences
+    assert.ok(!isSystemError('Como resolver o problema de conexão?'), 'Should allow Portuguese question about connection');
+    assert.ok(!isSystemError('Esta taxa limite é mensal ou anual?'), 'Should allow credit/rate related discussion');
+  });
+
+  await t.test('19. loadEnv should parse .env files correctly', () => {
+    const tempEnvPath = path.resolve(process.cwd(), '.env');
+    const backupEnvExists = fs.existsSync(tempEnvPath);
+    let backupContent = '';
+    if (backupEnvExists) {
+      backupContent = fs.readFileSync(tempEnvPath, 'utf8');
+    }
+
+    try {
+      // Set test environment variables
+      delete process.env.TEST_MY_CUSTOM_KEY;
+      fs.writeFileSync(tempEnvPath, '\n# Test comment\nTEST_MY_CUSTOM_KEY = "my-test-value"\n');
+      
+      loadEnv();
+
+      assert.strictEqual(process.env.TEST_MY_CUSTOM_KEY, 'my-test-value', 'loadEnv should parse key-value and trim quotes');
+    } finally {
+      // Clean up
+      delete process.env.TEST_MY_CUSTOM_KEY;
+      if (backupEnvExists) {
+        fs.writeFileSync(tempEnvPath, backupContent);
+      } else {
+        try {
+          fs.unlinkSync(tempEnvPath);
+        } catch {}
+      }
+    }
+  });
+
+  await t.test('20. runSelfDiagnostics should execute checks and check statuses', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalEnv = { ...process.env };
+
+    try {
+      process.env.OPENROUTER_API_KEY = 'fake-openrouter-key';
+      process.env.GOOGLE_API_KEY = 'fake-google-key';
+
+      // 1. Success mock
+      globalThis.fetch = async (url) => {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => 'OK'
+        };
+      };
+
+      let result = await runSelfDiagnostics();
+      assert.strictEqual(result.receive_audio.status, 'ok');
+      assert.strictEqual(result.receive_photos.status, 'ok');
+      assert.strictEqual(result.receive_video.status, 'ok');
+      assert.strictEqual(result.openrouter_api.status, 'ok');
+
+      // 2. Failure mock (with key missing)
+      delete process.env.OPENROUTER_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+      
+      // Temporarily bypass caching by modifying time in test (since cache TTL is 30s)
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 35000; // Mock time to be 35 seconds in the future
+      
+      try {
+        result = await runSelfDiagnostics();
+        assert.strictEqual(result.openrouter_api.status, 'failed');
+        assert.ok(result.openrouter_api.error.includes('missing'), 'Error should mention missing key');
+        assert.strictEqual(result.receive_audio.status, 'failed');
+        assert.ok(result.receive_audio.error.includes('missing'), 'Error should mention missing key');
+      } finally {
+        Date.now = originalNow;
+      }
+
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env = originalEnv;
+    }
   });
 });

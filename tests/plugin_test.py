@@ -864,6 +864,38 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "bom dia, tudo bem?")
         mock_remove.assert_called_once_with("/path/to/voice.ogg")
 
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open, read_data=b"mock-audio-data")
+    @patch("os.remove")
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key", "WHATSAPP_CLIENT_MEDIA_MODEL": "gemini-custom-media-model"})
+    def test_process_media_message_audio_custom_model(self, mock_urlopen, mock_remove, mock_open, mock_exists):
+        """Verifica processamento de áudio usando o modelo configurado em WHATSAPP_CLIENT_MEDIA_MODEL."""
+        event = MagicMock()
+        event.has_media = True
+        event.media_type = "ptt"
+        event.media_urls = ["/path/to/voice.ogg"]
+        
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": "bom dia, tudo bem?"
+                    }]
+                }
+            }]
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        text = whatsapp_manager._process_media_message(event)
+        self.assertEqual(text, "bom dia, tudo bem?")
+        
+        # Verificar se a URL contém o modelo correto
+        args, kwargs = mock_urlopen.call_args
+        request_obj = args[0]
+        self.assertIn("gemini-custom-media-model", request_obj.full_url)
+
     @patch("sqlite3.connect")
     def test_update_db_message(self, mock_connect):
         """Verifica a atualização do banco SQLite com detecção dinâmica de colunas."""
