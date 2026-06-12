@@ -125,6 +125,8 @@ services:
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-empreendedorserial}
       - CONFIG_REPO=${CONFIG_REPO:-hermes_agent_context_contatcs}
       - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN:-}
+      # Limite de iterações/passos do bot para controle de custos (ex: 8)
+      - MAX_TURNS=${MAX_TURNS:-8}
 
       # Timeouts
       - HERMES_API_TIMEOUT=${HERMES_API_TIMEOUT:-1800}

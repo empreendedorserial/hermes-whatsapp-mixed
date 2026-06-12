@@ -312,6 +312,14 @@ else
     fi
 fi
 
+# Permite configurar max_turns via variável de ambiente da stack (Portainer/Easypanel)
+ENV_MAX_TURNS="${MAX_TURNS:-$HERMES_MAX_TURNS}"
+if [ -n "$ENV_MAX_TURNS" ] && [ -f "$BASE_DIR/config.yaml" ]; then
+    echo "⚙️ Configurando max_turns para $ENV_MAX_TURNS conforme variável de ambiente da stack..."
+    sed -i.bak "s/max_turns: [0-9]*/max_turns: $ENV_MAX_TURNS/g" "$BASE_DIR/config.yaml" 2>/dev/null || sed -i "s/max_turns: [0-9]*/max_turns: $ENV_MAX_TURNS/g" "$BASE_DIR/config.yaml"
+    rm -f "$BASE_DIR/config.yaml.bak"
+fi
+
 # Baixa o modelo de chaves de API (.env) se ele não existir localmente
 if [ ! -f "$BASE_DIR/.env" ]; then
     if ! download_file "$RAW_URL/env.example" "$BASE_DIR/.env" "$CURL_CODE_AUTH_HEADER"; then
