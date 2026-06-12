@@ -1216,7 +1216,10 @@ function isSystemError(message) {
       lowercaseMsg.includes('request failed') ||
       lowercaseMsg.includes('compression model') ||
       lowercaseMsg.includes('compression threshold') ||
-      lowercaseMsg.includes('auto-lowered')) {
+      lowercaseMsg.includes('auto-lowered') ||
+      lowercaseMsg.includes('still working') ||
+      lowercaseMsg.includes('waiting for provider response') ||
+      lowercaseMsg.includes('waiting for model response')) {
     return true;
   }
 
