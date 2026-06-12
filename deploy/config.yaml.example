@@ -10,7 +10,7 @@ model:
 
 agent:
   # Número máximo de interações (voltas) que o agente pode dar em uma única tarefa antes de parar
-  max_turns: 60
+  max_turns: 8
   tool_use_enforcement: auto
   reasoning_effort: medium
 
