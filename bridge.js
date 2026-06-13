@@ -199,6 +199,19 @@ const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
   : process.env.WHATSAPP_REPLY_PREFIX.replace(/\\n/g, '\n');
 const MAX_MESSAGE_LENGTH = parseInt(process.env.WHATSAPP_MAX_MESSAGE_LENGTH || '4096', 10);
 const CHUNK_DELAY_MS = parseInt(process.env.WHATSAPP_CHUNK_DELAY_MS || '300', 10);
+// ── Debounce Progressivo ─────────────────────────────────────────────────────
+// Acumula fragmentos de texto de um mesmo contato antes de processar.
+// O timer começa longo (INITIAL) e decai exponencialmente a cada fragmento novo,
+// convergindo para MIN. Isso acomoda tanto digitadores lentos quanto rápidos.
+//
+// Fórmula: nextTimer = max(MIN_MS, INITIAL_MS × DECAY^(parts-1))
+// Ex (defaults): 1 frag→15s, 2→9s, 3→5.4s, 4→3.2s, 5+→2s
+//
+// Para desabilitar: WHATSAPP_DEBOUNCE_INITIAL_MS=0
+const WHATSAPP_DEBOUNCE_INITIAL_MS = parseInt(process.env.WHATSAPP_DEBOUNCE_INITIAL_MS || '15000', 10);
+const WHATSAPP_DEBOUNCE_MIN_MS     = parseInt(process.env.WHATSAPP_DEBOUNCE_MIN_MS     || '2000',  10);
+const WHATSAPP_DEBOUNCE_DECAY      = parseFloat(process.env.WHATSAPP_DEBOUNCE_DECAY    || '0.6');
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-call timeout for sock.sendMessage(). Baileys occasionally hangs forever
 // when uploading media to WhatsApp servers (and, less often, on text sends),
 // which pins the bridge's HTTP handler until the upstream aiohttp timeout
@@ -340,6 +353,52 @@ const MAX_QUEUE_SIZE = 100;
 // Track recently sent message IDs to prevent echo-back loops with media
 const recentlySentIds = new Set();
 const MAX_RECENT_IDS = 50;
+
+// ── Debounce buffer ──────────────────────────────────────────────────────────
+// Acumula fragmentos de mensagens de texto puro por chatId antes de enfileirar.
+// Estrutura: chatId -> { event, bodyParts: string[], debounceIds: string[], timer }
+const debounceBuffer = new Map();
+
+/**
+ * Calcula o próximo timer de debounce com decay exponencial.
+ * @param {number} parts - Nº de fragmentos já acumulados (incluindo o atual)
+ * @returns {number} Delay em ms
+ *
+ * Tabela com defaults (INITIAL=15000, MIN=2000, DECAY=0.6):
+ *   parts=1 → 15000ms | parts=2 → 9000ms | parts=3 → 5400ms
+ *   parts=4 → 3240ms  | parts=5+ → 2000ms (floor)
+ */
+function calcDebounceDelay(parts) {
+  if (WHATSAPP_DEBOUNCE_INITIAL_MS <= 0) return 0;
+  const raw = WHATSAPP_DEBOUNCE_INITIAL_MS * Math.pow(WHATSAPP_DEBOUNCE_DECAY, parts - 1);
+  return Math.max(WHATSAPP_DEBOUNCE_MIN_MS, Math.round(raw));
+}
+
+/**
+ * Consolida o buffer pendente de um chatId e empurra UM único evento na fila.
+ * Chamado pelo setTimeout do debounce ou por flush antecipado (ex: chegou mídia).
+ */
+function flushDebounceBuffer(chatId) {
+  const pending = debounceBuffer.get(chatId);
+  if (!pending) return;
+  debounceBuffer.delete(chatId);
+
+  const consolidated = {
+    ...pending.event,
+    body: pending.bodyParts.join('\n'),
+    debounceIds: pending.debounceIds, // IDs de todos os fragmentos (para rastreabilidade)
+  };
+
+  messageQueue.push(consolidated);
+  if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
+  activityCounters.messagesEnqueued++;
+  activityCounters.messagesReceived++;
+
+  if (WHATSAPP_DEBUG) {
+    console.log(`[debounce] flush chatId=${chatId} parts=${pending.bodyParts.length} body="${consolidated.body.slice(0, 80)}"`);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 let sock = null;
 let connectionState = 'disconnected';
@@ -722,16 +781,50 @@ let onMessagesUpsert = async ({ messages, type }) => {
       timestamp: msg.messageTimestamp,
     };
 
-    messageQueue.push(event);
-    if (messageQueue.length > MAX_QUEUE_SIZE) {
-      messageQueue.shift();
-    }
-    activityCounters.messagesEnqueued++;
-    if (event && event.fromMe) {
-      activityCounters.messagesSent++;
+    // ── DEBOUNCE PROGRESSIVO: apenas mensagens de texto puro ─────────────────
+    if (!hasMedia && WHATSAPP_DEBOUNCE_INITIAL_MS > 0) {
+      const pending = debounceBuffer.get(chatId);
+      if (pending) {
+        // Já existe buffer para este chat: acumular fragmento e reduzir o timer
+        clearTimeout(pending.timer);
+        pending.bodyParts.push(body);
+        pending.debounceIds.push(event.messageId);
+        const delay = calcDebounceDelay(pending.bodyParts.length);
+        pending.timer = setTimeout(() => flushDebounceBuffer(chatId), delay);
+        if (WHATSAPP_DEBUG) {
+          console.log(`[debounce] acumulado chatId=${chatId} parts=${pending.bodyParts.length} nextTimer=${delay}ms body="${body.slice(0, 40)}"`);
+        }
+      } else {
+        // Primeira mensagem: iniciar buffer com timer máximo (INITIAL)
+        const delay = calcDebounceDelay(1); // = WHATSAPP_DEBOUNCE_INITIAL_MS
+        debounceBuffer.set(chatId, {
+          event,                            // snapshot dos metadados do 1º fragmento
+          bodyParts: [body],
+          debounceIds: [event.messageId],
+          timer: setTimeout(() => flushDebounceBuffer(chatId), delay),
+        });
+        if (WHATSAPP_DEBUG) {
+          console.log(`[debounce] iniciado chatId=${chatId} nextTimer=${delay}ms body="${body.slice(0, 40)}"`);
+        }
+      }
     } else {
-      activityCounters.messagesReceived++;
+      // Mídia ou debounce desabilitado: enfileirar imediatamente.
+      // Se havia buffer de texto pendente para este chat, dar flush antes
+      // para preservar a ordem cronológica (texto antes da mídia).
+      if (debounceBuffer.has(chatId)) {
+        clearTimeout(debounceBuffer.get(chatId).timer);
+        flushDebounceBuffer(chatId);
+      }
+      messageQueue.push(event);
+      if (messageQueue.length > MAX_QUEUE_SIZE) messageQueue.shift();
+      activityCounters.messagesEnqueued++;
+      if (event && event.fromMe) {
+        activityCounters.messagesSent++;
+      } else {
+        activityCounters.messagesReceived++;
+      }
     }
+    // ─────────────────────────────────────────────────────────────────────────
   }
 };
 
