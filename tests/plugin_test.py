@@ -1183,6 +1183,222 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         self.assertIn("custom rules", ctx)
         self.assertIn("History content", ctx)
 
+    @patch.dict(os.environ, {}, clear=True)
+    def test_process_media_message_no_google_key(self):
+        """Verifica que _process_media_message retorna None se GOOGLE_API_KEY estiver ausente."""
+        import whatsapp_manager
+        event = MagicMock()
+        res = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(res)
+
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_process_media_message_no_media(self):
+        """Verifica que _process_media_message retorna None se o evento não contiver mídia."""
+        import whatsapp_manager
+        event = MagicMock()
+        event.has_media = False
+        res = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(res)
+
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_process_media_message_unsupported_type(self):
+        """Verifica que _process_media_message retorna None para tipos de mídia não suportados."""
+        import whatsapp_manager
+        event = MagicMock()
+        event.has_media = True
+        event.media_type = "video"
+        event.media_urls = ["/path/to/video.mp4"]
+        res = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(res)
+
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    @patch("os.path.exists", return_value=False)
+    def test_process_media_message_file_not_found(self, mock_exists):
+        """Verifica que _process_media_message retorna None se o arquivo físico não existir."""
+        import whatsapp_manager
+        event = MagicMock()
+        event.has_media = True
+        event.media_type = "ptt"
+        event.media_urls = ["/path/to/nonexistent.ogg"]
+        res = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(res)
+
+    @patch("sqlite3.connect")
+    def test_update_db_message_alternative_msg_id(self, mock_connect):
+        """Verifica _update_db_message com coluna de ID msg_id."""
+        import whatsapp_manager
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        
+        mock_cursor.fetchall.return_value = [
+            (0, "chat_id", "TEXT", 0, None, 0),
+            (1, "msg_id", "TEXT", 0, None, 0),
+            (2, "body", "TEXT", 0, None, 0)
+        ]
+        mock_cursor.rowcount = 1
+        
+        res = whatsapp_manager._update_db_message("/dummy.db", "msg123", "new body")
+        self.assertEqual(res, 1)
+        mock_cursor.execute.assert_any_call("UPDATE messages SET body = ? WHERE msg_id = ?", ("new body", "msg123"))
+
+    @patch("sqlite3.connect")
+    def test_update_db_message_alternative_id(self, mock_connect):
+        """Verifica _update_db_message com coluna de ID id."""
+        import whatsapp_manager
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        
+        mock_cursor.fetchall.return_value = [
+            (0, "chat_id", "TEXT", 0, None, 0),
+            (1, "id", "TEXT", 0, None, 0),
+            (2, "body", "TEXT", 0, None, 0)
+        ]
+        mock_cursor.rowcount = 1
+        
+        res = whatsapp_manager._update_db_message("/dummy.db", "msg123", "new body")
+        self.assertEqual(res, 1)
+        mock_cursor.execute.assert_any_call("UPDATE messages SET body = ? WHERE id = ?", ("new body", "msg123"))
+
+    @patch("sqlite3.connect")
+    def test_update_db_message_no_id_column(self, mock_connect):
+        """Verifica que _update_db_message retorna -1 quando não há nenhuma coluna de ID."""
+        import whatsapp_manager
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        
+        # Nenhuma coluna mensagens_id, msg_id ou id
+        mock_cursor.fetchall.return_value = [
+            (0, "chat_id", "TEXT", 0, None, 0),
+            (1, "body", "TEXT", 0, None, 0)
+        ]
+        
+        res = whatsapp_manager._update_db_message("/dummy.db", "msg123", "new body")
+        self.assertEqual(res, -1)
+
+    @patch("sqlite3.connect", side_effect=Exception("Connection error"))
+    def test_update_db_message_error(self, mock_connect):
+        """Verifica que _update_db_message retorna -2 quando ocorre uma exceção."""
+        import whatsapp_manager
+        res = whatsapp_manager._update_db_message("/dummy.db", "msg123", "new body")
+        self.assertEqual(res, -2)
+
+    @patch("whatsapp_manager._update_db_message")
+    @patch("threading.Thread")
+    def test_persist_transcription_to_db_immediate(self, mock_thread, mock_update):
+        """Verifica que _persist_transcription_to_db não cria thread se a inserção for imediata."""
+        import whatsapp_manager
+        mock_update.return_value = 1
+        whatsapp_manager._persist_transcription_to_db("/dummy.db", "msg123", "body")
+        mock_thread.assert_not_called()
+
+    @patch("whatsapp_manager._update_db_message")
+    def test_persist_transcription_to_db_bg_retry(self, mock_update):
+        """Verifica que _persist_transcription_to_db lança thread e retenta se retorno for 0."""
+        import whatsapp_manager
+        mock_update.side_effect = [0, 1] # Primeira imediata falha (0), segunda (bg thread) tem sucesso (1)
+        
+        # Para evitar sleep real nos testes
+        with patch("time.sleep") as mock_sleep:
+            whatsapp_manager._persist_transcription_to_db("/dummy.db", "msg123", "body")
+            
+            # Precisamos dar um pequeno tempo para a thread rodar em background
+            # ou verificar as chamadas de mock_update e mock_sleep
+            # Como a thread roda em paralelo, vamos dar join ou sleep curtíssimo se possível,
+            # mas como time.sleep é mockado, ele retorna imediatamente!
+            # Vamos aguardar até 1 segundo para o mock_update atingir o count esperado
+            import time
+            for _ in range(20):
+                if mock_update.call_count >= 2:
+                    break
+                time.sleep(0.01)
+                
+            self.assertEqual(mock_update.call_count, 2)
+            mock_sleep.assert_called_with(1)
+
+    def test_resolve_phone_from_jid_empty(self):
+        """Verifica que _resolve_phone_from_jid trata entrada vazia."""
+        import whatsapp_manager
+        self.assertEqual(whatsapp_manager._resolve_phone_from_jid(""), "")
+        self.assertIsNone(whatsapp_manager._resolve_phone_from_jid(None))
+
+    def test_resolve_phone_from_jid_mapped_lid(self):
+        """Verifica que _resolve_phone_from_jid resolve LIDs mapeados."""
+        import whatsapp_manager
+        whatsapp_manager._lid_to_phone["123456789012345"] = "5511988888888"
+        try:
+            res = whatsapp_manager._resolve_phone_from_jid("123456789012345@lid")
+            self.assertEqual(res, "5511988888888@s.whatsapp.net")
+        finally:
+            whatsapp_manager._lid_to_phone.pop("123456789012345", None)
+
+    @patch("whatsapp_manager._process_media_message", return_value="transcribed audio")
+    @patch("whatsapp_manager._persist_transcription_to_db")
+    @patch("pathlib.Path.exists", return_value=True)
+    def test_pre_gateway_dispatch_media_audio(self, mock_exists, mock_persist, mock_process_media):
+        """Verifica que pre_gateway_dispatch processa áudio, atualiza evento e persiste no banco."""
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        self.assertIsNotNone(pre_dispatch)
+
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.has_media = True
+        event.media_type = "ptt"
+        event.media_urls = ["/path/to/voice.ogg"]
+        event.message_id = "msg123"
+        event.text = ""
+        event.source.user_id = "5511888888888@s.whatsapp.net"
+        event.source.chat_id = "5511888888888@s.whatsapp.net"
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "session_media"
+        gateway._session_model_overrides = {}
+
+        context = {"event": event, "gateway": gateway}
+
+        with patch("whatsapp_manager._check_bot_paused", return_value=False), \
+             patch("whatsapp_manager._check_chat_silenced", return_value=False):
+            res = pre_dispatch("pre_gateway_dispatch", context)
+            
+        self.assertIsNone(res) # Não deve pular
+        self.assertEqual(event.text, '[Áudio: "transcribed audio"]')
+        mock_persist.assert_called_once_with("/opt/data/.hermes/whatsapp_messages.db", "msg123", '[Áudio: "transcribed audio"]')
+
+    @patch("whatsapp_manager._sync_contacts_from_db_internal", return_value="sync completed")
+    @patch("urllib.request.urlopen")
+    def test_pre_gateway_dispatch_sync_contacts_command(self, mock_urlopen, mock_sync):
+        """Verifica que pre_gateway_dispatch intercepta o comando sync contacts do dono."""
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        self.assertIsNotNone(pre_dispatch)
+
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = "5511999999999@s.whatsapp.net" # Dono
+        event.text = "sync contacts"
+        event.source.chat_id = "5511888888888@s.whatsapp.net" # Envia no chat com um contato
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "session_sync"
+        gateway._session_model_overrides = {}
+
+        context = {"event": event, "gateway": gateway}
+
+        res = pre_dispatch("pre_gateway_dispatch", context)
+        self.assertEqual(res, {"action": "skip", "reason": "sync-contacts-command"})
+        
+        # Verificar que sync foi chamado com force=True
+        mock_sync.assert_called_once_with(force=True)
+        
+        # Verificar que enviou a mensagem de volta
+        called_args = mock_urlopen.call_args[0]
+        called_req = called_args[0]
+        self.assertIn("/send", called_req.full_url)
+
 
 if __name__ == "__main__":
     unittest.main()

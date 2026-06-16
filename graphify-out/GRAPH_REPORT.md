@@ -1,16 +1,16 @@
 # Graph Report - hermes-whatsapp-mixed  (2026-06-16)
 
 ## Corpus Check
-- 40 files · ~66,026 words
+- 40 files · ~66,744 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 807 nodes · 862 edges · 78 communities (39 shown, 39 thin omitted)
+- 835 nodes · 890 edges · 91 communities (38 shown, 53 thin omitted)
 - Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 24 edges (avg confidence: 0.88)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `feefc991`
+- Built from commit: `963394ba`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -91,9 +91,22 @@
 - [[_COMMUNITY_Community 75|Community 75]]
 - [[_COMMUNITY_Community 76|Community 76]]
 - [[_COMMUNITY_Community 77|Community 77]]
+- [[_COMMUNITY_Community 78|Community 78]]
+- [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
+- [[_COMMUNITY_Community 81|Community 81]]
+- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 84|Community 84]]
+- [[_COMMUNITY_Community 85|Community 85]]
+- [[_COMMUNITY_Community 86|Community 86]]
+- [[_COMMUNITY_Community 87|Community 87]]
+- [[_COMMUNITY_Community 88|Community 88]]
+- [[_COMMUNITY_Community 89|Community 89]]
+- [[_COMMUNITY_Community 90|Community 90]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `TestWhatsAppManagerPlugin` - 48 edges
+1. `TestWhatsAppManagerPlugin` - 62 edges
 2. `PluginConfig` - 23 edges
 3. `WhatsApp Bot — Sistema Completo` - 16 edges
 4. `📚 FAQs e Resolução de Problemas Técnicos` - 16 edges
@@ -119,7 +132,7 @@
 ## Import Cycles
 - 1-file cycle: `deploy/scripts/support_agent.py -> deploy/scripts/support_agent.py`
 
-## Communities (78 total, 39 thin omitted)
+## Communities (91 total, 53 thin omitted)
 
 ### Community 0 - "Bridge Core (Main)"
 Cohesion: 0.03
@@ -146,8 +159,8 @@ Cohesion: 0.10
 Nodes (19): Allowlist, Contact Filter, Conversation Silence, Debounce Logic, Gemini Model Router, Message Router, Global Pause, Personal Contact Routing (+11 more)
 
 ### Community 6 - "Deployment Infrastructure"
-Cohesion: 0.07
-Nodes (30): 10. Configuração de Integrações e Pagamentos, 11. Instalações Múltiplas do Dealer, 12. Pagamento de Parcerias e Colaborações, 13. Problemas Técnicos em Plataformas de Parceria, 14. Problemas de Acesso ao Chatkanban, 15. Uso de APIs Diferentes no Agendamento V4 Chatwoot, 1. Api Connector, 1. Parcerias, Patrocínios e Anunciantes (Sponsorships) (+22 more)
+Cohesion: 0.06
+Nodes (38): Email Support Persona, Hermes Persona (SOUL), WhatsApp Support Persona, 10. Configuração de Integrações e Pagamentos, 11. Instalações Múltiplas do Dealer, 12. Pagamento de Parcerias e Colaborações, 13. Problemas Técnicos em Plataformas de Parceria, 14. Problemas de Acesso ao Chatkanban (+30 more)
 
 ### Community 8 - "Gmail & OAuth Integration"
 Cohesion: 0.06
@@ -194,8 +207,8 @@ Cohesion: 0.05
 Nodes (41): 1. Garantir as Credenciais do Google na Stack, 1. Pausa Global (`stop_bot` / `start_bot`), 1. Sincronização Periódica e Inteligente (GitHub ➔ Servidor), 2. Auto-Update de Código com Reinício Automático, 2. Pedir o Link ao Bot (No Console do Hermes ou no Telegram), 2. Silenciamento Temporário Automático (10 minutos), 3. Classificação Dinâmica e Blindagem de Contatos, 3. Entregar o Link de Retorno ao Bot (+33 more)
 
 ### Community 46 - "Community 46"
-Cohesion: 0.06
-Nodes (32): 1. WhatsApp, 2. E-mail (Gmail API / Google Workspace), 3. LLM (MiniMax), Arquitetura do Hermes Agent, Arquivos de Configuração e Persona, Backup Failsafe do Core (STT Tradicional):, Como funciona:, Credenciais não aparecem no ambiente (+24 more)
+Cohesion: 0.05
+Nodes (38): Deploy Guide, 1. WhatsApp, 2. E-mail (Gmail API / Google Workspace), 3. LLM (MiniMax), Arquitetura do Hermes Agent, Arquivos de Configuração e Persona, Backup Failsafe do Core (STT Tradicional):, Como funciona: (+30 more)
 
 ### Community 47 - "Community 47"
 Cohesion: 0.05
@@ -257,10 +270,6 @@ Nodes (6): _get_media_info(), _get_mime_type(), _process_media_message(), Extrai
 Cohesion: 0.40
 Nodes (4): 1. 🎛️ Pausa Global (Controlada na Ponte), 2. 🔇 Silenciamento Temporário (Conversas Específicas com Clientes), 📐 Arquitetura e Regras de Controle do Chatbot (WhatsApp), 🔄 Fluxo de Processamento (Resumo Técnico)
 
-### Community 62 - "Community 62"
-Cohesion: 0.16
-Nodes (14): Deploy Guide, Email Support Persona, Hermes Persona (SOUL), WhatsApp Support Persona, Plugin YAML Manifest, Auto-Update System, GitHub Config Sync, Hermes Overview (+6 more)
-
 ### Community 66 - "Community 66"
 Cohesion: 0.50
 Nodes (4): _persist_transcription_to_db(), Atualiza o corpo da mensagem no SQLite detectando dinamicamente a coluna de ID., Executa a persistência da transcrição/descrição tratando eventuais race conditio, _update_db_message()
@@ -272,19 +281,19 @@ Nodes (4): _load_personal_contacts(), Carrega o arquivo personal_contacts.json e
 ## Knowledge Gaps
 - **350 isolated node(s):** `recentLogs`, `errorCounters`, `activityCounters`, `args`, `PORT` (+345 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **39 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **53 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `TestWhatsAppManagerPlugin` connect `Plugin Integration Tests` to `Custom Model Classification`, `Phone Resolution (LID)`, `JID Phone Resolution`, `Unknown LID Passthrough`, `Owner Message Skip Logic`, `Silenced Chat Skip Logic`, `Bot Pause LID Cache`, `Custom Provider Env Vars`, `Media Info (Direct Attrs)`, `Media Info (Dict Payload)`, `MIME Type Detection`, `Audio Processing`, `Audio Custom Model`, `Image Multi-limit`, `Custom Print Redirection`, `DB Message Update`, `Plugin Self-Update Git`, `Community 53`, `Community 57`, `Community 58`, `Community 62`, `Community 67`, `Community 68`, `Community 69`, `Community 70`, `Community 71`, `Community 72`, `Community 73`, `Community 74`, `Community 75`, `Community 76`, `Community 78`, `Community 79`, `Community 80`, `Community 81`, `Community 82`, `Community 83`, `Community 84`, `Community 85`, `Community 86`, `Community 87`, `Community 88`, `Community 89`, `Community 90`?**
+  _High betweenness centrality (0.038) - this node is a cross-community bridge._
 - **Why does `matchesAllowedUser()` connect `Allowlist & Phone Filter` to `Bridge Core (Main)`, `Message Debounce & Routing`, `Bridge Artifacts (deploy/docs alt)`, `Bridge Artifacts (docs alt)`?**
-  _High betweenness centrality (0.039) - this node is a cross-community bridge._
-- **Why does `TestWhatsAppManagerPlugin` connect `Plugin Integration Tests` to `Custom Model Classification`, `Phone Resolution (LID)`, `JID Phone Resolution`, `Unknown LID Passthrough`, `Owner Message Skip Logic`, `Silenced Chat Skip Logic`, `Bot Pause LID Cache`, `Custom Provider Env Vars`, `Media Info (Direct Attrs)`, `Media Info (Dict Payload)`, `MIME Type Detection`, `Audio Processing`, `Audio Custom Model`, `Image Multi-limit`, `Custom Print Redirection`, `DB Message Update`, `Plugin Self-Update Git`, `Community 53`, `Community 57`, `Community 58`, `Community 67`, `Community 68`, `Community 69`, `Community 70`, `Community 71`, `Community 72`, `Community 73`, `Community 74`, `Community 75`, `Community 76`?**
-  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+  _High betweenness centrality (0.037) - this node is a cross-community bridge._
 - **Why does `onMessagesUpsert()` connect `Bridge Artifacts (deploy/docs alt)` to `Bridge Artifacts (deploy/docs)`, `Allowlist & Phone Filter`?**
-  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+  _High betweenness centrality (0.024) - this node is a cross-community bridge._
 - **What connects `WhatsApp Manager Plugin Package Entry Point.`, `recentLogs`, `errorCounters` to the rest of the system?**
-  _427 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _441 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Bridge Core (Main)` be split into smaller, more focused modules?**
   _Cohesion score 0.03278688524590164 - nodes in this community are weakly interconnected._
 - **Should `Bridge Artifacts (deploy/docs)` be split into smaller, more focused modules?**
