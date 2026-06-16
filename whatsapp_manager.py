@@ -2113,17 +2113,32 @@ def register(ctx):
                         name = (contact_info.get("name") if contact_info else None) or db_name or f"Contato {phone_number}"
 
                         if msg_count < min_msg_threshold:
-                            classification = {
-                                "relationship": "Cliente",
-                                "tone": "polido e profissional",
-                                "nickname": None,
-                                "pet_name": None,
-                                "frequent_greeting": None,
-                                "summary": "Conversa muito curta.",
-                                "intent": "Contato inicial.",
-                                "frequency": "esporádica",
-                                "guidelines": "Responda de forma prestativa."
-                            }
+                            # Se já temos uma classificação de contato pessoal existente, mantemos
+                            prev_rel = contact_info.get("relationship") if contact_info else None
+                            if prev_rel and prev_rel not in ["Cliente", "Vendedor", "Pendente de classificação"]:
+                                classification = {
+                                    "relationship": prev_rel,
+                                    "tone": contact_info.get("tone", "informal e amigável"),
+                                    "nickname": contact_info.get("nickname"),
+                                    "pet_name": contact_info.get("pet_name"),
+                                    "frequent_greeting": contact_info.get("frequent_greeting"),
+                                    "summary": contact_info.get("summary", "Conversa muito curta."),
+                                    "intent": "Contato inicial.",
+                                    "frequency": contact_info.get("frequency", "esporádica"),
+                                    "guidelines": contact_info.get("guidelines", "Responda como André.")
+                                }
+                            else:
+                                classification = {
+                                    "relationship": "Cliente",
+                                    "tone": "polido e profissional",
+                                    "nickname": None,
+                                    "pet_name": None,
+                                    "frequent_greeting": None,
+                                    "summary": "Conversa muito curta.",
+                                    "intent": "Contato inicial.",
+                                    "frequency": "esporádica",
+                                    "guidelines": "Responda de forma prestativa."
+                                }
                         else:
                             cursor.execute("""
                                 SELECT from_me, sender_name, body FROM messages
@@ -2229,10 +2244,12 @@ def register(ctx):
                 except Exception as live_err:
                     print(f"[whatsapp-manager] ⚠️ Erro na classificação em tempo real do contato: {live_err}")
 
+            relationship = "Cliente"
             if contact_info:
-                name = contact_info.get("name", "Contato Pessoal")
-                # Relação Manual tem precedência sobre a classificada automaticamente
                 relationship = contact_info.get("manual_relationship") or contact_info.get("relationship") or "Cliente"
+
+            if contact_info and relationship != "Cliente":
+                name = contact_info.get("name", "Contato Pessoal")
                 tone = contact_info.get("tone", "informal e amigável")
                 guidelines = contact_info.get("guidelines", "Responda como André.")
                 

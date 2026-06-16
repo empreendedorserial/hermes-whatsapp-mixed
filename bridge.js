@@ -354,6 +354,9 @@ const MAX_QUEUE_SIZE = 100;
 const recentlySentIds = new Set();
 const MAX_RECENT_IDS = 50;
 
+const recentlyProcessedIds = new Set();
+const MAX_RECENT_PROCESSED_IDS = 500;
+
 // ── Debounce buffer ──────────────────────────────────────────────────────────
 // Acumula fragmentos de mensagens de texto puro por chatId antes de enfileirar.
 // Estrutura: chatId -> { event, bodyParts: string[], debounceIds: string[], timer }
@@ -489,6 +492,20 @@ let onMessagesUpsert = async ({ messages, type }) => {
 
   for (const msg of messages) {
     if (!msg.message) continue;
+
+    const messageId = msg.key.id;
+    if (messageId) {
+      if (recentlyProcessedIds.has(messageId)) {
+        if (WHATSAPP_DEBUG) {
+          console.log(`[bridge] Ignorando mensagem duplicada/já processada: ${messageId}`);
+        }
+        continue;
+      }
+      recentlyProcessedIds.add(messageId);
+      if (recentlyProcessedIds.size > MAX_RECENT_PROCESSED_IDS) {
+        recentlyProcessedIds.delete(recentlyProcessedIds.values().next().value);
+      }
+    }
 
     let chatId = msg.key.remoteJid;
     if (chatId === 'status@broadcast' || (chatId && chatId.includes('status'))) {
@@ -1649,7 +1666,8 @@ export {
   getRecentLogs,
   resolveContactName,
   loadEnv,
-  runSelfDiagnostics
+  runSelfDiagnostics,
+  clearRecentlyProcessedIds
 };
 
 function getBotPaused() { return botPaused; }
@@ -1660,3 +1678,4 @@ function getRecentlySentIds() { return recentlySentIds; }
 function getMessageQueue() { return messageQueue; }
 function setSock(s) { sock = s; }
 function getRecentLogs() { return recentLogs; }
+function clearRecentlyProcessedIds() { recentlyProcessedIds.clear(); }

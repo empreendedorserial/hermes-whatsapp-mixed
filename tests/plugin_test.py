@@ -327,7 +327,8 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
                 "guidelines": "Fale como amigo",
                 "summary": "Conversa antiga",
                 "intent": "Ajuda",
-                "frequency": "semanal"
+                "frequency": "semanal",
+                "last_interaction": 1686460000
             }
         }
         

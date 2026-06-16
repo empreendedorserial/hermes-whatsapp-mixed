@@ -5,6 +5,7 @@ import path from 'node:path';
 process.env.WHATSAPP_OWNER_NUMBER = '99999';
 process.env.WHATSAPP_ALLOWED_USERS = 'client123';
 process.env.WHATSAPP_MODE = 'bot';
+process.env.WHATSAPP_DEBOUNCE_INITIAL_MS = '0';
 
 const {
   onChatsUpdate,
@@ -20,7 +21,8 @@ const {
   getRecentLogs,
   resolveContactName,
   loadEnv,
-  runSelfDiagnostics
+  runSelfDiagnostics,
+  clearRecentlyProcessedIds
 } = await import('../bridge.js');
 
 // Setup Mock Socket
@@ -55,6 +57,7 @@ test('WhatsApp Bridge Regression Tests', async (t) => {
     clearSilencedChats();
     mockSock.sentMessages = [];
     getRecentlySentIds().clear();
+    clearRecentlyProcessedIds();
     getMessageQueue().length = 0;
   });
 
