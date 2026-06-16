@@ -1061,6 +1061,128 @@ class TestWhatsAppManagerPlugin(unittest.IsolatedAsyncioTestCase):
         called_req = called_args[0]
         self.assertIn("gemini-1.5-pro-test", called_req.full_url)
 
+    def test_resolve_chat_id_with_internal_map(self):
+        """Verifica _resolve_chat_id com entrada no dicionário _sender_to_chat."""
+        import whatsapp_manager
+        whatsapp_manager._sender_to_chat["test_sender@s.whatsapp.net"] = "resolved_chat@s.whatsapp.net"
+        try:
+            res = whatsapp_manager._resolve_chat_id("test_sender@s.whatsapp.net")
+            self.assertEqual(res, "resolved_chat@s.whatsapp.net")
+        finally:
+            whatsapp_manager._sender_to_chat.pop("test_sender@s.whatsapp.net", None)
+
+    def test_resolve_chat_id_fallback(self):
+        """Verifica _resolve_chat_id fazendo fallback por split."""
+        import whatsapp_manager
+        res = whatsapp_manager._resolve_chat_id("5511999999999:2@s.whatsapp.net")
+        self.assertEqual(res, "5511999999999@s.whatsapp.net")
+
+    def test_build_owner_context_with_history(self):
+        """Verifica se _build_owner_context inclui a diretriz e o histórico."""
+        import whatsapp_manager
+        res = whatsapp_manager._build_owner_context("\n\n### HISTÓRICO DE MENSAGENS ANTERIORES ###\nHistory text")
+        self.assertIn("ASSISTENTE PESSOAL", res["context"])
+        self.assertIn("History text", res["context"])
+
+    @patch("os.path.exists")
+    @patch("builtins.open")
+    def test_load_support_files_existing(self, mock_open, mock_exists):
+        """Verifica se _load_support_files carrega arquivos quando eles existem."""
+        import whatsapp_manager
+        mock_exists.return_value = True
+        
+        mock_soul_open = unittest.mock.mock_open(read_data="custom soul rules")
+        mock_rules_open = unittest.mock.mock_open(read_data="custom support rules")
+        
+        def mock_open_file(path, *args, **kwargs):
+            if "SOUL_WHATSAPP.md" in str(path):
+                return mock_soul_open(path, *args, **kwargs)
+            return mock_rules_open(path, *args, **kwargs)
+            
+        mock_open.side_effect = mock_open_file
+        
+        soul, rules = whatsapp_manager._load_support_files()
+        self.assertEqual(soul, "custom soul rules")
+        self.assertEqual(rules, "custom support rules")
+
+    @patch("os.path.exists", return_value=False)
+    def test_load_support_files_missing(self, mock_exists):
+        """Verifica se _load_support_files usa fallbacks quando arquivos não existem."""
+        import whatsapp_manager
+        soul, rules = whatsapp_manager._load_support_files()
+        self.assertIn("chatbot de suporte", soul)
+        self.assertIn("Chatkanban", rules)
+
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_load_personal_contacts_success(self, mock_open, mock_exists):
+        """Verifica se _load_personal_contacts lê e sanitiza contatos."""
+        import whatsapp_manager
+        contacts_data = {
+            "5511777777777@s.whatsapp.net": {
+                "name": "Bruna",
+                "relationship": "namorada",
+                "pet_name": "pai",  # deve ser sanitizado para None
+                "nickname": "Bru"
+            }
+        }
+        mock_open.return_value.__enter__.return_value = MagicMock(read=lambda: json.dumps(contacts_data))
+        
+        res = whatsapp_manager._load_personal_contacts()
+        self.assertIn("5511777777777@s.whatsapp.net", res)
+        self.assertEqual(res["5511777777777@s.whatsapp.net"]["name"], "Bruna")
+        self.assertIsNone(res["5511777777777@s.whatsapp.net"]["pet_name"])
+        self.assertEqual(res["5511777777777@s.whatsapp.net"]["nickname"], "Bru")
+
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", side_effect=OSError("Read error"))
+    def test_load_personal_contacts_error(self, mock_open, mock_exists):
+        """Verifica se _load_personal_contacts trata exceções de IO retornando dicionário vazio."""
+        import whatsapp_manager
+        res = whatsapp_manager._load_personal_contacts()
+        self.assertEqual(res, {})
+
+    def test_build_personal_prompt(self):
+        """Verifica se _build_personal_prompt constrói o prompt corretamente com campos opcionais."""
+        import whatsapp_manager
+        contact_info = {
+            "name": "Bruna",
+            "tone": "carinhoso",
+            "nickname": "Bru",
+            "pet_name": "amor",
+            "frequent_greeting": "Oi linda",
+            "summary": "Resumo teste",
+            "intent": "Intenção teste",
+            "frequency": "diária",
+            "notes": "Notas teste",
+            "product": "Produto teste"
+        }
+        res = whatsapp_manager._build_personal_prompt(contact_info, "namorada", "History content")
+        ctx = res["context"]
+        self.assertIn("RESPONDENDO COMO ANDRÉ ALENCAR", ctx)
+        self.assertIn("Nome do contato: Bruna", ctx)
+        self.assertIn("Relação com o André: namorada", ctx)
+        self.assertIn("Tom de voz recomendado: carinhoso", ctx)
+        self.assertIn("Apelido do contato: Bru", ctx)
+        self.assertIn("Nome carinhoso/Apelido afetivo: amor", ctx)
+        self.assertIn("Saudação frequente: Oi linda", ctx)
+        self.assertIn("Resumo das conversas anteriores: Resumo teste", ctx)
+        self.assertIn("Intenção das últimas conversas: Intenção teste", ctx)
+        self.assertIn("Frequência das conversas: diária", ctx)
+        self.assertIn("Observação importante sobre o contato: Notas teste", ctx)
+        self.assertIn("Produto/Serviço envolvido: Produto teste", ctx)
+        self.assertIn("History content", ctx)
+
+    def test_build_support_prompt(self):
+        """Verifica se _build_support_prompt inclui soul, regras e histórico."""
+        import whatsapp_manager
+        res = whatsapp_manager._build_support_prompt("custom soul", "custom rules", "History content")
+        ctx = res["context"]
+        self.assertIn("SUPORTE WHATSAPP", ctx)
+        self.assertIn("custom soul", ctx)
+        self.assertIn("custom rules", ctx)
+        self.assertIn("History content", ctx)
+
 
 if __name__ == "__main__":
     unittest.main()
