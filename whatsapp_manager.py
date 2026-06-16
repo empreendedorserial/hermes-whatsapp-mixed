@@ -24,6 +24,10 @@ import base64
 import time
 from pathlib import Path
 
+import logging
+
+logger = logging.getLogger("whatsapp_manager")
+
 
 # Mapeamento temporário sender_id -> chat_id (usado entre pre_gateway_dispatch e pre_llm_call)
 _sender_to_chat: dict[str, str] = {}
@@ -119,7 +123,7 @@ def _process_media_message(event) -> str | None:
     google_key = os.getenv("GOOGLE_API_KEY", "").strip()
     media_model = os.getenv("WHATSAPP_CLIENT_MEDIA_MODEL", "gemini-3.1-flash-lite").strip()
     if not google_key:
-        print("[whatsapp-manager] Google API Key não configurada para processamento de mídia.")
+        logger.info("Google API Key não configurada para processamento de mídia.")
         return None
         
     media_info = _get_media_info(event)
@@ -142,7 +146,7 @@ def _process_media_message(event) -> str | None:
     parts = []
     for file_path in urls_to_process:
         if not os.path.exists(file_path):
-            print(f"[whatsapp-manager] Arquivo de mídia não encontrado: {file_path}")
+            logger.info(f"Arquivo de mídia não encontrado: {file_path}")
             continue
             
         mime_type = _get_mime_type(file_path)
@@ -156,15 +160,15 @@ def _process_media_message(event) -> str | None:
                         "data": base64_data
                     }
                 })
-        except Exception as read_err:
-            print(f"[whatsapp-manager] Erro ao ler arquivo de mídia para envio: {read_err}")
+        except OSError as read_err:
+            logger.error(f"Erro ao ler arquivo de mídia para envio: {read_err}")
         finally:
             # Remover o arquivo físico após carregar os dados em memória para honrar a diretriz de não armazenar mídias
             try:
                 os.remove(file_path)
-                print(f"[whatsapp-manager] Arquivo temporário de mídia removido para economizar espaço: {file_path}")
-            except Exception as delete_err:
-                print(f"[whatsapp-manager] Erro ao deletar arquivo de mídia temporário: {delete_err}")
+                logger.info(f"Arquivo temporário de mídia removido para economizar espaço: {file_path}")
+            except OSError as delete_err:
+                logger.warning(f"Erro ao deletar arquivo de mídia temporário: {delete_err}")
 
     if not parts:
         return None
@@ -187,8 +191,8 @@ def _process_media_message(event) -> str | None:
             result = json.loads(resp.read().decode("utf-8"))
             text_content = result["candidates"][0]["content"]["parts"][0]["text"].strip()
             return text_content
-    except Exception as e:
-        print(f"[whatsapp-manager] Erro ao processar mídia via Gemini: {e}")
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
+        logger.error(f"Erro ao processar mídia via Gemini: {e}")
         return None
 
 
@@ -220,8 +224,8 @@ def _update_db_message(db_path: str, msg_id: str, new_body: str) -> int:
         else:
             conn.close()
             return -1
-    except Exception as e:
-        print(f"[whatsapp-manager] DB update error para msg_id {msg_id}: {e}")
+    except Exception as e:  # noqa: BLE001 — sqlite3.Error + OSError both needed
+        logger.error(f"DB update error para msg_id {msg_id}: {e}", exc_info=True)
         return -2
 
 
@@ -239,7 +243,7 @@ def _persist_transcription_to_db(db_path: str, msg_id: str, new_body: str):
                 time.sleep(delay)
                 r = _update_db_message(db_path, msg_id, new_body)
                 if r > 0:
-                    print(f"[whatsapp-manager] SQLite atualizado em background para msg_id={msg_id}")
+                    logger.info(f"SQLite atualizado em background para msg_id={msg_id}")
                     break
         threading.Thread(target=_bg_update, daemon=True).start()
 
@@ -302,7 +306,8 @@ def _check_bot_paused() -> bool:
             if isinstance(new_map, dict):
                 _lid_to_phone.update(new_map)
             return data.get("botPaused", False)
-    except Exception:
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        # Bridge offline ou resposta inválida — retorna padrão seguro
         return False
 
 
@@ -317,7 +322,8 @@ def _check_chat_silenced(chat_id: str) -> bool:
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data.get("isSilenced", False)
-    except Exception:
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        # Bridge offline ou resposta inválida — retorna padrão seguro
         return False
 
 
@@ -329,7 +335,8 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data.get("history", "")
-    except Exception:
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        # Servidor de mensagens offline ou resposta inválida
         return ""
 
 
@@ -352,7 +359,7 @@ def _resolve_contact_name_from_bridge(jid: str) -> str | None:
                 return name.strip()
             return None
     except Exception as e:
-        print(f"[whatsapp-manager] bridge contact lookup falhou para {jid}: {e}")
+        logger.info(f"bridge contact lookup falhou para {jid}: {e}")
         return None
 
 
@@ -430,7 +437,7 @@ def _extract_json_from_text(text: str) -> dict:
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError as e:
-                    print(f"[whatsapp-manager] JSON inválido extraído: {e} | conteúdo: {candidate[:300]}")
+                    logger.info(f"JSON inválido extraído: {e} | conteúdo: {candidate[:300]}")
                     raise
 
     raise ValueError(f"JSON incompleto ou malformado no texto: {text[:300]}")
@@ -525,7 +532,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
                 text_content = result["candidates"][0]["content"]["parts"][0]["text"]
                 return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
-            print(f"[whatsapp-manager] Falha ao classificar via Gemini: {e}")
+            logger.error(f"Falha ao classificar via Gemini: {e}")
 
     # 2. Tentar OpenAI API
     if openai_key:
@@ -547,7 +554,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
                 text_content = result["choices"][0]["message"]["content"]
                 return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
-            print(f"[whatsapp-manager] Falha ao classificar via OpenAI: {e}")
+            logger.error(f"Falha ao classificar via OpenAI: {e}")
 
     if openrouter_key:
         try:
@@ -578,7 +585,7 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
                 text_content = result["choices"][0]["message"]["content"]
                 return _sanitize_classification_result(_extract_json_from_text(text_content))
         except Exception as e:
-            print(f"[whatsapp-manager] Falha ao classificar via OpenRouter: {e}")
+            logger.error(f"Falha ao classificar via OpenRouter: {e}")
 
     # Fallback default se nenhuma API key estiver disponível ou todas falharem
     return {
@@ -623,7 +630,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     if isinstance(v, dict):
                         personal_contacts[k] = _sanitize_classification_result(v)
         except Exception as e:
-            print(f"[whatsapp-manager] Erro ao ler {pc_path}: {e}")
+            logger.error(f"Erro ao ler {pc_path}: {e}")
 
     # 2. Ler contatos únicos do SQLite com agregação de estatísticas para performance
     if not db_path.exists() and not state_db_path.exists():
@@ -654,9 +661,9 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
             for user_id, last_ts, session_count in state_cursor.fetchall():
                 state_sessions[user_id] = {"last_ts": last_ts, "session_count": session_count}
             source_stats["state.db"] = len(state_sessions)
-            print(f"[whatsapp-manager] sync: {len(state_sessions)} contatos WhatsApp em state.db.sessions")
+            logger.info(f"sync: {len(state_sessions)} contatos WhatsApp em state.db.sessions")
         except Exception as e:
-            print(f"[whatsapp-manager] sync: erro lendo state.db.sessions: {e}")
+            logger.error(f"sync: erro lendo state.db.sessions: {e}")
 
     # 2b. Fonte complementar: whatsapp_messages.db (mapa chat_id -> sender_name + historico)
     bridge_contacts = {}
@@ -678,9 +685,9 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     "max_ts": max_ts,
                 }
             source_stats["whatsapp_messages.db"] = len(bridge_contacts)
-            print(f"[whatsapp-manager] sync: {len(bridge_contacts)} contatos em whatsapp_messages.db")
+            logger.info(f"sync: {len(bridge_contacts)} contatos em whatsapp_messages.db")
         except Exception as e:
-            print(f"[whatsapp-manager] sync: erro lendo whatsapp_messages.db: {e}")
+            logger.error(f"sync: erro lendo whatsapp_messages.db: {e}")
 
     # 2c. Consolida lista unica: state.db (autoritativo) + bridge (fallback para quem nao tem sessao)
     all_chat_ids = []
@@ -692,7 +699,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         if chat_id not in seen:
             seen.add(chat_id)
             all_chat_ids.append(chat_id)
-    print(f"[whatsapp-manager] sync: {len(all_chat_ids)} contatos unicos para processar")
+    logger.info(f"sync: {len(all_chat_ids)} contatos unicos para processar")
 
     try:
         conn = sqlite3.connect(str(db_path)) if db_path.exists() else None
@@ -768,7 +775,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 bridge_name = _resolve_contact_name_from_bridge(chat_id)
             best_name, name_source = _best_contact_name(chat_id, bridge_name, name, phone)
             if name_source == "bridge":
-                print(f"[whatsapp-manager] Nome resolvido via Baileys para {chat_id}: {best_name}")
+                logger.info(f"Nome resolvido via Baileys para {chat_id}: {best_name}")
             name = best_name
 
             if msg_count < min_msg_threshold:
@@ -883,7 +890,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                         history_lines.append(f"[{sender_lbl}]: {content[:300]}")
                     chat_history = "\n".join(history_lines)
             except Exception as db_err:
-                print(f"[whatsapp-manager] Erro ao ler histórico para {chat_id}: {db_err}")
+                logger.error(f"Erro ao ler histórico para {chat_id}: {db_err}")
                 chat_history = ""
             
             db_contacts[chat_id] = {
@@ -1022,7 +1029,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                     sha = data.get("sha")
             except urllib.error.HTTPError as e:
                 if e.code != 404:
-                    print(f"[whatsapp-manager] Erro ao buscar SHA: {e}")
+                    logger.warning(f"Erro ao buscar SHA: {e}")
             
             # Atualizar conteúdo
             put_data = {
@@ -1095,7 +1102,7 @@ def _push_personal_contacts_to_github() -> bool:
                 sha = data.get("sha")
         except urllib.error.HTTPError as e:
             if e.code != 404:
-                print(f"[whatsapp-manager] Erro ao buscar SHA no push manual: {e}")
+                logger.warning(f"Erro ao buscar SHA no push manual: {e}")
         
         put_data = {
             "message": "Manual/Agent update of personal_contacts.json",
@@ -1113,10 +1120,10 @@ def _push_personal_contacts_to_github() -> bool:
         
         with urllib.request.urlopen(req_put, timeout=10) as resp:
             if resp.status in [200, 201]:
-                print("[whatsapp-manager] ✓ personal_contacts.json sincronizado com o GitHub com sucesso via push detectado.")
+                logger.info("✓ personal_contacts.json sincronizado com o GitHub com sucesso via push detectado.")
                 return True
     except Exception as e:
-        print(f"[whatsapp-manager] ⚠️ Falha ao sincronizar personal_contacts.json manual com o GitHub: {e}")
+        logger.error(f"Falha ao sincronizar personal_contacts.json manual com o GitHub: {e}")
     return False
 
 
@@ -1148,7 +1155,7 @@ def _ensure_google_libs():
         "google-api-python-client",
     ]
 
-    print("[whatsapp-manager] 📦 Instalando libs Google API no venv...")
+    logger.info("📦 Instalando libs Google API no venv...")
     try:
         if uv_bin.exists():
             cmd = [str(uv_bin), "pip", "install", "--python", str(venv_python)] + packages
@@ -1160,11 +1167,11 @@ def _ensure_google_libs():
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0:
-            print("[whatsapp-manager] ✅ Libs Google API instaladas com sucesso.")
+            logger.info("✅ Libs Google API instaladas com sucesso.")
         else:
-            print(f"[whatsapp-manager] ⚠️ Falha ao instalar libs Google: {result.stderr[:300]}")
+            logger.error(f"Falha ao instalar libs Google: {result.stderr[:300]}")
     except Exception as e:
-        print(f"[whatsapp-manager] ⚠️ Erro ao instalar libs Google: {e}")
+        logger.error(f"Erro ao instalar libs Google: {e}")
 
 
 def _pull_and_merge_configurations():
@@ -1213,9 +1220,9 @@ def _pull_and_merge_configurations():
                 if content:
                     path_obj.parent.mkdir(parents=True, exist_ok=True)
                     path_obj.write_bytes(content)
-                    print(f"[whatsapp-manager] ✓ {path_str} atualizado do GitHub.")
+                    logger.info(f"✓ {path_str} atualizado do GitHub.")
         except Exception as e:
-            print(f"[whatsapp-manager] ⚠️ Falha ao baixar {path_str} de {url}: {e}")
+            logger.error(f"Falha ao baixar {path_str} de {url}: {e}")
 
     # Copiar personas para perfis locais correspondentes
     try:
@@ -1232,7 +1239,7 @@ def _pull_and_merge_configurations():
             profile_em_soul.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(soul_email_path, profile_em_soul)
     except Exception as copy_err:
-        print(f"[whatsapp-manager] ⚠️ Falha ao copiar personas para perfis locais: {copy_err}")
+        logger.error(f"Falha ao copiar personas para perfis locais: {copy_err}")
 
     # 2. Sincronizar personal_contacts.json (merge)
     personal_contacts_path = Path("/opt/data/personal_contacts.json")
@@ -1245,7 +1252,7 @@ def _pull_and_merge_configurations():
                     if isinstance(v, dict):
                         local_contacts[k] = _sanitize_classification_result(v)
         except Exception as e:
-            print(f"[whatsapp-manager] Erro ao carregar local personal_contacts.json: {e}")
+            logger.error(f"Erro ao carregar local personal_contacts.json: {e}")
 
     remote_url = f"{config_base_url}/personal_contacts.json"
     remote_contacts = None
@@ -1260,9 +1267,9 @@ def _pull_and_merge_configurations():
                 for k, v in remote_contacts.items():
                     if isinstance(v, dict):
                         remote_contacts[k] = _sanitize_classification_result(v)
-            print(f"[whatsapp-manager] ✓ personal_contacts.json remoto carregado com sucesso.")
+            logger.info(f"✓ personal_contacts.json remoto carregado com sucesso.")
     except Exception as e:
-        print(f"[whatsapp-manager] ⚠️ Não foi possível baixar personal_contacts.json do GitHub: {e}")
+        logger.warning(f"Não foi possível baixar personal_contacts.json do GitHub: {e}")
 
     if remote_contacts is not None:
         # Mesclar local e remoto
@@ -1277,9 +1284,9 @@ def _pull_and_merge_configurations():
         try:
             with open(personal_contacts_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2, ensure_ascii=False)
-            print(f"[whatsapp-manager] ✓ Contatos mesclados localmente.")
+            logger.info(f"✓ Contatos mesclados localmente.")
         except Exception as e:
-            print(f"[whatsapp-manager] Erro ao salvar personal_contacts.json mesclado: {e}")
+            logger.error(f"Erro ao salvar personal_contacts.json mesclado: {e}")
 
 
 def _self_update_plugin_code() -> bool:
@@ -1297,7 +1304,7 @@ def _self_update_plugin_code() -> bool:
         try:
             plugin_dir.mkdir(parents=True, exist_ok=True)
         except Exception as mkdir_err:
-            print(f"[whatsapp-manager] Code Update: Não foi possível criar plugin_dir: {mkdir_err}. Abortando update.")
+            logger.info(f"Code Update: Não foi possível criar plugin_dir: {mkdir_err}. Abortando update.")
             return False
 
     if (plugin_dir / ".git").exists():
@@ -1319,13 +1326,13 @@ def _self_update_plugin_code() -> bool:
             if local_hash != remote_hash:
                 # Reset local modifications to avoid merge conflicts
                 subprocess.run(["git", "reset", "--hard", "FETCH_HEAD"], cwd=str(plugin_dir), check=True, capture_output=True)
-                print(f"[whatsapp-manager] Code Update (Git): Código atualizado via Git para o commit {remote_hash[:7]}.")
+                logger.info(f"Code Update (Git): Código atualizado via Git para o commit {remote_hash[:7]}.")
                 return True
             else:
-                print("[whatsapp-manager] Code Update (Git): Sem novas atualizações no Git.")
+                logger.info("Code Update (Git): Sem novas atualizações no Git.")
                 return False
         except Exception as git_err:
-            print(f"[whatsapp-manager] Code Update (Git): Falha ao atualizar via Git: {git_err}. Tentando fallback por downloads individuais...")
+            logger.error(f"Code Update (Git): Falha ao atualizar via Git: {git_err}. Tentando fallback por downloads individuais...")
     files_to_update = {
         "plugin.yaml": f"{raw_root}/plugin.yaml",
         "__init__.py": f"{raw_root}/__init__.py",
@@ -1360,11 +1367,11 @@ def _self_update_plugin_code() -> bool:
                     if local_normalized != content_normalized:
                         local_path.parent.mkdir(parents=True, exist_ok=True)
                         local_path.write_bytes(content_normalized)
-                        print(f"[whatsapp-manager] Code Update: {filename} atualizado com sucesso.")
+                        logger.info(f"Code Update: {filename} atualizado com sucesso.")
                         if filename in ["whatsapp_manager.py", "bridge.js"]:
                             updated_any = True
         except Exception as e:
-            print(f"[whatsapp-manager] Code Update: Falha ao atualizar {filename}: {e}")
+            logger.error(f"Code Update: Falha ao atualizar {filename}: {e}")
 
     # Atualizar skills
     for relative_path, url in skills_to_update.items():
@@ -1382,14 +1389,199 @@ def _self_update_plugin_code() -> bool:
                     if local_normalized != content_normalized:
                         local_path.parent.mkdir(parents=True, exist_ok=True)
                         local_path.write_bytes(content_normalized)
-                        print(f"[whatsapp-manager] Code Update: {relative_path} atualizado.")
+                        logger.info(f"Code Update: {relative_path} atualizado.")
         except Exception as e:
-            print(f"[whatsapp-manager] Code Update: Falha ao atualizar skill {relative_path}: {e}")
+            logger.error(f"Code Update: Falha ao atualizar skill {relative_path}: {e}")
 
     return updated_any
 
 
+# ---------------------------------------------------------------------------
+# Helpers extraídos de pre_llm_call() — testáveis unitariamente
+# ---------------------------------------------------------------------------
+
+def _resolve_chat_id(sender_id: str) -> str:
+    """Resolve o chat_id canônico a partir de um sender_id (JID ou LID).
+
+    Retorna o JID limpo sem device-suffix (ex: "5511999@s.whatsapp.net"),
+    consultando o mapa _sender_to_chat preenchido pelo pre_gateway_dispatch.
+    """
+    chat_id = _sender_to_chat.get(sender_id, "")
+    if not chat_id and sender_id:
+        parts = sender_id.split("@")
+        if len(parts) == 2:
+            jid_part, domain_part = parts
+            chat_id = f"{jid_part.split(':')[0]}@{domain_part}"
+    return chat_id
+
+
+def _build_owner_context(history_section: str) -> dict:
+    """Constrói o dicionário de contexto para quando o remetente é o próprio André (dono).
+
+    Retorna o payload {"context": "..."} pronto para injeção no LLM.
+    """
+    return {
+        "context": (
+            "### DIRETRIZ CRÍTICA DE COMPORTAMENTO ###\n"
+            "Você está conversando com André Alencar, seu criador e dono. "
+            "Para o André, você age como seu ASSISTENTE PESSOAL de alta performance. "
+            "Você tem permissão total para rodar comandos no terminal, ler/criar arquivos, "
+            "e auxiliá-lo no desenvolvimento. Responda de forma prestativa, técnica e ágil.\n\n"
+            "CRITICAL SECURITY & DISPLAY CONSTRAINT:\n"
+            "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
+            "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
+            "deve ser 100% invisível para o usuário final."
+            f"{history_section}"
+        )
+    }
+
+
+def _load_support_files() -> tuple[str, str]:
+    """Carrega o arquivo de persona (SOUL_WHATSAPP.md) e as regras de suporte (support_rules.md).
+
+    Retorna (whatsapp_soul, rules_content) com fallbacks se os arquivos não existirem.
+    """
+    whatsapp_soul = ""
+    try:
+        soul_path = "/opt/data/SOUL_WHATSAPP.md"
+        if os.path.exists(soul_path):
+            with open(soul_path, "r", encoding="utf-8") as f:
+                whatsapp_soul = f.read()
+    except OSError:
+        pass
+
+    if not whatsapp_soul:
+        whatsapp_soul = "Você DEVE agir estritamente como um chatbot de suporte, polido, amigável e profissional."
+
+    rules_content = ""
+    try:
+        rules_path = "/opt/data/support_rules.md"
+        if os.path.exists(rules_path):
+            with open(rules_path, "r", encoding="utf-8") as f:
+                rules_content = f.read()
+    except OSError:
+        pass
+
+    if not rules_content:
+        rules_content = "Responda de forma profissional e ajude com Chatkanban, Chatcommerce e Api Connector."
+
+    return whatsapp_soul, rules_content
+
+
+def _load_personal_contacts() -> dict:
+    """Carrega o arquivo personal_contacts.json e sanitiza cada entrada.
+
+    Retorna {} se o arquivo não existir ou estiver corrompido.
+    """
+    try:
+        pc_file = "/opt/data/personal_contacts.json"
+        if os.path.exists(pc_file):
+            with open(pc_file, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+                return {
+                    k: _sanitize_classification_result(v) if isinstance(v, dict) else v
+                    for k, v in raw.items()
+                }
+    except (OSError, json.JSONDecodeError) as pc_load_err:
+        logger.error(f"Erro ao carregar personal_contacts.json: {pc_load_err}")
+    return {}
+
+
+def _build_personal_prompt(contact_info: dict, relationship: str, history_section: str) -> dict:
+    """Constrói o payload de contexto para contatos pessoais (Amigo, Parente, etc.).
+
+    Inclui nome, relacionamento, tom, apelidos, saudação frequente e diretrizes.
+    Retorna {"context": "..."}.
+    """
+    name = contact_info.get("name", "Contato Pessoal")
+    tone = contact_info.get("tone", "informal e amigável")
+    guidelines = contact_info.get("guidelines", "Responda como André.")
+
+    nickname = contact_info.get("nickname")
+    pet_name = contact_info.get("pet_name")
+    frequent_greeting = contact_info.get("frequent_greeting")
+    summary = contact_info.get("summary")
+    intent = contact_info.get("intent")
+    frequency = contact_info.get("frequency")
+    notes = contact_info.get("notes")
+    product = contact_info.get("product")
+
+    details = ""
+    if nickname:
+        details += f"Apelido do contato: {nickname}\n"
+    if pet_name:
+        details += f"Nome carinhoso/Apelido afetivo: {pet_name}\n"
+    if frequent_greeting:
+        details += f"Saudação frequente: {frequent_greeting}\n"
+    if summary:
+        details += f"Resumo das conversas anteriores: {summary}\n"
+    if intent:
+        details += f"Intenção das últimas conversas: {intent}\n"
+    if frequency:
+        details += f"Frequência das conversas: {frequency}\n"
+    if notes:
+        details += f"Observação importante sobre o contato: {notes}\n"
+    if product:
+        details += f"Produto/Serviço envolvido: {product}\n"
+
+    return {
+        "context": (
+            "### PERSONA E DIRETRIZES PESSOAIS (RESPONDENDO COMO ANDRÉ ALENCAR) ###\n"
+            "Você está respondendo em nome de André Alencar (o dono deste WhatsApp) para um contato pessoal.\n"
+            "Você DEVE agir como se fosse o próprio André conversando diretamente com a pessoa.\n\n"
+            f"Nome do contato: {name}\n"
+            f"Relação com o André: {relationship}\n"
+            f"Tom de voz recomendado: {tone}\n"
+            f"{details}"
+            f"Diretrizes específicas: {guidelines}\n\n"
+            "### DIRETRIZES IMPORTANTES DE COMPORTAMENTO ###\n"
+            "1. Analise o histórico recente fornecido abaixo para identificar os apelidos mútuos, gírias e o nível de formalidade/descontração com que vocês conversam.\n"
+            "2. Adote o mesmo estilo de escrita do André nas mensagens anteriores. Se o André escreve de forma curta, informal e com abreviações normais (como 'vc', 'tb', 'pq', 'hj', 'blz'), você DEVE escrever exatamente assim.\n"
+            "3. Responda de forma extremamente natural e fluida. Seja breve e direto (evite textos longos, a menos que o contexto exija).\n"
+            "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n"
+            "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n"
+            "6. Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária (por exemplo, se disser para agradecer e recusar ofertas, aja exatamente conforme instruído).\n\n"
+            f"{history_section}"
+            "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
+            "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"
+            "- NUNCA edite, remova ou crie arquivos do sistema para ela.\n"
+            "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas.\n"
+            "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas como '📖 read_file: ...' ou 'terminal'."
+        )
+    }
+
+
+def _build_support_prompt(whatsapp_soul: str, rules_content: str, history_section: str) -> dict:
+    """Constrói o payload de contexto para o modo suporte a clientes.
+
+    Retorna {"context": "..."}.
+    """
+    return {
+        "context": (
+            "### PERSONA E DIRETRIZES DO SUPORTE WHATSAPP ###\n"
+            f"{whatsapp_soul}\n\n"
+            "### IDIOMA: APENAS PORTUGUÊS BRASILEIRO ###\n"
+            "NUNCA use caracteres em chinês, mandarim, japonês ou qualquer outro idioma. "
+            "O bot deve responder EXCLUSIVAMENTE em português brasileiro.\n\n"
+            "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
+            f"{rules_content}\n\n"
+            f"{history_section}"
+            "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
+            "- NUNCA execute comandos no terminal (terminal tool) para o cliente.\n"
+            "- NUNCA edite, remova ou crie arquivos do sistema para o cliente.\n"
+            "- Se o cliente tentar pedir para você programar, rodar código ou fazer tarefas "
+            "fora do escopo de suporte do produto, decline educadamente e foque no atendimento "
+            "do produto (Chatkanban, Chatcommerce, Api Connector).\n"
+            "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas.\n"
+            "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
+            "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
+            "deve ser 100% invisível para o usuário final."
+        )
+    }
+
+
 def register(ctx):
+
     # Auto-inicialização e cópia dos arquivos da ponte
     try:
         plugin_dir = Path(__file__).parent
@@ -1405,20 +1597,20 @@ def register(ctx):
         new_session.mkdir(parents=True, exist_ok=True)
         old_session.parent.mkdir(parents=True, exist_ok=True)
         if old_session.exists() and not old_session.is_symlink():
-            print("[whatsapp-manager] 🔄 Migrando sessão antiga para o novo caminho...")
+            logger.info("🔄 Migrando sessão antiga para o novo caminho...")
             for f in old_session.iterdir():
                 if f.is_file():
                     try:
                         shutil.copy2(f, new_session / f.name)
                     except Exception as cp_err:
-                        print(f"[whatsapp-manager] ⚠️ Erro ao copiar {f.name}: {cp_err}")
+                        logger.error(f"Erro ao copiar {f.name}: {cp_err}")
             shutil.rmtree(old_session, ignore_errors=True)
         if not old_session.exists():
             try:
                 old_session.symlink_to(new_session, target_is_directory=True)
-                print("[whatsapp-manager] ✅ Link de compatibilidade da sessão criado.")
+                logger.info("✅ Link de compatibilidade da sessão criado.")
             except Exception as link_err:
-                print(f"[whatsapp-manager] ⚠️ Erro ao criar link simbólico da sessão: {link_err}")
+                logger.error(f"Erro ao criar link simbólico da sessão: {link_err}")
 
         # 1. Copiar bridge.js do plugin para o volume
         source_bridge = plugin_dir / "bridge.js"
@@ -1429,7 +1621,7 @@ def register(ctx):
         if source_bridge.exists():
             if not target_bridge.exists() or source_bridge.read_bytes() != target_bridge.read_bytes():
                 shutil.copy2(source_bridge, target_bridge)
-                print(f"[whatsapp-manager] bridge.js atualizado em {target_bridge}")
+                logger.info(f"bridge.js atualizado em {target_bridge}")
 
         # 2. Copiar package.json do plugin para o volume
         source_pkg = plugin_dir / "package.json"
@@ -1439,7 +1631,7 @@ def register(ctx):
         if source_pkg.exists():
             if not target_pkg.exists() or source_pkg.read_bytes() != target_pkg.read_bytes():
                 shutil.copy2(source_pkg, target_pkg)
-                print(f"[whatsapp-manager] package.json atualizado em {target_pkg}")
+                logger.info(f"package.json atualizado em {target_pkg}")
 
         # Auto-criação do repositório privado se necessário (Executado no boot de forma 100% transparente)
         try:
@@ -1467,10 +1659,10 @@ def register(ctx):
                 try:
                     with urllib.request.urlopen(req, timeout=10) as resp:
                         if resp.status == 200:
-                            print(f"[whatsapp-manager] ✓ Repositório privado '{repo_user}/{repo_name}' já existe no GitHub.")
+                            logger.info(f"✓ Repositório privado '{repo_user}/{repo_name}' já existe no GitHub.")
                 except urllib.error.HTTPError as e:
                     if e.code == 404:
-                        print(f"[whatsapp-manager] ⚠️ Repositório '{repo_user}/{repo_name}' não existe. Tentando criar automaticamente...")
+                        logger.warning(f"Repositório '{repo_user}/{repo_name}' não existe. Tentando criar automaticamente...")
                         create_url = "https://api.github.com/user/repos"
                         create_data = json.dumps({
                             "name": repo_name,
@@ -1488,7 +1680,7 @@ def register(ctx):
                         try:
                             with urllib.request.urlopen(create_req, timeout=10) as create_resp:
                                 if create_resp.status in [200, 201]:
-                                    print(f"[whatsapp-manager] ✓ Repositório privado '{repo_user}/{repo_name}' criado com sucesso no GitHub!")
+                                    logger.info(f"✓ Repositório privado '{repo_user}/{repo_name}' criado com sucesso no GitHub!")
                                     time.sleep(3) # Aguarda o GitHub provisionar o branch main
 
                                     # Função auxiliar para commitar via API
@@ -1505,7 +1697,7 @@ def register(ctx):
                                                 with urllib.request.urlopen(default_url, timeout=10) as r:
                                                     content = r.read()
                                             except Exception as dl_err:
-                                                print(f"[whatsapp-manager] Erro ao baixar template {github_path}: {dl_err}")
+                                                logger.error(f"Erro ao baixar template {github_path}: {dl_err}")
 
                                         if content:
                                             content_b64 = base64.b64encode(content).decode("utf-8")
@@ -1525,9 +1717,9 @@ def register(ctx):
                                             try:
                                                 with urllib.request.urlopen(put_req, timeout=10) as put_resp:
                                                     if put_resp.status in [200, 201]:
-                                                        print(f"[whatsapp-manager] ✓ Arquivo '{github_path}' inicializado no repositório.")
+                                                        logger.info(f"✓ Arquivo '{github_path}' inicializado no repositório.")
                                             except Exception as put_err:
-                                                print(f"[whatsapp-manager] Erro ao commitar {github_path}: {put_err}")
+                                                logger.error(f"Erro ao commitar {github_path}: {put_err}")
 
                                     raw_base = "https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main/deploy"
                                     commit_file_to_repo("/opt/data/SOUL.md", "SOUL.md", f"{raw_base}/SOUL.md")
@@ -1536,11 +1728,11 @@ def register(ctx):
                                     commit_file_to_repo("/opt/data/support_rules.md", "support_rules.md", f"{raw_base}/support_rules.md")
                                     commit_file_to_repo("/opt/data/personal_contacts.json", "personal_contacts.json", f"{raw_base}/personal_contacts.json.example")
                         except Exception as create_err:
-                            print(f"[whatsapp-manager] ⚠️ Erro ao criar repositório: {create_err}")
+                            logger.error(f"Erro ao criar repositório: {create_err}")
                 except Exception as check_err:
-                    print(f"[whatsapp-manager] ⚠️ Erro ao verificar repositório no GitHub: {check_err}")
+                    logger.error(f"Erro ao verificar repositório no GitHub: {check_err}")
         except Exception as repo_err:
-            print(f"[whatsapp-manager] ⚠️ Erro no processo automático de configuração de repositório: {repo_err}")
+            logger.error(f"Erro no processo automático de configuração de repositório: {repo_err}")
 
         # 3. Bootstrap automático de personas e regras (se ausentes no volume)
         github_user = (os.getenv("HERMES_SETUP_GITHUB_USER") or os.getenv("DEV_GITHUB_USER") or "empreendedorserial").strip()
@@ -1548,12 +1740,12 @@ def register(ctx):
 
         personal_contacts_path = Path("/opt/data/personal_contacts.json")
         if not personal_contacts_path.exists():
-            print("[whatsapp-manager] Inicializando personal_contacts.json...")
+            logger.info("Inicializando personal_contacts.json...")
             try:
                 personal_contacts_path.write_text("{}", encoding="utf-8")
-                print("[whatsapp-manager] ✓ personal_contacts.json criado.")
+                logger.info("✓ personal_contacts.json criado.")
             except Exception as pc_err:
-                print(f"[whatsapp-manager] ⚠️ Erro ao inicializar personal_contacts.json: {pc_err}")
+                logger.error(f"Erro ao inicializar personal_contacts.json: {pc_err}")
 
         bootstrap_files = {
             "/opt/data/SOUL.md": f"{raw_base_url}/SOUL.md",
@@ -1565,14 +1757,14 @@ def register(ctx):
         for path_str, url in bootstrap_files.items():
             path_obj = Path(path_str)
             if not path_obj.exists():
-                print(f"[whatsapp-manager] Inicializando {path_str} a partir de {url}...")
+                logger.info(f"Inicializando {path_str} a partir de {url}...")
                 try:
                     with urllib.request.urlopen(url, timeout=10) as response:
                         content = response.read()
                         path_obj.write_bytes(content)
-                        print(f"[whatsapp-manager] ✓ {path_str} baixado com sucesso.")
+                        logger.info(f"✓ {path_str} baixado com sucesso.")
                 except Exception as dl_err:
-                    print(f"[whatsapp-manager] ⚠️ Erro ao baixar {path_str}: {dl_err}")
+                    logger.error(f"Erro ao baixar {path_str}: {dl_err}")
 
         # Garantir cópia das personas para os respectivos perfis se existirem
         soul_whatsapp_path = Path("/opt/data/SOUL_WHATSAPP.md")
@@ -1580,14 +1772,14 @@ def register(ctx):
         if soul_whatsapp_path.exists() and not profile_wa_soul.exists():
             profile_wa_soul.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(soul_whatsapp_path, profile_wa_soul)
-            print(f"[whatsapp-manager] ✓ Copiado SOUL_WHATSAPP.md para perfil de WhatsApp")
+            logger.info(f"✓ Copiado SOUL_WHATSAPP.md para perfil de WhatsApp")
 
         soul_email_path = Path("/opt/data/SOUL_EMAIL.md")
         profile_em_soul = Path("/opt/data/.hermes/profiles/email/SOUL.md")
         if soul_email_path.exists() and not profile_em_soul.exists():
             profile_em_soul.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(soul_email_path, profile_em_soul)
-            print(f"[whatsapp-manager] ✓ Copiado SOUL_EMAIL.md para perfil de E-mail")
+            logger.info(f"✓ Copiado SOUL_EMAIL.md para perfil de E-mail")
 
         # 4. Implantar google_api.py (módulo de autenticação Gmail)
         # O arquivo é bundled no plugin — copia para o diretório de scripts do google-workspace
@@ -1601,7 +1793,7 @@ def register(ctx):
             # Sempre atualiza se o conteúdo for diferente
             if not target_google_api.exists() or source_google_api.read_bytes() != target_google_api.read_bytes():
                 shutil.copy2(source_google_api, target_google_api)
-                print(f"[whatsapp-manager] ✓ google_api.py atualizado em {target_google_api}")
+                logger.info(f"✓ google_api.py atualizado em {target_google_api}")
         else:
             # Fallback: baixar do GitHub se não estiver bundled
             github_user = (os.getenv("HERMES_SETUP_GITHUB_USER") or os.getenv("DEV_GITHUB_USER") or "empreendedorserial").strip()
@@ -1610,15 +1802,15 @@ def register(ctx):
                 try:
                     with urllib.request.urlopen(google_api_url, timeout=10) as resp:
                         target_google_api.write_bytes(resp.read())
-                    print(f"[whatsapp-manager] ✓ google_api.py baixado de {google_api_url}")
+                    logger.info(f"✓ google_api.py baixado de {google_api_url}")
                 except Exception as e:
-                    print(f"[whatsapp-manager] ⚠️ Não foi possível obter google_api.py: {e}")
+                    logger.warning(f"Não foi possível obter google_api.py: {e}")
 
         # 5. Instalar libs Google no venv do Hermes (silencioso — só instala se ausentes)
         _ensure_google_libs()
 
     except Exception as setup_err:
-        print(f"[whatsapp-manager] Erro durante o bootstrap automático: {setup_err}")
+        logger.error(f"Erro durante o bootstrap automático: {setup_err}")
 
     # Registrar skills bundled no plugin (pasta skills/ ao lado do __init__.py)
     try:
@@ -1632,11 +1824,11 @@ def register(ctx):
                         ctx.register_skill(skill_folder.name, skill_md)
                         registered.append(skill_folder.name)
                     except Exception as skill_err:
-                        print(f"[whatsapp-manager] ⚠️ Erro ao registrar skill '{skill_folder.name}': {skill_err}")
+                        logger.error(f"Erro ao registrar skill '{skill_folder.name}': {skill_err}")
             if registered:
-                print(f"[whatsapp-manager] ✓ Skills registradas: {', '.join(registered)}")
+                logger.info(f"✓ Skills registradas: {', '.join(registered)}")
     except Exception as skills_err:
-        print(f"[whatsapp-manager] ⚠️ Erro ao registrar skills: {skills_err}")
+        logger.error(f"Erro ao registrar skills: {skills_err}")
 
     # Hook 1: pre_gateway_dispatch (Filtro e controle de comandos)
     def pre_gateway_dispatch(*args, **kwargs):
@@ -1724,7 +1916,7 @@ def register(ctx):
                 import time
                 debug_f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] sender='{sender_id}' (clean='{clean_sender}', norm='{_normalize_brazilian_phone(clean_sender)}') owner='{owner_number}' (clean='{clean_owner}', norm='{_normalize_brazilian_phone(clean_owner)}') is_owner={is_owner} msg='{msg_text}' normalized='{normalized_msg}'\n")
         except Exception as log_e:
-            print(f"[whatsapp-manager] Erro ao gravar debug log: {log_e}")
+            logger.error(f"Erro ao gravar debug log: {log_e}")
         sync_commands = [
             "sync contacts", "sync_contacts",
             "importar contatos", "importar_contatos",
@@ -1740,7 +1932,7 @@ def register(ctx):
                 break
 
         if is_owner and is_sync_cmd:
-            print("[whatsapp-manager] Comando de sincronização detectado (forçando atualização).")
+            logger.info("Comando de sincronização detectado (forçando atualização).")
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             
             try:
@@ -1765,7 +1957,7 @@ def register(ctx):
                     with urllib.request.urlopen(req, timeout=10) as resp:
                         pass
                 except Exception as send_err:
-                    print(f"[whatsapp-manager] Erro ao enviar resposta do comando: {send_err}")
+                    logger.error(f"Erro ao enviar resposta do comando: {send_err}")
             
             return {"action": "skip", "reason": "sync-contacts-command"}
 
@@ -1824,7 +2016,7 @@ def register(ctx):
                         "provider": client_provider
                     }
         except Exception as e:
-            print(f"[whatsapp-manager] Erro ao aplicar override de modelo: {e}")
+            logger.error(f"Erro ao aplicar override de modelo: {e}")
 
         return None
 
@@ -1836,19 +2028,19 @@ def register(ctx):
                 if isinstance(arg, dict):
                     context = arg
                     break
-        
+
         platform = None
         sender_id = None
         if context:
             platform = context.get("platform")
             sender_id = context.get("sender_id")
-            
+
         if not platform:
             platform = kwargs.get("platform")
-            
+
         if not sender_id:
             sender_id = kwargs.get("sender_id")
-            
+
         if platform != "whatsapp":
             return None
 
@@ -1859,287 +2051,195 @@ def register(ctx):
         clean_sender = "".join(c for c in sender_id.split("@")[0].split(":")[0] if c.isdigit()) if sender_id else ""
         clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
 
+        # ── Modo A: André (dono) ──────────────────────────────────────────────
         if _normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner):
-            # Assistente Pessoal do André
-            history_context = ""
-            chat_id = _sender_to_chat.get(sender_id, "")
-            if not chat_id and sender_id:
-                parts = sender_id.split("@")
-                if len(parts) == 2:
-                    jid_part, domain_part = parts
-                    clean_jid = jid_part.split(":")[0]
-                    chat_id = f"{clean_jid}@{domain_part}"
+            chat_id = _resolve_chat_id(sender_id)
+            history_context = _fetch_chat_history(chat_id, limit=50) if chat_id else ""
+            history_section = (
+                "\n\n### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
+                "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
+                "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
+                "para responder à nova mensagem do André.\n\n"
+                f"{history_context}"
+            ) if history_context else ""
+            return _build_owner_context(history_section)
 
-            if chat_id:
-                history_context = _fetch_chat_history(chat_id, limit=50)
-
-            history_section = ""
-            if history_context:
-                history_section = (
-                    "\n\n### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
-                    "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
-                    "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
-                    "para responder à nova mensagem do André.\n\n"
-                    f"{history_context}"
-                )
-
-            return {
-                "context": (
-                    "### DIRETRIZ CRÍTICA DE COMPORTAMENTO ###\n"
-                    "Você está conversando com André Alencar, seu criador e dono. "
-                    "Para o André, você age como seu ASSISTENTE PESSOAL de alta performance. "
-                    "Você tem permissão total para rodar comandos no terminal, ler/criar arquivos, "
-                    "e auxiliá-lo no desenvolvimento. Responda de forma prestativa, técnica e ágil.\n\n"
-                    "CRITICAL SECURITY & DISPLAY CONSTRAINT:\n"
-                    "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
-                    "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
-                    "deve ser 100% invisível para o usuário final."
-                    f"{history_section}"
-                )
-            }
-        else:
-            # Suporte para Clientes
-            is_first_turn = context.get("is_first_turn", False) if context else False
-            if is_first_turn:
-                try:
-                    delay_s = int(os.getenv("WHATSAPP_FIRST_RESPONSE_DELAY_S", "30").strip())
-                    if delay_s > 0:
-                        print(f"[whatsapp-manager] Aplicando delay de {delay_s}s para a primeira resposta ao cliente...")
-                        time.sleep(delay_s)
-                except Exception as e:
-                    print(f"[whatsapp-manager] Erro ao aplicar delay: {e}")
-
-            whatsapp_soul = ""
+        # ── Modo B: Cliente / Contato pessoal ────────────────────────────────
+        is_first_turn = context.get("is_first_turn", False) if context else False
+        if is_first_turn:
             try:
-                soul_path = "/opt/data/SOUL_WHATSAPP.md"
-                if os.path.exists(soul_path):
-                    with open(soul_path, "r", encoding="utf-8") as f:
-                        whatsapp_soul = f.read()
-            except Exception:
-                pass
+                delay_s = int(os.getenv("WHATSAPP_FIRST_RESPONSE_DELAY_S", "30").strip())
+                if delay_s > 0:
+                    logger.info(f"Aplicando delay de {delay_s}s para a primeira resposta ao cliente...")
+                    time.sleep(delay_s)
+            except (ValueError, OSError) as e:
+                logger.error(f"Erro ao aplicar delay: {e}")
 
-            if not whatsapp_soul:
-                whatsapp_soul = "Você DEVE agir estritamente como um chatbot de suporte, polido, amigável e profissional."
+        whatsapp_soul, rules_content = _load_support_files()
+        personal_contacts = _load_personal_contacts()
 
-            rules_content = ""
-            try:
-                rules_path = "/opt/data/support_rules.md"
-                if os.path.exists(rules_path):
-                    with open(rules_path, "r", encoding="utf-8") as f:
-                        rules_content = f.read()
-            except Exception:
-                pass
+        # Resolver JIDs e telefone
+        db_query_jid = sender_id
+        parts_db = sender_id.split("@")
+        if len(parts_db) == 2:
+            jid_part, domain_part = parts_db
+            db_query_jid = f"{jid_part.split(':')[0]}@{domain_part}"
 
-            if not rules_content:
-                rules_content = "Responda de forma profissional e ajude com Chatkanban, Chatcommerce e Api Connector."
+        resolved_sender = _resolve_phone_from_jid(sender_id)
+        clean_jid = resolved_sender
+        parts = resolved_sender.split("@")
+        if len(parts) == 2:
+            jid_part, domain_part = parts
+            clean_jid = f"{jid_part.split(':')[0]}@{domain_part}"
+        phone_number = clean_jid.split("@")[0]
 
-            # Buscar histórico de mensagens deste chat (para contexto)
-            history_context = ""
-            chat_id = _sender_to_chat.get(sender_id, "")
-            
-            # Fallback robusto caso tenha reiniciado ou não mapeado
-            if not chat_id and sender_id:
-                parts = sender_id.split("@")
-                if len(parts) == 2:
-                    jid_part, domain_part = parts
-                    clean_jid = jid_part.split(":")[0]
-                    chat_id = f"{clean_jid}@{domain_part}"
+        chat_id = _resolve_chat_id(sender_id)
+        history_context = _fetch_chat_history(chat_id, limit=50) if chat_id else ""
+        history_section = (
+            "### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
+            "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
+            "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
+            "para responder à nova mensagem do cliente.\n\n"
+            f"{history_context}\n\n"
+        ) if history_context else ""
 
-            if chat_id:
-                history_context = _fetch_chat_history(chat_id, limit=50)
+        # Buscar info de contato no JSON
+        contact_info = personal_contacts.get(clean_jid) or personal_contacts.get(phone_number)
 
-            if history_context:
-                history_section = (
-                    "### HISTÓRICO DE MENSAGENS ANTERIORES ###\n"
-                    "Abaixo está o histórico recente da conversa para você entender o contexto anterior. "
-                    "NÃO responda novamente a essas mensagens do histórico, use-as apenas como contexto "
-                    "para responder à nova mensagem do cliente.\n\n"
-                    f"{history_context}\n\n"
-                )
+        # Verificar se precisa de classificação em tempo real
+        needs_live_classify = False
+        target_key = clean_jid
+        live_classify_threshold_seconds = int(os.getenv("WHATSAPP_LIVE_CLASSIFY_COOLDOWN", "3600").strip())
+        if contact_info:
+            old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Pendente de classificação."]
+            has_old_default_summary = contact_info.get("summary") in old_defaults
+            if has_old_default_summary or not contact_info.get("summary") or not contact_info.get("intent") or not contact_info.get("frequency"):
+                needs_live_classify = True
+                if phone_number in personal_contacts:
+                    target_key = phone_number
             else:
-                history_section = ""
-
-            # Carregar contatos pessoais
-            personal_contacts = {}
-            
-            # db_query_jid é o JID bruto vindo da plataforma (pode ser LID)
-            db_query_jid = sender_id
-            parts_db = sender_id.split("@")
-            if len(parts_db) == 2:
-                jid_part, domain_part = parts_db
-                db_query_jid = f"{jid_part.split(':')[0]}@{domain_part}"
-                
-            # clean_jid é o JID resolvido para número de telefone
-            resolved_sender = _resolve_phone_from_jid(sender_id)
-            clean_jid = resolved_sender
-            parts = resolved_sender.split("@")
-            if len(parts) == 2:
-                jid_part, domain_part = parts
-                clean_jid = f"{jid_part.split(':')[0]}@{domain_part}"
-            phone_number = clean_jid.split("@")[0]
-
-            try:
-                pc_file = "/opt/data/personal_contacts.json"
-                if os.path.exists(pc_file):
-                    with open(pc_file, "r", encoding="utf-8") as f:
-                        personal_contacts = json.load(f)
-                        for k, v in personal_contacts.items():
-                            if isinstance(v, dict):
-                                personal_contacts[k] = _sanitize_classification_result(v)
-            except Exception as pc_load_err:
-                print(f"[whatsapp-manager] ⚠️ Erro ao carregar personal_contacts.json: {pc_load_err}")
-
-            contact_info = None
-            if clean_jid in personal_contacts:
-                contact_info = personal_contacts[clean_jid]
-            elif phone_number in personal_contacts:
-                contact_info = personal_contacts[phone_number]
-
-            # Verificar se precisa de classificação em tempo real (on-the-fly)
-            needs_live_classify = False
-            target_key = clean_jid
-            live_classify_threshold_seconds = int(os.getenv("WHATSAPP_LIVE_CLASSIFY_COOLDOWN", "3600").strip())
-            if contact_info:
-                old_defaults = ["Conversa inicial.", "Conversa muito curta.", "Conversa inicial de suporte/atendimento.", "Pendente de classificação."]
-                has_old_default_summary = contact_info.get("summary") in old_defaults
-                if has_old_default_summary or not contact_info.get("summary") or not contact_info.get("intent") or not contact_info.get("frequency"):
+                last_interaction_ts = contact_info.get("last_interaction", 0)
+                if last_interaction_ts and (time.time() - last_interaction_ts) > live_classify_threshold_seconds:
                     needs_live_classify = True
+                    logger.info(f"Re-classificando {phone_number}: última interação há {int((time.time() - last_interaction_ts) / 60)} min.")
                     if phone_number in personal_contacts:
                         target_key = phone_number
-                else:
-                    # Re-classificar se a última interação foi há mais de 1h (padrão)
-                    # para capturar mudanças de contexto recentes na conversa
-                    last_interaction_ts = contact_info.get("last_interaction", 0)
-                    if last_interaction_ts and (time.time() - last_interaction_ts) > live_classify_threshold_seconds:
-                        needs_live_classify = True
-                        print(f"[whatsapp-manager] Re-classificando {phone_number}: última interação há {int((time.time() - last_interaction_ts) / 60)} min.")
-                        if phone_number in personal_contacts:
-                            target_key = phone_number
-            else:
-                needs_live_classify = True
-                target_key = clean_jid
+        else:
+            needs_live_classify = True
+            target_key = clean_jid
 
-            if needs_live_classify:
-                try:
-                    import sqlite3
-                    import datetime
-                    min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
-                    bridge_db_path = Path("/opt/data/.hermes/whatsapp_messages.db")
-                    state_db_path = Path("/opt/data/.hermes/state.db")
-                    msg_count = 0
-                    min_ts = None
-                    max_ts = None
-                    db_name = None
-                    chat_history_lines = []
-                    conn = None
+        if needs_live_classify:
+            try:
+                import sqlite3
+                import datetime
+                min_msg_threshold = int(os.getenv("WHATSAPP_SYNC_MIN_MESSAGES", "3").strip())
+                bridge_db_path = Path("/opt/data/.hermes/whatsapp_messages.db")
+                state_db_path = Path("/opt/data/.hermes/state.db")
+                msg_count = 0
+                min_ts = None
+                max_ts = None
+                db_name = None
+                chat_history_lines = []
+                conn = None
 
-                    # Fonte 1: bridge log (whatsapp_messages.db)
-                    if bridge_db_path.exists():
-                        conn = sqlite3.connect(str(bridge_db_path))
-                        cursor = conn.cursor()
+                if bridge_db_path.exists():
+                    conn = sqlite3.connect(str(bridge_db_path))
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT COUNT(*), MIN(timestamp), MAX(timestamp), MAX(sender_name)
+                        FROM messages
+                        WHERE chat_id = ?
+                    """, (db_query_jid,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        msg_count, min_ts, max_ts, db_name = row
+                    if (not msg_count or msg_count == 0) and phone_number:
                         cursor.execute("""
                             SELECT COUNT(*), MIN(timestamp), MAX(timestamp), MAX(sender_name)
                             FROM messages
-                            WHERE chat_id = ?
+                            WHERE chat_id LIKE ?
+                        """, (f"{phone_number}%",))
+                        fetched = cursor.fetchone()
+                        if fetched and fetched[0]:
+                            msg_count, min_ts, max_ts, db_name = fetched
+                    if not msg_count or msg_count == 0:
+                        cursor.execute("""
+                            SELECT from_me, sender_name, body FROM messages
+                            WHERE chat_id = ? AND body IS NOT NULL AND body != ''
+                            ORDER BY timestamp DESC LIMIT 15
                         """, (db_query_jid,))
-                        row = cursor.fetchone()
+                        rows_msgs = cursor.fetchall()
+                        rows_msgs.reverse()
+                        for f_me, s_name, msg_body in rows_msgs:
+                            sender_lbl = "André" if f_me else (s_name or "Contato")
+                            chat_history_lines.append(f"[{sender_lbl}]: {msg_body}")
+
+                if (not msg_count or msg_count == 0) and state_db_path.exists():
+                    try:
+                        state_conn = sqlite3.connect(str(state_db_path))
+                        sc = state_conn.cursor()
+                        sc.execute("""
+                            SELECT COUNT(*), MAX(started_at) FROM sessions
+                            WHERE source = 'whatsapp' AND user_id = ?
+                        """, (db_query_jid,))
+                        row = sc.fetchone()
                         if row and row[0]:
-                            msg_count, min_ts, max_ts, db_name = row
-                        if (not msg_count or msg_count == 0) and phone_number:
-                            cursor.execute("""
-                                SELECT COUNT(*), MIN(timestamp), MAX(timestamp), MAX(sender_name)
-                                FROM messages
-                                WHERE chat_id LIKE ?
-                            """, (f"{phone_number}%",))
-                            fetched = cursor.fetchone()
-                            if fetched and fetched[0]:
-                                msg_count, min_ts, max_ts, db_name = fetched
-                        # Pega historico da bridge
-                        if not msg_count or msg_count == 0:
-                            cursor.execute("""
-                                SELECT from_me, sender_name, body FROM messages
-                                WHERE chat_id = ? AND body IS NOT NULL AND body != ''
-                                ORDER BY timestamp DESC LIMIT 15
-                            """, (db_query_jid,))
-                            rows_msgs = cursor.fetchall()
-                            rows_msgs.reverse()
-                            for f_me, s_name, msg_body in rows_msgs:
-                                sender_lbl = "André" if f_me else (s_name or "Contato")
-                                chat_history_lines.append(f"[{sender_lbl}]: {msg_body}")
+                            msg_count = row[0]
+                            max_ts = row[1] or max_ts
+                        sc.execute("""
+                            SELECT m.role, m.content FROM messages m
+                            JOIN sessions s ON m.session_id = s.id
+                            WHERE s.user_id = ? AND s.source = 'whatsapp' AND m.content IS NOT NULL
+                            ORDER BY m.timestamp DESC LIMIT 15
+                        """, (db_query_jid,))
+                        rows_msgs = sc.fetchall()
+                        rows_msgs.reverse()
+                        for role, content in rows_msgs:
+                            sender_lbl = "André" if role == "assistant" else (db_name or "Contato")
+                            chat_history_lines.append(f"[{sender_lbl}]: {(content or '')[:300]}")
+                        state_conn.close()
+                    except Exception as state_err:
+                        logger.warning(f"live sync: erro lendo state.db: {state_err}")
 
-                    # Fonte 2: state.db.sessions (autoritativo, gateway Hermes)
-                    if (not msg_count or msg_count == 0) and state_db_path.exists():
+                if msg_count:
+                    stats_info = f"Total messages: {msg_count}."
+                    if min_ts and max_ts:
                         try:
-                            state_conn = sqlite3.connect(str(state_db_path))
-                            sc = state_conn.cursor()
-                            sc.execute("""
-                                SELECT COUNT(*), MAX(started_at) FROM sessions
-                                WHERE source = 'whatsapp' AND user_id = ?
-                            """, (db_query_jid,))
-                            row = sc.fetchone()
-                            if row and row[0]:
-                                msg_count = row[0]
-                                max_ts = row[1] or max_ts
-                            # Historico de mensagens das sessoes
-                            sc.execute("""
-                                SELECT m.role, m.content FROM messages m
-                                JOIN sessions s ON m.session_id = s.id
-                                WHERE s.user_id = ? AND s.source = 'whatsapp' AND m.content IS NOT NULL
-                                ORDER BY m.timestamp DESC LIMIT 15
-                            """, (db_query_jid,))
-                            rows_msgs = sc.fetchall()
-                            rows_msgs.reverse()
-                            for role, content in rows_msgs:
-                                sender_lbl = "André" if role == "assistant" else (db_name or "Contato")
-                                chat_history_lines.append(f"[{sender_lbl}]: {(content or '')[:300]}")
-                            state_conn.close()
-                        except Exception as state_err:
-                            print(f"[whatsapp-manager] live sync: erro lendo state.db: {state_err}")
+                            first_date = datetime.datetime.fromtimestamp(min_ts).strftime('%Y-%m-%d')
+                            last_date = datetime.datetime.fromtimestamp(max_ts).strftime('%Y-%m-%d')
+                            stats_info += f" First message date: {first_date}. Last message date: {last_date}."
+                        except (ValueError, OSError):
+                            pass
 
-                    fetched = (msg_count, min_ts, max_ts, db_name) if msg_count else None
-                    if fetched:
-                        msg_count, min_ts, max_ts, db_name = fetched
+                    name = (contact_info.get("name") if contact_info else None) or db_name or f"Contato {phone_number}"
 
-                        msg_count = msg_count or 0
-                        stats_info = f"Total messages: {msg_count}."
-                        if min_ts and max_ts:
-                            try:
-                                first_date = datetime.datetime.fromtimestamp(min_ts).strftime('%Y-%m-%d')
-                                last_date = datetime.datetime.fromtimestamp(max_ts).strftime('%Y-%m-%d')
-                                stats_info += f" First message date: {first_date}. Last message date: {last_date}."
-                            except Exception:
-                                pass
-
-                        name = (contact_info.get("name") if contact_info else None) or db_name or f"Contato {phone_number}"
-
-                        if msg_count < min_msg_threshold:
-                            # Se já temos uma classificação de contato pessoal existente, mantemos
-                            prev_rel = contact_info.get("relationship") if contact_info else None
-                            if prev_rel and prev_rel not in ["Cliente", "Vendedor", "Pendente de classificação"]:
-                                classification = {
-                                    "relationship": prev_rel,
-                                    "tone": contact_info.get("tone", "informal e amigável"),
-                                    "nickname": contact_info.get("nickname"),
-                                    "pet_name": contact_info.get("pet_name"),
-                                    "frequent_greeting": contact_info.get("frequent_greeting"),
-                                    "summary": contact_info.get("summary", "Conversa muito curta."),
-                                    "intent": "Contato inicial.",
-                                    "frequency": contact_info.get("frequency", "esporádica"),
-                                    "guidelines": contact_info.get("guidelines", "Responda como André.")
-                                }
-                            else:
-                                classification = {
-                                    "relationship": "Cliente",
-                                    "tone": "polido e profissional",
-                                    "nickname": None,
-                                    "pet_name": None,
-                                    "frequent_greeting": None,
-                                    "summary": "Conversa muito curta.",
-                                    "intent": "Contato inicial.",
-                                    "frequency": "esporádica",
-                                    "guidelines": "Responda de forma prestativa."
-                                }
+                    if msg_count < min_msg_threshold:
+                        prev_rel = contact_info.get("relationship") if contact_info else None
+                        if prev_rel and prev_rel not in ["Cliente", "Vendedor", "Pendente de classificação"]:
+                            classification = {
+                                "relationship": prev_rel,
+                                "tone": contact_info.get("tone", "informal e amigável"),
+                                "nickname": contact_info.get("nickname"),
+                                "pet_name": contact_info.get("pet_name"),
+                                "frequent_greeting": contact_info.get("frequent_greeting"),
+                                "summary": contact_info.get("summary", "Conversa muito curta."),
+                                "intent": "Contato inicial.",
+                                "frequency": contact_info.get("frequency", "esporádica"),
+                                "guidelines": contact_info.get("guidelines", "Responda como André.")
+                            }
                         else:
+                            classification = {
+                                "relationship": "Cliente",
+                                "tone": "polido e profissional",
+                                "nickname": None, "pet_name": None,
+                                "frequent_greeting": None,
+                                "summary": "Conversa muito curta.",
+                                "intent": "Contato inicial.",
+                                "frequency": "esporádica",
+                                "guidelines": "Responda de forma prestativa."
+                            }
+                    else:
+                        if conn:
                             cursor.execute("""
                                 SELECT from_me, sender_name, body FROM messages
                                 WHERE chat_id = ? AND body IS NOT NULL AND body != ''
@@ -2147,213 +2247,129 @@ def register(ctx):
                             """, (db_query_jid,))
                             rows_msgs = cursor.fetchall()
                             rows_msgs.reverse()
-                            
                             history_lines = []
                             for f_me, s_name, msg_body in rows_msgs:
                                 sender_lbl = "André" if f_me else (s_name or name or "Contato")
                                 history_lines.append(f"[{sender_lbl}]: {msg_body}")
                             chat_history = "\n".join(history_lines)
+                        else:
+                            chat_history = "\n".join(chat_history_lines)
+                        classification = _classify_contact_via_llm(name, chat_history, stats_info)
 
-                            classification = _classify_contact_via_llm(name, chat_history, stats_info)
+                    if conn is not None:
+                        conn.close()
 
-                        if conn is not None:
-                            conn.close()
+                    man_rel = (contact_info.get("manual_relationship") if contact_info else None)
+                    if not man_rel and contact_info and contact_info.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
+                        man_rel = contact_info.get("relationship")
 
-                        man_rel = (contact_info.get("manual_relationship") if contact_info else None)
-                        if not man_rel and contact_info and contact_info.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
-                            man_rel = contact_info.get("relationship")
+                    new_data = {
+                        "name": name,
+                        "relationship": man_rel or classification.get("relationship", "Cliente"),
+                        "manual_relationship": man_rel,
+                        "notes": contact_info.get("notes") if contact_info else None,
+                        "product": (contact_info.get("product") if contact_info else None) or classification.get("product"),
+                        "tone": classification.get("tone", "polido e profissional"),
+                        "nickname": classification.get("nickname"),
+                        "pet_name": classification.get("pet_name"),
+                        "frequent_greeting": classification.get("frequent_greeting"),
+                        "summary": classification.get("summary", "Conversa inicial."),
+                        "intent": classification.get("intent", "Suporte/Atendimento."),
+                        "frequency": classification.get("frequency", "esporádica"),
+                        "guidelines": classification.get("guidelines", "Responda de forma prestativa."),
+                        "last_interaction": time.time()
+                    }
 
-                        new_data = {
-                            "name": name,
-                            "relationship": man_rel or classification.get("relationship", "Cliente"),
-                            "manual_relationship": man_rel,
-                            "notes": contact_info.get("notes") if contact_info else None,
-                            "product": (contact_info.get("product") if contact_info else None) or classification.get("product"),
-                            "tone": classification.get("tone", "polido e profissional"),
-                            "nickname": classification.get("nickname"),
-                            "pet_name": classification.get("pet_name"),
-                            "frequent_greeting": classification.get("frequent_greeting"),
-                            "summary": classification.get("summary", "Conversa inicial."),
-                            "intent": classification.get("intent", "Suporte/Atendimento."),
-                            "frequency": classification.get("frequency", "esporádica"),
-                            "guidelines": classification.get("guidelines", "Responda de forma prestativa."),
-                            "last_interaction": time.time()  # Registrar momento da (re-)classificação
-                        }
-                        
-                        personal_contacts[target_key] = new_data
-                        contact_info = new_data
+                    personal_contacts[target_key] = new_data
+                    contact_info = new_data
 
+                    try:
+                        with open("/opt/data/personal_contacts.json", "w", encoding="utf-8") as f:
+                            json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
+                    except OSError as write_err:
+                        logger.error(f"Erro ao gravar personal_contacts.json no live sync: {write_err}")
+
+                    def push_contacts_to_github_bg():
                         try:
-                            with open("/opt/data/personal_contacts.json", "w", encoding="utf-8") as f:
-                                json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
-                        except Exception as write_err:
-                            print(f"[whatsapp-manager] Erro ao gravar personal_contacts.json no live sync: {write_err}")
+                            config_repo = os.getenv("CONFIG_REPO", "").strip()
+                            config_token = os.getenv("CONFIG_GITHUB_TOKEN", "").strip()
+                            setup_user = os.getenv("HERMES_SETUP_GITHUB_USER", "").strip()
+                            dev_user = os.getenv("DEV_GITHUB_USER", "").strip()
+                            if config_repo and config_token:
+                                if "/" in config_repo:
+                                    repo_user, repo_name = config_repo.split("/")
+                                else:
+                                    repo_user = setup_user or dev_user or "empreendedorserial"
+                                    repo_name = config_repo
+                                with open("/opt/data/personal_contacts.json", "rb") as f:
+                                    content_bytes = f.read()
+                                content_b64 = base64.b64encode(content_bytes).decode("utf-8")
+                                get_url = f"https://api.github.com/repos/{repo_user}/{repo_name}/contents/personal_contacts.json"
+                                req_get = urllib.request.Request(get_url)
+                                req_get.add_header("Authorization", f"token {config_token}")
+                                req_get.add_header("Accept", "application/vnd.github+json")
+                                req_get.add_header("User-Agent", "Hermes-Agent-Plugin")
+                                sha = None
+                                try:
+                                    with urllib.request.urlopen(req_get, timeout=5) as resp:
+                                        sha = json.loads(resp.read().decode("utf-8")).get("sha")
+                                except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+                                    pass
+                                put_data = {
+                                    "message": f"Live update personal_contacts.json for {name}",
+                                    "content": content_b64, "branch": "main"
+                                }
+                                if sha:
+                                    put_data["sha"] = sha
+                                req_put = urllib.request.Request(get_url, data=json.dumps(put_data).encode("utf-8"), method="PUT")
+                                req_put.add_header("Authorization", f"token {config_token}")
+                                req_put.add_header("Accept", "application/vnd.github+json")
+                                req_put.add_header("User-Agent", "Hermes-Agent-Plugin")
+                                req_put.add_header("Content-Type", "application/json")
+                                with urllib.request.urlopen(req_put, timeout=10) as resp:
+                                    pass
+                        except Exception as push_err:
+                            logger.error(f"Erro no push do live sync para o GitHub: {push_err}")
 
-                        def push_contacts_to_github_bg():
-                            try:
-                                config_repo = os.getenv("CONFIG_REPO", "").strip()
-                                config_token = os.getenv("CONFIG_GITHUB_TOKEN", "").strip()
-                                setup_user = os.getenv("HERMES_SETUP_GITHUB_USER", "").strip()
-                                dev_user = os.getenv("DEV_GITHUB_USER", "").strip()
+                    import threading
+                    threading.Thread(target=push_contacts_to_github_bg, daemon=True).start()
+            except Exception as live_err:
+                logger.error(f"Erro na classificação em tempo real do contato: {live_err}")
 
-                                if config_repo and config_token:
-                                    if "/" in config_repo:
-                                        repo_user, repo_name = config_repo.split("/")
-                                    else:
-                                        repo_user = setup_user or dev_user or "empreendedorserial"
-                                        repo_name = config_repo
+        relationship = "Cliente"
+        if contact_info:
+            relationship = contact_info.get("manual_relationship") or contact_info.get("relationship") or "Cliente"
 
-                                    with open("/opt/data/personal_contacts.json", "rb") as f:
-                                        content_bytes = f.read()
-                                    content_b64 = base64.b64encode(content_bytes).decode("utf-8")
-                                    
-                                    get_url = f"https://api.github.com/repos/{repo_user}/{repo_name}/contents/personal_contacts.json"
-                                    req_get = urllib.request.Request(get_url)
-                                    req_get.add_header("Authorization", f"token {config_token}")
-                                    req_get.add_header("Accept", "application/vnd.github+json")
-                                    req_get.add_header("User-Agent", "Hermes-Agent-Plugin")
-                                    
-                                    sha = None
-                                    try:
-                                        with urllib.request.urlopen(req_get, timeout=5) as resp:
-                                            sha = json.loads(resp.read().decode("utf-8")).get("sha")
-                                    except Exception:
-                                        pass
-                                    
-                                    put_data = {
-                                        "message": f"Live update personal_contacts.json for {name}",
-                                        "content": content_b64,
-                                        "branch": "main"
-                                    }
-                                    if sha:
-                                        put_data["sha"] = sha
-                                        
-                                    req_put = urllib.request.Request(get_url, data=json.dumps(put_data).encode("utf-8"), method="PUT")
-                                    req_put.add_header("Authorization", f"token {config_token}")
-                                    req_put.add_header("Accept", "application/vnd.github+json")
-                                    req_put.add_header("User-Agent", "Hermes-Agent-Plugin")
-                                    req_put.add_header("Content-Type", "application/json")
-                                    
-                                    with urllib.request.urlopen(req_put, timeout=10) as resp:
-                                        pass
-                            except Exception as push_err:
-                                print(f"[whatsapp-manager] Erro no push do live sync para o GitHub: {push_err}")
+        if contact_info and relationship != "Cliente":
+            return _build_personal_prompt(contact_info, relationship, history_section)
 
-                        import threading
-                        threading.Thread(target=push_contacts_to_github_bg, daemon=True).start()
-                except Exception as live_err:
-                    print(f"[whatsapp-manager] ⚠️ Erro na classificação em tempo real do contato: {live_err}")
-
-            relationship = "Cliente"
-            if contact_info:
-                relationship = contact_info.get("manual_relationship") or contact_info.get("relationship") or "Cliente"
-
-            if contact_info and relationship != "Cliente":
-                name = contact_info.get("name", "Contato Pessoal")
-                tone = contact_info.get("tone", "informal e amigável")
-                guidelines = contact_info.get("guidelines", "Responda como André.")
-                
-                nickname = contact_info.get("nickname")
-                pet_name = contact_info.get("pet_name")
-                frequent_greeting = contact_info.get("frequent_greeting")
-                summary = contact_info.get("summary")
-                intent = contact_info.get("intent")
-                frequency = contact_info.get("frequency")
-                notes = contact_info.get("notes")
-                product = contact_info.get("product")
-
-                details_section = ""
-                if nickname:
-                    details_section += f"Apelido do contato: {nickname}\n"
-                if pet_name:
-                    details_section += f"Nome carinhoso/Apelido afetivo: {pet_name}\n"
-                if frequent_greeting:
-                    details_section += f"Saudação frequente: {frequent_greeting}\n"
-                if summary:
-                    details_section += f"Resumo das conversas anteriores: {summary}\n"
-                if intent:
-                    details_section += f"Intenção das últimas conversas: {intent}\n"
-                if frequency:
-                    details_section += f"Frequência das conversas: {frequency}\n"
-                if notes:
-                    details_section += f"Observação importante sobre o contato: {notes}\n"
-                if product:
-                    details_section += f"Produto/Serviço envolvido: {product}\n"
-
-                return {
-                    "context": (
-                        "### PERSONA E DIRETRIZES PESSOAIS (RESPONDENDO COMO ANDRÉ ALENCAR) ###\n"
-                        "Você está respondendo em nome de André Alencar (o dono deste WhatsApp) para um contato pessoal.\n"
-                        "Você DEVE agir como se fosse o próprio André conversando diretamente com a pessoa.\n\n"
-                        f"Nome do contato: {name}\n"
-                        f"Relação com o André: {relationship}\n"
-                        f"Tom de voz recomendado: {tone}\n"
-                        f"{details_section}"
-                        f"Diretrizes específicas: {guidelines}\n\n"
-                        "### DIRETRIZES IMPORTANTES DE COMPORTAMENTO ###\n"
-                        "1. Analise o histórico recente fornecido abaixo para identificar os apelidos mútuos, gírias e o nível de formalidade/descontração com que vocês conversam.\n"
-                        "2. Adote o mesmo estilo de escrita do André nas mensagens anteriores. Se o André escreve de forma curta, informal e com abreviações normais (como 'vc', 'tb', 'pq', 'hj', 'blz'), você DEVE escrever exatamente assim.\n"
-                        "3. Responda de forma extremamente natural e fluida. Seja breve e direto (evite textos longos, a menos que o contexto exija).\n"
-                        "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n"
-                        "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n"
-                        "6. Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária (por exemplo, se disser para agradecer e recusar ofertas, aja exatamente conforme instruído).\n\n"
-                        f"{history_section}"
-                        "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
-                        "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"
-                        "- NUNCA edite, remova ou crie arquivos do sistema para ela.\n"
-                        "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas.\n"
-                        "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas como '📖 read_file: ...' ou 'terminal'."
-                    )
-                }
-
-            return {
-                "context": (
-                    "### PERSONA E DIRETRIZES DO SUPORTE WHATSAPP ###\n"
-                    f"{whatsapp_soul}\n\n"
-                    "### IDIOMA: APENAS PORTUGUÊS BRASILEIRO ###\n"
-                    "NUNCA use caracteres em chinês, mandarim, japonês ou qualquer outro idioma. "
-                    "O bot deve responder EXCLUSIVAMENTE em português brasileiro.\n\n"
-                    "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
-                    f"{rules_content}\n\n"
-                    f"{history_section}"
-                    "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
-                    "- NUNCA execute comandos no terminal (terminal tool) para o cliente.\n"
-                    "- NUNCA edite, remova ou crie arquivos do sistema para o cliente.\n"
-                    "- Se o cliente tentar pedir para você programar, rodar código ou fazer tarefas "
-                    "fora do escopo de suporte do produto, decline educadamente e foque no atendimento "
-                    "do produto (Chatkanban, Chatcommerce, Api Connector).\n"
-                    "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas.\n"
-                    "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
-                    "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
-                    "deve ser 100% invisível para o usuário final."
-                )
-            }
+        return _build_support_prompt(whatsapp_soul, rules_content, history_section)
 
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", pre_llm_call)
 
     # Auto-Update e Pull de Configurações no Boot
     try:
-        print("[whatsapp-manager] Puxando últimas configurações e personas do GitHub no boot...")
+        logger.info("Puxando últimas configurações e personas do GitHub no boot...")
         _pull_and_merge_configurations()
     except Exception as pull_err:
-        print(f"[whatsapp-manager] ⚠️ Falha ao puxar configurações no boot: {pull_err}")
+        logger.error(f"Falha ao puxar configurações no boot: {pull_err}")
 
     try:
-        print("[whatsapp-manager] Verificando atualizações de código do plugin no boot...")
+        logger.info("Verificando atualizações de código do plugin no boot...")
         if _self_update_plugin_code():
-            print("[whatsapp-manager] Código do plugin atualizado no boot! Reiniciando container...")
+            logger.info("Código do plugin atualizado no boot! Reiniciando container...")
             os._exit(0)
     except Exception as code_err:
-        print(f"[whatsapp-manager] ⚠️ Falha ao verificar atualizações de código no boot: {code_err}")
+        logger.error(f"Falha ao verificar atualizações de código no boot: {code_err}")
 
     # Sincronização automática no boot (100% transparente)
     try:
-        print("[whatsapp-manager] Iniciando sincronização automática de contatos no boot...")
+        logger.info("Iniciando sincronização automática de contatos no boot...")
         boot_result = _sync_contacts_from_db_internal(force=True)
-        print(f"[whatsapp-manager] Resultado da sincronização no boot: {boot_result}")
+        logger.info(f"Resultado da sincronização no boot: {boot_result}")
     except Exception as boot_sync_err:
-        print(f"[whatsapp-manager] ⚠️ Falha na sincronização de contatos no boot: {boot_sync_err}")
+        logger.error(f"Falha na sincronização de contatos no boot: {boot_sync_err}")
 
     # Agendador periódico de sincronização de contatos e código (executa a cada 1 hora em segundo plano)
     def _run_periodic_sync():
@@ -2381,47 +2397,47 @@ def register(ctx):
                 try:
                     current_mtime = os.path.getmtime(pc_path)
                     if current_mtime > last_pc_mtime:
-                        print(f"[whatsapp-manager] Modificação local detectada em {pc_path}. Sincronizando com o GitHub...")
+                        logger.info(f"Modificação local detectada em {pc_path}. Sincronizando com o GitHub...")
                         if _push_personal_contacts_to_github():
                             last_pc_mtime = current_mtime
                         else:
                             last_pc_mtime = current_mtime
                 except Exception as e:
-                    print(f"[whatsapp-manager] Erro ao monitorar modificações locais de contatos: {e}")
+                    logger.error(f"Erro ao monitorar modificações locais de contatos: {e}")
 
             # 2. Puxar configurações do GitHub (a cada 1 hora / 3600 segundos)
             if time.time() - last_git_pull >= 3600:
                 last_git_pull = time.time()
                 try:
-                    print("[whatsapp-manager] Iniciando puxada periódica de configurações do GitHub...")
+                    logger.info("Iniciando puxada periódica de configurações do GitHub...")
                     _pull_and_merge_configurations()
                     if pc_path.exists():
                         last_pc_mtime = os.path.getmtime(pc_path)
                 except Exception as e:
-                    print(f"[whatsapp-manager] ⚠️ Erro na puxada periódica de configurações: {e}")
+                    logger.error(f"Erro na puxada periódica de configurações: {e}")
 
             # 3. Sincronizar contatos (executa apenas a cada 24 horas)
             if time.time() - last_contact_sync >= 86400:
                 last_contact_sync = time.time()
                 try:
-                    print("[whatsapp-manager] Iniciando sincronização periódica automática de contatos...")
+                    logger.info("Iniciando sincronização periódica automática de contatos...")
                     res = _sync_contacts_from_db_internal(force=False)
-                    print(f"[whatsapp-manager] Sincronização periódica concluída: {res}")
+                    logger.info(f"Sincronização periódica concluída: {res}")
                     if pc_path.exists():
                         last_pc_mtime = os.path.getmtime(pc_path)
                 except Exception as e:
-                    print(f"[whatsapp-manager] ⚠️ Erro na sincronização periódica: {e}")
+                    logger.error(f"Erro na sincronização periódica: {e}")
 
             # 4. Verificar atualizações de código a cada 24 horas (86400 segundos)
             if time.time() - last_code_check >= 86400:
                 last_code_check = time.time()
                 try:
-                    print("[whatsapp-manager] Verificando atualizações de código do plugin...")
+                    logger.info("Verificando atualizações de código do plugin...")
                     if _self_update_plugin_code():
-                        print("[whatsapp-manager] Código do plugin atualizado! Reiniciando container...")
+                        logger.info("Código do plugin atualizado! Reiniciando container...")
                         os._exit(0)
                 except Exception as e:
-                    print(f"[whatsapp-manager] ⚠️ Erro ao checar auto-update de código: {e}")
+                    logger.error(f"Erro ao checar auto-update de código: {e}")
 
             time.sleep(60)
 
@@ -2429,6 +2445,6 @@ def register(ctx):
         import threading
         t = threading.Thread(target=_run_periodic_sync, daemon=True)
         t.start()
-        print("[whatsapp-manager] ✅ Agendador periódico (24h) de sincronização iniciado com sucesso.")
+        logger.info("✅ Agendador periódico (24h) de sincronização iniciado com sucesso.")
     except Exception as thread_err:
-        print(f"[whatsapp-manager] ⚠️ Não foi possível iniciar o agendador periódico: {thread_err}")
+        logger.warning(f"Não foi possível iniciar o agendador periódico: {thread_err}")
