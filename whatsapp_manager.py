@@ -151,6 +151,9 @@ config = PluginConfig()
 # Mapeamento temporário sender_id -> chat_id (usado entre pre_gateway_dispatch e pre_llm_call)
 _sender_to_chat: dict[str, str] = {}
 
+# Cache do último texto do owner (usado em pre_llm_call para detecção cross-session)
+_last_owner_text: dict[str, str] = {}
+
 # Mapeamento LID -> telefone obtido da ponte no bot-status
 _lid_to_phone: dict[str, str] = {}
 
@@ -2281,10 +2284,12 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id and sender_id:
             _sender_to_chat[sender_id] = chat_id
     else:
-        # Para o dono, salvar chat_id também
+        # Para o dono, salvar chat_id e texto da mensagem atual
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         if chat_id and sender_id:
             _sender_to_chat[sender_id] = chat_id
+        if sender_id and msg_text:
+            _last_owner_text[sender_id] = msg_text
 
     # Roteamento Dinâmico de Modelos (Dono vs Clientes)
     try:
@@ -2355,14 +2360,8 @@ def pre_llm_call(*args, **kwargs):
 
         # Detectar se André está perguntando sobre outra conversa/contato
         cross_context = ""
-        last_user_line = ""
-        if history_context:
-            for line in reversed(history_context.splitlines()):
-                stripped = line.strip()
-                if stripped.lower().startswith("você:") or stripped.lower().startswith("andré:"):
-                    last_user_line = stripped
-                    break
-        detected_name = _detect_contact_query(last_user_line)
+        current_text = _last_owner_text.get(sender_id, "")
+        detected_name = _detect_contact_query(current_text)
         if detected_name:
             contact_key, contact_data = _search_contact_by_name(detected_name)
             if contact_key:
