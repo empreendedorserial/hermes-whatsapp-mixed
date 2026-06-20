@@ -794,6 +794,19 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         except Exception as e:
             logger.error(f"Erro ao ler {pc_path}: {e}")
 
+    # 1b. Remover entradas do owner do arquivo (não devem estar no personal_contacts)
+    owner_phone_norm = _normalize_brazilian_phone(
+        "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
+    )
+    if owner_phone_norm:
+        owner_keys = [
+            k for k in list(personal_contacts.keys())
+            if _normalize_brazilian_phone(k.split("@")[0]) == owner_phone_norm
+        ]
+        for k in owner_keys:
+            del personal_contacts[k]
+            logger.info(f"[sync] Removida entrada do owner: {k}")
+
     # 2. Ler contatos únicos do SQLite com agregação de estatísticas para performance
     if not db_path.exists() and not state_db_path.exists():
         return "Erro: nenhum banco de dados SQLite do Hermes encontrado em /opt/data/.hermes/."
@@ -866,11 +879,17 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
     try:
         conn = sqlite3.connect(str(db_path)) if db_path.exists() else None
         state_conn = sqlite3.connect(str(state_db_path)) if state_db_path.exists() else None
+        owner_phone_clean = _normalize_brazilian_phone(
+            "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
+        )
         for chat_id in all_chat_ids:
             if not chat_id:
                 continue
             resolved_chat = _resolve_phone_from_jid(chat_id)
             phone = resolved_chat.split("@")[0]
+            # Nunca classificar o próprio dono
+            if owner_phone_clean and _normalize_brazilian_phone(phone) == owner_phone_clean:
+                continue
             
             # Verificar se já existe por JID, JID resolvido ou por número
             exists = False
@@ -2015,6 +2034,14 @@ def _live_classify_contact(
     Returns:
         Dicionário com os dados classificados, ou None se não houver dados suficientes.
     """
+    # Nunca classificar o próprio dono
+    owner_phone_clean = _normalize_brazilian_phone(
+        "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
+    )
+    if owner_phone_clean and _normalize_brazilian_phone(phone_number.split("@")[0]) == owner_phone_clean:
+        logger.info(f"[live-classify] Ignorando classificação do próprio dono ({phone_number})")
+        return None
+
     min_msg_threshold = config.whatsapp_sync_min_messages
     bridge_db_path = Path("/opt/data/.hermes/whatsapp_messages.db")
     state_db_path = Path("/opt/data/.hermes/state.db")
