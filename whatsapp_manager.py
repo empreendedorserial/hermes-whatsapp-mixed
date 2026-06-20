@@ -1504,29 +1504,51 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
             except sqlite3.Error as e:
                 logger.warning(f"[update-contact] Erro ao buscar sender_name no DB: {e}")
 
-    # 6. Resolver nomes via bridge /contact/:jid para entradas com nome genérico
+    # 6. Busca pelo nome no store de contatos do Baileys via bridge /contacts/search
     if not matched_key:
-        bridge_url = "http://localhost:3000"
-        generic_entries = [
-            (key, data) for key, data in personal_contacts.items()
-            if not _is_owner_key(key)
-            and re.match(r"^Contato\s+\d+$", data.get("name") or "")
-        ]
-        logger.info(f"[update-contact] Passo 6: consultando bridge para {len(generic_entries)} entradas genéricas")
-        for key, data in generic_entries:
-            jid = key if "@" in key else f"{key}@s.whatsapp.net"
-            try:
-                with urllib.request.urlopen(f"{bridge_url}/contact/{urllib.parse.quote(jid, safe='')}", timeout=5) as resp:
-                    result = json.loads(resp.read().decode())
-                real_name = result.get("name") or ""
-                if real_name and (id_norm in _normalize_text(real_name) or _normalize_text(real_name) in id_norm):
-                    logger.info(f"[update-contact] Passo 6: bridge resolveu '{real_name}' para {key}")
-                    # Atualizar name na entrada com o nome real encontrado
-                    personal_contacts[key]["name"] = real_name
-                    matched_key = key
+        try:
+            search_url = f"{BRIDGE_URL}/contacts/search?name={urllib.parse.quote(identifier, safe='')}"
+            with urllib.request.urlopen(search_url, timeout=5) as resp:
+                search_result = json.loads(resp.read().decode())
+            bridge_results = search_result.get("results", [])
+            logger.info(f"[update-contact] Passo 6: bridge retornou {len(bridge_results)} resultado(s) para '{identifier}'")
+            for entry in bridge_results:
+                jid = entry.get("jid", "")
+                real_name = entry.get("name", "")
+                if not jid or _is_owner_key(jid):
+                    continue
+                phone_row = jid.split("@")[0]
+                # Mapear para chave existente em personal_contacts
+                for key in personal_contacts:
+                    if _is_owner_key(key):
+                        continue
+                    if key.split("@")[0] == phone_row:
+                        logger.info(f"[update-contact] Passo 6: match '{real_name}' → {key}")
+                        personal_contacts[key]["name"] = real_name
+                        matched_key = key
+                        break
+                if not matched_key:
+                    # Contato no WhatsApp mas sem entrada no JSON — criar
+                    matched_key = jid if "@" in jid else f"{phone_row}@s.whatsapp.net"
+                    personal_contacts[matched_key] = {
+                        "name": real_name,
+                        "relationship": "Cliente",
+                        "manual_relationship": None,
+                        "notes": None, "product": None,
+                        "tone": "polido e profissional",
+                        "nickname": None, "pet_name": None,
+                        "frequent_greeting": None,
+                        "summary": "Pendente de classificação.",
+                        "intent": "Contato inicial.",
+                        "frequency": "esporádica",
+                        "guidelines": "Responda de forma prestativa.",
+                        "last_interaction": time.time(),
+                    }
+                    logger.info(f"[update-contact] Passo 6: nova entrada criada para {real_name} ({matched_key})")
+                if matched_key:
                     break
-            except Exception as e:
-                logger.debug(f"[update-contact] Passo 6: erro ao consultar bridge para {jid}: {e}")
+        except Exception as e:
+            logger.warning(f"[update-contact] Passo 6: erro ao consultar bridge: {e}")
 
     if not matched_key:
         return f"❌ Contato '{identifier}' não encontrado em personal_contacts.json nem no histórico de mensagens."

@@ -1600,6 +1600,40 @@ adminRouter.get('/chat/:id', async (req, res) => {
 });
 
 // Resolver nome de contato via WhatsApp (consulta sock.contacts)
+adminRouter.get('/contacts/search', (req, res) => {
+  const query = (req.query.name || '').trim().toLowerCase();
+  if (!query) return res.status(400).json({ error: 'name query required' });
+  if (!sock || !sock.contacts) return res.json({ results: [] });
+
+  const normalize = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const queryNorm = normalize(query);
+  const results = [];
+
+  for (const [jid, contact] of Object.entries(sock.contacts)) {
+    if (jid.endsWith('@g.us') || jid.endsWith('@broadcast')) continue;
+    const name = contact.name || contact.verifiedName || contact.pushName || contact.notify || '';
+    const nameNorm = normalize(name);
+    if (name && (nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm))) {
+      results.push({ jid, name });
+    }
+  }
+
+  // Também busca no contactNameCache
+  for (const [cleanJid, cached] of contactNameCache.entries()) {
+    if (cached.expiresAt > Date.now()) {
+      const nameNorm = normalize(cached.name || '');
+      if (cached.name && (nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm))) {
+        const jid = cleanJid.includes('@') ? cleanJid : `${cleanJid}@s.whatsapp.net`;
+        if (!results.find(r => r.jid === jid)) {
+          results.push({ jid, name: cached.name });
+        }
+      }
+    }
+  }
+
+  res.json({ results });
+});
+
 adminRouter.get('/contact/:jid', async (req, res) => {
   const jid = req.params.jid;
   if (!jid) {
