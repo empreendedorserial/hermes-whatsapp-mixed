@@ -690,6 +690,200 @@ def _extract_contact_name_via_llm(message: str) -> str | None:
     return name
 
 
+def _update_full_summary(name: str, existing_full_summary: str, new_session_text: str, session_date: str) -> str | None:
+    """Atualiza o full_summary de um contato com uma nova sessão de conversa.
+
+    Chama o LLM com o resumo anterior e o texto da sessão nova, retornando
+    o resumo atualizado no formato 'Mês/Ano: ...'.
+    """
+    google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    classify_model = config.whatsapp_contact_classifier_model
+
+    previous = f"Resumo anterior:\n{existing_full_summary}\n\n" if existing_full_summary else ""
+    prompt = (
+        f"{previous}"
+        f"Nova conversa ({session_date}):\n{new_session_text}\n\n"
+        "Atualize o resumo cumulativo deste contato incorporando a nova conversa. "
+        "Formato: uma linha por período relevante, ex: 'Jun/25: pediu orçamento de X. Jul/25: comprou, elogiou atendimento.'\n"
+        "Seja factual e conciso. Mantenha o histórico anterior intacto e adicione o novo período ao final. "
+        "Retorne APENAS o texto do resumo atualizado, sem títulos ou explicações."
+    )
+
+    text_content = None
+    if google_key:
+        model = classify_model if (classify_model and "gemini" in classify_model.lower()) else "gemini-3.1-flash-lite"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={google_key}"
+        text_content = _call_llm_api(
+            url,
+            headers={"Content-Type": "application/json"},
+            payload={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 512}},
+            extract_fn=lambda r: r["candidates"][0]["content"]["parts"][0]["text"],
+            timeout=30,
+        )
+    if not text_content and openai_key:
+        model = classify_model if (classify_model and "gpt" in classify_model.lower()) else "gpt-4o-mini"
+        text_content = _call_llm_api(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
+            payload={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 512},
+            extract_fn=lambda r: r["choices"][0]["message"]["content"],
+            timeout=30,
+        )
+    if not text_content and openrouter_key:
+        model = classify_model or "google/gemini-flash-1.5-8b"
+        text_content = _call_llm_api(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"},
+            payload={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 512},
+            extract_fn=lambda r: r["choices"][0]["message"]["content"],
+            timeout=30,
+        )
+    return text_content.strip() if text_content else None
+
+
+def _compress_full_summary(name: str, full_summary: str) -> str | None:
+    """Comprime um full_summary longo em 1-2 linhas para uso no contexto de atendimento."""
+    google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    classify_model = config.whatsapp_contact_classifier_model
+
+    prompt = (
+        f"Resuma o histórico de relacionamento abaixo com {name} em no máximo 2 frases, "
+        "destacando o perfil, interesses principais e tom preferido:\n\n"
+        f"{full_summary}\n\n"
+        "Retorne APENAS o resumo comprimido, sem títulos."
+    )
+
+    text_content = None
+    if google_key:
+        model = classify_model if (classify_model and "gemini" in classify_model.lower()) else "gemini-3.1-flash-lite"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={google_key}"
+        text_content = _call_llm_api(
+            url,
+            headers={"Content-Type": "application/json"},
+            payload={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 128}},
+            extract_fn=lambda r: r["candidates"][0]["content"]["parts"][0]["text"],
+            timeout=20,
+        )
+    if not text_content and openai_key:
+        model = classify_model if (classify_model and "gpt" in classify_model.lower()) else "gpt-4o-mini"
+        text_content = _call_llm_api(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
+            payload={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 128},
+            extract_fn=lambda r: r["choices"][0]["message"]["content"],
+            timeout=20,
+        )
+    if not text_content and openrouter_key:
+        model = classify_model or "google/gemini-flash-1.5-8b"
+        text_content = _call_llm_api(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"},
+            payload={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 128},
+            extract_fn=lambda r: r["choices"][0]["message"]["content"],
+            timeout=20,
+        )
+    return text_content.strip() if text_content else None
+
+
+def _sync_full_summaries(personal_contacts: dict, state_db_path, max_contacts: int = 10) -> int:
+    """Atualiza full_summary para contatos com sessões novas no state.db.
+
+    Processa sessões ainda não resumidas (posteriores a last_summarized_at),
+    atualizando full_summary incrementalmente e comprimindo em summary quando longo.
+    Retorna o número de contatos atualizados.
+    """
+    if not state_db_path or not Path(str(state_db_path)).exists():
+        return 0
+
+    updated = 0
+    owner_phone = "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
+
+    try:
+        with sqlite3.connect(str(state_db_path)) as conn:
+            cur = conn.cursor()
+            for contact_key, contact_data in list(personal_contacts.items()):
+                if updated >= max_contacts:
+                    break
+                if not isinstance(contact_data, dict):
+                    continue
+                phone = contact_key.split("@")[0]
+                if owner_phone and _normalize_brazilian_phone(phone) == _normalize_brazilian_phone(owner_phone):
+                    continue
+
+                last_summarized_at = contact_data.get("last_summarized_at") or 0
+
+                # Buscar sessões novas para este contato
+                cur.execute("""
+                    SELECT s.id, s.started_at, s.title
+                    FROM sessions s
+                    WHERE s.source = 'whatsapp'
+                    AND (s.user_id = ? OR s.user_id LIKE ?)
+                    AND s.started_at > ?
+                    ORDER BY s.started_at ASC
+                """, (contact_key, f"{phone}%", last_summarized_at))
+                new_sessions = cur.fetchall()
+
+                if not new_sessions:
+                    continue
+
+                logger.info(f"[full-summary] {contact_data.get('name', phone)}: {len(new_sessions)} sessão(ões) nova(s)")
+                contact_name = contact_data.get("name") or phone
+
+                for session_id, started_at, title in new_sessions:
+                    # Buscar mensagens da sessão
+                    cur.execute("""
+                        SELECT role, content FROM messages
+                        WHERE session_id = ? AND content IS NOT NULL AND content != ''
+                        ORDER BY timestamp ASC
+                        LIMIT 60
+                    """, (session_id,))
+                    msgs = cur.fetchall()
+                    if not msgs:
+                        continue
+
+                    lines = []
+                    for role, content in msgs:
+                        speaker = "André" if role == "assistant" else contact_name
+                        lines.append(f"{speaker}: {content[:400]}")
+                    session_text = "\n".join(lines)
+
+                    try:
+                        session_date = datetime.datetime.fromtimestamp(started_at).strftime("%b/%y")
+                    except Exception:
+                        session_date = "?"
+
+                    new_full = _update_full_summary(
+                        name=contact_name,
+                        existing_full_summary=contact_data.get("full_summary") or "",
+                        new_session_text=session_text,
+                        session_date=session_date,
+                    )
+                    if new_full:
+                        contact_data["full_summary"] = new_full
+                        contact_data["last_summarized_at"] = started_at
+                        logger.info(f"[full-summary] {contact_name}: full_summary atualizado")
+
+                        # Comprimir em summary quando full_summary > 600 chars
+                        if len(new_full) > 600:
+                            compressed = _compress_full_summary(contact_name, new_full)
+                            if compressed:
+                                contact_data["summary"] = compressed
+                                logger.info(f"[full-summary] {contact_name}: summary comprimido")
+                        else:
+                            contact_data["summary"] = new_full
+
+                updated += 1
+
+    except sqlite3.Error as e:
+        logger.warning(f"[full-summary] Erro ao ler state.db: {e}")
+
+    return updated
+
+
 def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> dict:
     """Classifica contatos usando a API do LLM (Gemini, OpenAI ou OpenRouter) com base no histórico e estatísticas."""
     google_key = config.google_api_key
@@ -1206,7 +1400,6 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         existing_data = personal_contacts.get(target_key, {})
 
         if is_stale:
-            # Migração se o relacionamento existente for manual/específico
             man_rel = existing_data.get("manual_relationship")
             if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
                 man_rel = existing_data.get("relationship")
@@ -1220,15 +1413,16 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "tone": classification.get("tone", "polido e profissional"),
                 "nickname": existing_data.get("nickname") or classification.get("nickname"),
                 "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
-                "frequent_greeting": classification.get("frequent_greeting") or classification.get("frequent_greeting"),
+                "frequent_greeting": classification.get("frequent_greeting"),
                 "summary": classification.get("summary", "Conversa inicial."),
+                "full_summary": existing_data.get("full_summary"),
+                "last_summarized_at": existing_data.get("last_summarized_at"),
                 "intent": classification.get("intent", "Suporte/Atendimento."),
                 "frequency": classification.get("frequency", "esporádica"),
                 "guidelines": classification.get("guidelines", "Responda de forma prestativa."),
                 "last_interaction": max_ts or existing_data.get("last_interaction", 0)
             }
         else:
-            # Migração se o relacionamento existente for manual/específico
             man_rel = existing_data.get("manual_relationship")
             if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
                 man_rel = existing_data.get("relationship")
@@ -1244,6 +1438,8 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "pet_name": existing_data.get("pet_name") or classification.get("pet_name"),
                 "frequent_greeting": existing_data.get("frequent_greeting") or classification.get("frequent_greeting"),
                 "summary": existing_data.get("summary") or classification.get("summary", "Conversa inicial."),
+                "full_summary": existing_data.get("full_summary"),
+                "last_summarized_at": existing_data.get("last_summarized_at"),
                 "intent": existing_data.get("intent") or classification.get("intent", "Suporte/Atendimento."),
                 "frequency": existing_data.get("frequency") or classification.get("frequency", "esporádica"),
                 "guidelines": existing_data.get("guidelines") or classification.get("guidelines", "Responda de forma prestativa."),
@@ -1252,6 +1448,21 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         added_count += 1
         updated = True
 
+    # Atualizar full_summary para contatos com sessões novas
+    full_summary_updated = _sync_full_summaries(
+        personal_contacts=personal_contacts,
+        state_db_path=state_db_path if state_db_path.exists() else None,
+        max_contacts=max_classifications or 10,
+    )
+    if full_summary_updated > 0:
+        updated = True
+        logger.info(f"[sync] full_summary atualizado para {full_summary_updated} contato(s)")
+
+    # Preservar campos manuais do owner nos resultados classificados
+    for target_key, contact_data in personal_contacts.items():
+        for preserved_field in ("nickname", "pet_name", "notes", "manual_relationship", "full_summary", "last_summarized_at"):
+            pass  # já preservados acima nas atribuições individuais
+
     # Preparar mensagem de resultado
     result_messages = []
     if updated or metadata_updated or skipped_few_msgs > 0 or skipped_due_to_limit > 0:
@@ -1259,10 +1470,12 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         try:
             with open(pc_path, "w", encoding="utf-8") as f:
                 json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
-            
+
             result_messages.append(f"Sucesso! Mapeados e mesclados {added_count + skipped_few_msgs + skipped_due_to_limit} contatos localmente.")
             if added_count > 0:
                 result_messages.append(f"- {added_count} contatos classificados via IA.")
+            if full_summary_updated > 0:
+                result_messages.append(f"- {full_summary_updated} resumos de histórico atualizados.")
             if skipped_few_msgs > 0:
                 result_messages.append(f"- {skipped_few_msgs} contatos curtos configurados com valores padrão.")
             if skipped_due_to_limit > 0:
