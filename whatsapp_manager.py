@@ -1298,24 +1298,56 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
     id_norm = _normalize_text(identifier)
     matched_key = None
 
-    # 1. Busca exata por chave (número/JID)
-    for key in personal_contacts:
-        phone = key.split("@")[0]
-        if id_norm in _normalize_text(phone):
-            matched_key = key
-            break
+    # Número do owner — nunca deve ser alvo de update via comando
+    owner_phone = "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
 
-    # 2. Busca por name / nickname / pet_name
+    def _is_owner_key(key: str) -> bool:
+        phone = key.split("@")[0]
+        return bool(owner_phone) and (phone == owner_phone or _normalize_brazilian_phone(phone) == _normalize_brazilian_phone(owner_phone))
+
+    # 1. Busca exata por número/JID (apenas se identifier parece ser um número)
+    if re.match(r"^\+?[\d\s\-]+$", identifier):
+        for key in personal_contacts:
+            if _is_owner_key(key):
+                continue
+            phone = key.split("@")[0]
+            if id_norm.replace(" ", "").replace("-", "") in phone:
+                matched_key = key
+                break
+
+    # 2. Match exato de name (prioridade máxima)
+    if not matched_key:
+        for key, data in personal_contacts.items():
+            if _is_owner_key(key):
+                continue
+            if _normalize_text(data.get("name") or "") == id_norm:
+                matched_key = key
+                break
+
+    # 3. Match exato de nickname ou pet_name
+    if not matched_key:
+        for key, data in personal_contacts.items():
+            if _is_owner_key(key):
+                continue
+            for field in ["nickname", "pet_name"]:
+                if _normalize_text(data.get(field) or "") == id_norm:
+                    matched_key = key
+                    break
+            if matched_key:
+                break
+
+    # 4. Match parcial (substring) em name — fallback
     if not matched_key:
         best_score = 0
         for key, data in personal_contacts.items():
-            for field in ["name", "nickname", "pet_name"]:
-                value = _normalize_text(data.get(field) or "")
-                if value and (id_norm in value or value in id_norm):
-                    score = len(value)
-                    if score > best_score:
-                        matched_key = key
-                        best_score = score
+            if _is_owner_key(key):
+                continue
+            name_norm = _normalize_text(data.get("name") or "")
+            if name_norm and id_norm in name_norm:
+                score = len(name_norm)
+                if score > best_score:
+                    matched_key = key
+                    best_score = score
 
     if not matched_key:
         return f"❌ Contato '{identifier}' não encontrado em personal_contacts.json."
