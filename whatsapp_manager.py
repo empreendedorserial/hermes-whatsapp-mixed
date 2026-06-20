@@ -1454,18 +1454,22 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
                         """
                         SELECT chat_id, MAX(sender_name) as name
                         FROM messages
-                        WHERE sender_name IS NOT NULL AND sender_name != ''
-                        AND chat_id NOT LIKE '%@g.us%'
+                        WHERE chat_id NOT LIKE '%@g.us%'
                         GROUP BY chat_id
                         """,
                     )
-                    for chat_id_row, sender_name in cur.fetchall():
-                        if not sender_name:
-                            continue
+                    all_rows = cur.fetchall()
+                    logger.info(
+                        f"[update-contact] Passo 5: buscando '{identifier}' entre {len(all_rows)} chat_ids no DB. "
+                        f"sender_names não-nulos: {[r[1] for r in all_rows if r[1]][:10]}"
+                    )
+                    for chat_id_row, sender_name in all_rows:
                         if _is_owner_key(chat_id_row):
                             continue
-                        if id_norm in _normalize_text(sender_name):
-                            # Encontrou pelo nome real do WhatsApp — mapear para chave do personal_contacts
+                        sn_norm = _normalize_text(sender_name or "")
+                        # Match: id_norm é substring do sender_name OU sender_name é substring do id_norm
+                        if sn_norm and (id_norm in sn_norm or sn_norm in id_norm):
+                            logger.info(f"[update-contact] Passo 5: match sender_name='{sender_name}' chat_id={chat_id_row}")
                             phone_row = chat_id_row.split("@")[0]
                             for key in personal_contacts:
                                 if _is_owner_key(key):
@@ -1474,7 +1478,6 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
                                     matched_key = key
                                     break
                             if not matched_key:
-                                # Contato existe no DB mas não no JSON — criar entrada mínima
                                 matched_key = chat_id_row if "@" in chat_id_row else f"{phone_row}@s.whatsapp.net"
                                 personal_contacts[matched_key] = {
                                     "name": sender_name,
