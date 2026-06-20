@@ -1279,22 +1279,37 @@ def _github_put_file(
     except Exception as e:
         logger.warning(f"_github_put_file: erro inesperado buscando SHA: {e}")
 
-    # 2. Criar ou atualizar o arquivo
-    put_data: dict = {"message": commit_msg, "content": content_b64, "branch": branch}
-    if sha:
-        put_data["sha"] = sha
-    try:
-        req_put = urllib.request.Request(
-            file_url,
-            data=json.dumps(put_data).encode("utf-8"),
-            headers={**base_headers, "Content-Type": "application/json"},
-            method="PUT",
-        )
-        with urllib.request.urlopen(req_put, timeout=timeout) as resp:
-            return resp.status in [200, 201]
-    except Exception as e:
-        logger.error(f"_github_put_file: falha ao enviar {github_path}: {e}")
-        return False
+    # 2. Criar ou atualizar o arquivo (retry em caso de 409 — SHA desatualizado)
+    for attempt in range(3):
+        put_data: dict = {"message": commit_msg, "content": content_b64, "branch": branch}
+        if sha:
+            put_data["sha"] = sha
+        try:
+            req_put = urllib.request.Request(
+                file_url,
+                data=json.dumps(put_data).encode("utf-8"),
+                headers={**base_headers, "Content-Type": "application/json"},
+                method="PUT",
+            )
+            with urllib.request.urlopen(req_put, timeout=timeout) as resp:
+                return resp.status in [200, 201]
+        except urllib.error.HTTPError as e:
+            if e.code == 409 and attempt < 2:
+                logger.warning(f"_github_put_file: 409 Conflict (tentativa {attempt + 1}), rebuscando SHA...")
+                time.sleep(1 + attempt)
+                try:
+                    req_get = urllib.request.Request(file_url, headers=base_headers)
+                    with urllib.request.urlopen(req_get, timeout=timeout) as resp:
+                        sha = json.loads(resp.read().decode("utf-8")).get("sha")
+                except Exception:
+                    pass
+                continue
+            logger.error(f"_github_put_file: falha ao enviar {github_path}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"_github_put_file: falha ao enviar {github_path}: {e}")
+            return False
+    return False
 
 
 def _update_contact_fields(identifier: str, fields: dict) -> str:
@@ -2798,68 +2813,47 @@ _EXEC_PATTERN = re.compile(
 
 def post_llm_call(*args, **kwargs):
     """Intercepta resposta do LLM e executa linhas EXEC: update contact <nome> campo=valor."""
-    context = kwargs.get("context") or next((a for a in args if isinstance(a, dict)), None)
-    logger.info(f"[post_llm_call] chamado — context keys: {list(context.keys()) if context else 'None'} | kwargs keys: {list(kwargs.keys())}")
+    # Hermes passa tudo em kwargs: platform, assistant_response, session_id, user_message, etc.
+    platform = kwargs.get("platform")
+    if not platform:
+        ctx = next((a for a in args if isinstance(a, dict)), None)
+        platform = (ctx or {}).get("platform")
 
-    if not context:
-        logger.warning("[post_llm_call] context ausente, saindo")
-        return None
-
-    platform = context.get("platform")
     if platform != "whatsapp":
-        logger.info(f"[post_llm_call] platform={platform}, ignorando")
         return None
 
-    sender_id = context.get("sender_id", "")
+    # Verificar se é sessão do owner via session_id (contém o JID do sender)
+    session_id = kwargs.get("session_id", "")
     owner_number = config.whatsapp_owner_number
-    if not owner_number:
-        logger.warning("[post_llm_call] WHATSAPP_OWNER_NUMBER não configurado")
-        return None
+    if owner_number and session_id:
+        clean_session = "".join(c for c in session_id.split("@")[0].split(":")[0] if c.isdigit())
+        clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
+        if _normalize_brazilian_phone(clean_session) != _normalize_brazilian_phone(clean_owner):
+            return None
 
-    clean_sender = "".join(c for c in sender_id.split("@")[0].split(":")[0] if c.isdigit())
-    clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
-    if _normalize_brazilian_phone(clean_sender) != _normalize_brazilian_phone(clean_owner):
-        logger.info(f"[post_llm_call] sender={clean_sender} não é owner={clean_owner}, ignorando")
-        return None
-
-    # Tentar todas as chaves possíveis onde o Hermes pode colocar o texto da resposta
-    response_text = ""
-    for key in ("response", "text", "content", "message", "reply"):
-        response_text = context.get(key) or ""
-        if response_text:
-            logger.info(f"[post_llm_call] resposta encontrada em context['{key}'] ({len(response_text)} chars)")
-            break
-
+    response_text = kwargs.get("assistant_response") or ""
     if not response_text:
-        # Tentar também nos kwargs diretos
-        for key in ("response", "text", "content", "message", "reply"):
-            response_text = kwargs.get(key) or ""
-            if response_text:
-                logger.info(f"[post_llm_call] resposta encontrada em kwargs['{key}'] ({len(response_text)} chars)")
-                break
-
-    if not response_text:
-        logger.warning(f"[post_llm_call] texto da resposta não encontrado. context={list(context.keys())} kwargs={list(kwargs.keys())}")
+        logger.warning(f"[post_llm_call] assistant_response vazio. kwargs keys: {list(kwargs.keys())}")
         return None
 
     matches = _EXEC_PATTERN.findall(response_text)
-    logger.info(f"[post_llm_call] EXEC matches encontrados: {len(matches)} — {matches}")
     if not matches:
         return None
+
+    logger.info(f"[post_llm_call] {len(matches)} EXEC(s) encontrados: {matches}")
 
     exec_results = []
     for match in matches:
         match = match.strip()
         field_pos = re.search(r"\s+\w+=", match)
         if not field_pos:
-            logger.warning(f"[post_llm_call] EXEC sem campos detectados: '{match}'")
+            logger.warning(f"[post_llm_call] EXEC sem campos: '{match}'")
             continue
         identifier = match[: field_pos.start()].strip()
         fields_str = match[field_pos.start():].strip()
         fields: dict = {}
         for k, v in re.findall(r"(\w+)=([^\s=]+(?:\s+[^\s=]+)*?)(?=\s+\w+=|$)", fields_str):
             raw_val = v.strip()
-            # Converter "NULL" e "null" para None
             fields[k.strip()] = None if raw_val.upper() == "NULL" else raw_val
         logger.info(f"[post_llm_call] Executando: update contact '{identifier}' campos={fields}")
         if identifier and fields:
@@ -2867,14 +2861,14 @@ def post_llm_call(*args, **kwargs):
             exec_results.append(result)
             logger.info(f"[post_llm_call] Resultado: {result}")
         else:
-            logger.warning(f"[post_llm_call] identifier ou fields vazios — identifier='{identifier}' fields={fields}")
+            logger.warning(f"[post_llm_call] identifier='{identifier}' ou fields={fields} inválidos")
 
     if not exec_results:
-        logger.warning("[post_llm_call] Nenhum EXEC executado com sucesso")
         return None
 
     cleaned = _EXEC_PATTERN.sub("", response_text).strip()
-    return {"response": cleaned}
+    # Hermes espera dict com a chave correta da resposta
+    return {"assistant_response": cleaned}
 
 
 # ── Comentário de separação ─────────────────────────────────────────────────
