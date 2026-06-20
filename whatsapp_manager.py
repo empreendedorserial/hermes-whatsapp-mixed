@@ -157,6 +157,9 @@ _last_owner_text: dict[str, str] = {}
 # Mapeamento LID -> telefone obtido da ponte no bot-status
 _lid_to_phone: dict[str, str] = {}
 
+# Atualização de contato pendente aguardando número do owner: { sender_id -> {name, fields} }
+_pending_contact_update: dict[str, dict] = {}
+
 # Cache TTL para _check_bot_paused() — evita HTTP a cada mensagem
 _BOT_STATUS_TTL_S: int = int(os.getenv("WHATSAPP_BOT_STATUS_TTL_S", "5"))
 _bot_status_cache: dict = {"paused": False, "ts": 0.0}
@@ -2649,6 +2652,31 @@ def pre_gateway_dispatch(*args, **kwargs):
         re.IGNORECASE,
     )
     if is_owner and is_self_chat:
+        # Verificar se há pendência aguardando número e a mensagem atual é um número
+        pending = _pending_contact_update.get(sender_id)
+        if pending and re.match(r"^\+?[\d\s\(\)\-]{7,}$", msg_text.strip()):
+            phone_digits = re.sub(r"\D", "", msg_text.strip())
+            pend_name = pending["name"]
+            pend_fields = pending["fields"]
+            del _pending_contact_update[sender_id]
+            result = _update_contact_fields(phone_digits, pend_fields)
+            # Se encontrou pelo número mas o name ainda é genérico, atualizar o nome também
+            if "não encontrado" not in result and "name" not in pend_fields:
+                pend_fields["name"] = pend_name
+                _update_contact_fields(phone_digits, {"name": pend_name})
+            logger.info(f"[update-nl] Pendência resolvida com número {phone_digits}: {result}")
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            if chat_id:
+                try:
+                    payload = json.dumps({"chatId": chat_id, "message": result}).encode("utf-8")
+                    req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    with urllib.request.urlopen(req, timeout=10):
+                        pass
+                except Exception as e:
+                    logger.error(f"[update-nl] Erro ao enviar resposta de pendência: {e}")
+            return {"action": "skip", "reason": "update-contact-pending"}
+
         nl_contact_name = None
         if _UPDATE_NL_TRIGGERS.search(msg_text):
             nl_contact_name = _extract_contact_name_via_llm(msg_text)
@@ -2701,7 +2729,17 @@ def pre_gateway_dispatch(*args, **kwargs):
                 if fields_to_update:
                     result = _update_contact_fields(nl_contact_name, fields_to_update)
                     logger.info(f"[update-nl] Resultado: {result}")
-                    response_msg = result
+                    if "não encontrado" in result:
+                        _pending_contact_update[sender_id] = {
+                            "name": nl_contact_name,
+                            "fields": fields_to_update,
+                        }
+                        response_msg = (
+                            f"Não encontrei '{nl_contact_name}' nos seus contatos. "
+                            f"Qual é o número do WhatsApp dela? (Ex: 5511999998888)"
+                        )
+                    else:
+                        response_msg = result
                 else:
                     logger.warning(f"[update-nl] Nenhum campo extraído para '{nl_contact_name}'")
                     response_msg = f"⚠️ Não consegui identificar o que atualizar para '{nl_contact_name}'. Use: `update contact {nl_contact_name} campo=valor`"
