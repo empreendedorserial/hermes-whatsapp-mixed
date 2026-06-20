@@ -1398,7 +1398,13 @@ messagingRouter.post('/send', async (req, res) => {
       return res.json({ success: true, info: 'System status/error message blocked and logged' });
     }
 
-    const chunks = splitLongMessage(formatOutgoingMessage(message));
+    // Strip EXEC: lines before sending — they are system commands, never user-visible
+    const cleanedMessage = message.replace(/^EXEC:\s*\S+.*$/gim, '').replace(/\n{3,}/g, '\n\n').trim();
+    if (cleanedMessage !== message) {
+      console.log(`[bridge] EXEC: lines stripped from outgoing message to ${chatId}`);
+    }
+
+    const chunks = splitLongMessage(formatOutgoingMessage(cleanedMessage));
     const messageIds = [];
     for (let i = 0; i < chunks.length; i += 1) {
       const sent = await sendWithTimeout(chatId, { text: chunks[i] });
