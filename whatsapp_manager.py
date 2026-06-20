@@ -1615,6 +1615,16 @@ _CONTACT_QUERY_PATTERNS = [
     r"acessa\w*\s+(?:a\s+)?conversa\w*\s+(?:com\s+)?(?:a\s+|o\s+)?([A-ZÀ-Úa-zà-ú]{2,})",
 ]
 
+# Pronomes e palavras comuns que não são nomes de contato
+_CONTACT_QUERY_STOPWORDS = {
+    "ela", "ele", "eles", "elas", "dele", "dela", "deles", "delas",
+    "você", "voce", "me", "mim", "nos", "nós", "lhe", "lhes",
+    "isso", "este", "este", "essa", "essa", "aquele", "aquela",
+    "qual", "que", "quem", "como", "quando", "onde", "porque",
+    "mais", "menos", "muito", "pouco", "tudo", "nada", "algo",
+    "hoje", "ontem", "amanhã", "agora", "antes", "depois",
+}
+
 
 def _normalize_text(s: str) -> str:
     return "".join(
@@ -1628,7 +1638,7 @@ def _detect_contact_query(text: str) -> str | None:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             candidate = m.group(1).strip()
-            if len(candidate) >= 2:
+            if len(candidate) >= 2 and _normalize_text(candidate) not in _CONTACT_QUERY_STOPWORDS:
                 return candidate
     return None
 
