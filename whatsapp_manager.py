@@ -1859,7 +1859,18 @@ def _build_owner_context(history_section: str, cross_context: str = "") -> dict:
             "CRITICAL SECURITY & DISPLAY CONSTRAINT:\n"
             "- NUNCA escreva ou exiba em suas respostas qualquer representação de ferramentas "
             "ou status como '📖 read_file: ...', 'terminal', etc. Toda a execução de ferramentas "
-            "deve ser 100% invisível para o usuário final."
+            "deve ser 100% invisível para o usuário final.\n\n"
+            "### ATUALIZAÇÃO DE CONTATOS ###\n"
+            "Quando o André pedir para atualizar dados de um contato (nome, apelido, relacionamento, "
+            "notas, etc.), você DEVE incluir na sua resposta uma linha no formato exato abaixo — "
+            "ela será executada automaticamente pelo sistema e NÃO será exibida ao André:\n"
+            "EXEC: update contact <nome_ou_apelido> campo1=valor1 campo2=valor2\n"
+            "Campos disponíveis: name, relationship, manual_relationship, nickname, pet_name, "
+            "frequent_greeting, tone, guidelines, notes, product, summary, intent, frequency\n"
+            "Valores de relationship válidos: Amigo, AmigoProximo, Parente, Filho, Cliente, Vendedor\n"
+            "Exemplo: EXEC: update contact Bebel relationship=Filho manual_relationship=Filho pet_name=Bebel name=Isabel\n"
+            "IMPORTANTE: Inclua sempre a linha EXEC mesmo que já tenha confirmado verbalmente. "
+            "Sem a linha EXEC, nenhuma atualização real acontece no sistema."
             f"{history_section}"
             f"{cross_block}"
         )
@@ -2725,6 +2736,66 @@ def _run_periodic_sync():
         time.sleep(60)
 
 
+_EXEC_PATTERN = re.compile(
+    r"^EXEC:\s*update\s+contact\s+(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def post_llm_call(*args, **kwargs):
+    """Intercepta resposta do LLM e executa linhas EXEC: update contact <nome> campo=valor."""
+    context = kwargs.get("context") or next((a for a in args if isinstance(a, dict)), None)
+    if not context:
+        return None
+
+    platform = context.get("platform")
+    if platform != "whatsapp":
+        return None
+
+    sender_id = context.get("sender_id", "")
+    owner_number = config.whatsapp_owner_number
+    if not owner_number:
+        return None
+
+    clean_sender = "".join(c for c in sender_id.split("@")[0].split(":")[0] if c.isdigit())
+    clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
+    if _normalize_brazilian_phone(clean_sender) != _normalize_brazilian_phone(clean_owner):
+        return None
+
+    response_text = context.get("response") or context.get("text") or ""
+    if not response_text:
+        return None
+
+    matches = _EXEC_PATTERN.findall(response_text)
+    if not matches:
+        return None
+
+    exec_results = []
+    for match in matches:
+        match = match.strip()
+        # Separar identificador dos campos: tudo antes do primeiro campo=valor
+        field_pos = re.search(r"\s+\w+=", match)
+        if not field_pos:
+            continue
+        identifier = match[: field_pos.start()].strip()
+        fields_str = match[field_pos.start():].strip()
+        fields: dict = {}
+        for k, v in re.findall(r"(\w+)=([^\s=]+(?:\s+[^\s=]+)*?)(?=\s+\w+=|$)", fields_str):
+            fields[k.strip()] = v.strip()
+        if identifier and fields:
+            result = _update_contact_fields(identifier, fields)
+            exec_results.append(result)
+            logger.info(f"[post_llm_call] EXEC executado: update contact {identifier} → {result}")
+
+    if not exec_results:
+        return None
+
+    # Remove linhas EXEC: da resposta final
+    cleaned = _EXEC_PATTERN.sub("", response_text).strip()
+    # Adiciona confirmação real no final (silenciosa se quiser, mas útil para debug)
+    return {"response": cleaned}
+
+
 # ── Comentário de separação ─────────────────────────────────────────────────
 # Helpers extraídos acima são testáveis diretamente sem instanciar register().
 # ────────────────────────────────────────────────────────────────────────────
@@ -2947,6 +3018,7 @@ def register(ctx):
 
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", pre_llm_call)
+    ctx.register_hook("post_llm_call", post_llm_call)
 
     # Auto-Update e Pull de Configurações no Boot
     try:
