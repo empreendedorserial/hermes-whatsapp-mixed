@@ -2694,16 +2694,19 @@ def pre_gateway_dispatch(*args, **kwargs):
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             logger.info(f"[update-nl] Pedido de atualização detectado para '{nl_contact_name}': '{msg_text}'")
 
-            # Usar LLM de classificação para extrair campos estruturados da mensagem do owner
+            # Usar LLM apenas para extrair campos explicitamente mencionados pelo owner
+            # Campos auto-gerados pelo classificador (summary, tone, guidelines, etc.) são excluídos
+            # para não sobrescrever dados reais com valores inventados
             extract_prompt = (
                 f"O usuário pediu para atualizar o contato '{nl_contact_name}' com a seguinte instrução:\n"
                 f"\"{msg_text}\"\n\n"
-                "Extraia os campos a atualizar e retorne um JSON com apenas os campos mencionados. "
-                "Campos possíveis: name, relationship, manual_relationship, nickname, "
-                "frequent_greeting, tone, guidelines, notes, product, summary, intent, frequency.\n"
-                "nickname = apelido da pessoa. pet_name = nome do animal de estimação (só inclua se mencionado explicitamente).\n"
-                "Valores válidos para relationship/manual_relationship: Amigo, AmigoProximo, Parente, Filho, Cliente, Vendedor.\n"
-                "Retorne APENAS o JSON, sem explicações. Exemplo: "
+                "Extraia SOMENTE os campos explicitamente mencionados e retorne um JSON.\n"
+                "Campos permitidos: name, relationship, manual_relationship, nickname, pet_name, notes, product.\n"
+                "- nickname = apelido da pessoa (ex: Bebel, Zé)\n"
+                "- pet_name = nome do animal de estimação (só inclua se mencionado)\n"
+                "- relationship/manual_relationship válidos: Amigo, AmigoProximo, Parente, Filho, Cliente, Vendedor\n"
+                "NÃO invente campos não mencionados. NÃO inclua tone, guidelines, summary, intent, frequency.\n"
+                "Retorne APENAS o JSON. Exemplo: "
                 "{\"relationship\": \"Filho\", \"manual_relationship\": \"Filho\", \"nickname\": \"Bebel\"}"
             )
             try:
@@ -2712,14 +2715,17 @@ def pre_gateway_dispatch(*args, **kwargs):
                     chat_history=extract_prompt,
                     stats_info="",
                 )
-                # _classify_contact_via_llm retorna dict com campos de classificação
-                # Filtrar apenas campos válidos de personal_contacts
-                valid_fields = {
-                    "name", "relationship", "manual_relationship", "nickname", "pet_name",
-                    "frequent_greeting", "tone", "guidelines", "notes", "product",
-                    "summary", "intent", "frequency",
-                }
-                fields_to_update = {k: v for k, v in extracted.items() if k in valid_fields and v is not None}
+                # Permitir apenas campos que fazem sentido em updates manuais
+                # tone/guidelines/summary/intent/frequency só devem vir do histórico real
+                owner_update_fields = {"name", "relationship", "manual_relationship", "nickname", "pet_name", "notes", "product", "frequent_greeting"}
+                fields_to_update = {k: v for k, v in extracted.items() if k in owner_update_fields and v is not None}
+
+                # Garantir que o nome completo extraído pela LLM seja usado (não encurtado pelo classificador)
+                fields_to_update["name"] = nl_contact_name
+
+                # Garantir manual_relationship quando relationship for definido pelo owner
+                if "relationship" in fields_to_update and "manual_relationship" not in fields_to_update:
+                    fields_to_update["manual_relationship"] = fields_to_update["relationship"]
 
                 # Se não extraiu relacionamento mas a mensagem menciona "filho/filha", inferir
                 rel_keywords = {"filho": "Filho", "filha": "Filho", "parente": "Parente",
