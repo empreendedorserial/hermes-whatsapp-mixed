@@ -1818,6 +1818,14 @@ _CONTACT_QUERY_STOPWORDS = {
     "qual", "que", "quem", "como", "quando", "onde", "porque",
     "mais", "menos", "muito", "pouco", "tudo", "nada", "algo",
     "hoje", "ontem", "amanhã", "agora", "antes", "depois",
+    # palavras comuns após preposições que não são nomes
+    "minha", "meu", "meus", "minhas", "sua", "seu", "seus", "suas",
+    "informacoes", "informações", "dados", "contato", "contatos",
+    "perfil", "registro", "sistema", "banco", "arquivo",
+    "filha", "filho", "filhos", "filhas", "mae", "pai", "irmao", "irma",
+    "amigo", "amiga", "cliente", "vendedor", "parente",
+    "nome", "apelido", "numero", "telefone", "relacao", "relacionamento",
+    "pois", "para", "com", "por", "mas", "sim", "nao",
 }
 
 
@@ -2530,8 +2538,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     if is_owner and is_self_chat:
         nl_contact_name = None
         if _UPDATE_NL_TRIGGERS.search(msg_text):
-            # Buscar nome próprio na mensagem: após "da/do/de/o/a" ou nome capitalizado isolado
-            # Estratégia: extrair todos os tokens capitalizados não-stopword e buscar no personal_contacts
+            # Remover os verbos gatilho e artigos/preposições da lista de palavras candidatas
             def _extract_name_tokens(text: str) -> list[str]:
                 """Extrai sequências de palavras capitalizadas, cortando em stopwords."""
                 tokens = text.split()
@@ -2551,32 +2558,59 @@ def pre_gateway_dispatch(*args, **kwargs):
                     results.append(" ".join(current))
                 return results
 
-            name_candidates = _extract_name_tokens(msg_text)
-            # Também buscar após "da/do/de" (pode estar em minúsculo)
-            after_prep = re.findall(r"\bd[aoe]\s+([A-ZÀ-Úa-zà-ú]{2,})", msg_text, re.IGNORECASE)
-            all_candidates = name_candidates + after_prep
+            # Construir conjunto de palavras a ignorar: stopwords + verbos gatilho (palavra inteira) + artigos
+            trigger_words = {_normalize_text(m.group(0)) for m in _UPDATE_NL_TRIGGERS.finditer(msg_text)}
+            extra_skip = {"da", "do", "de", "ao", "os", "as", "um", "uma", "uns", "umas", "se", "eh", "e"}
+            skip_set = _CONTACT_QUERY_STOPWORDS | trigger_words | extra_skip
 
-            # Priorizar candidatos mais longos (nome completo > nome simples)
-            all_candidates.sort(key=len, reverse=True)
+            # Gerar candidatos: sequências de 1-3 palavras não-stopword da mensagem
+            words = re.findall(r"[a-zà-úA-ZÀ-Ú]{2,}", msg_text)
+            valid_words = [w for w in words if _normalize_text(w) not in skip_set]
 
+            # Incluir bigramas e trigramas de palavras válidas consecutivas
+            bigrams = [" ".join(valid_words[i:i+2]) for i in range(len(valid_words)-1)]
+            trigrams = [" ".join(valid_words[i:i+3]) for i in range(len(valid_words)-2)]
+            # Priorizar: trigramas > bigramas > palavras simples (maiores primeiro)
+            all_candidates = trigrams + bigrams + valid_words
+
+            # Prioridade 1: match direto no personal_contacts (nome/apelido/pet_name)
             for candidate in all_candidates:
-                candidate = candidate.strip()
-                if _normalize_text(candidate) in _CONTACT_QUERY_STOPWORDS:
+                if _normalize_text(candidate) in skip_set:
                     continue
-                if len(candidate) < 2:
-                    continue
-                # Verificar se existe no personal_contacts ou no DB antes de aceitar
                 ck, _ = _search_contact_by_name(candidate)
                 if ck:
                     nl_contact_name = candidate
+                    logger.info(f"[update-nl] Match em personal_contacts: '{candidate}' → {ck}")
                     break
-            # Se não achou no JSON, usar o primeiro candidato válido mesmo assim
-            if not nl_contact_name and all_candidates:
-                for candidate in all_candidates:
-                    candidate = candidate.strip()
-                    if _normalize_text(candidate) not in _CONTACT_QUERY_STOPWORDS and len(candidate) >= 2:
-                        nl_contact_name = candidate
-                        break
+
+            # Prioridade 2: match no sender_name do whatsapp_messages.db
+            if not nl_contact_name:
+                bridge_db = Path("/opt/data/.hermes/whatsapp_messages.db")
+                if bridge_db.exists():
+                    try:
+                        with sqlite3.connect(str(bridge_db)) as conn:
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT DISTINCT sender_name FROM messages "
+                                "WHERE sender_name IS NOT NULL AND sender_name != '' "
+                                "AND chat_id NOT LIKE '%@g.us%'"
+                            )
+                            db_names = [r[0] for r in cur.fetchall() if r[0]]
+                        for candidate in all_candidates:
+                            for db_name in db_names:
+                                if _normalize_text(candidate) in _normalize_text(db_name):
+                                    nl_contact_name = db_name
+                                    logger.info(f"[update-nl] Match em DB sender_name: '{candidate}' → '{db_name}'")
+                                    break
+                            if nl_contact_name:
+                                break
+                    except sqlite3.Error:
+                        pass
+
+            # Fallback: primeira palavra válida da mensagem
+            if not nl_contact_name and valid_words:
+                nl_contact_name = valid_words[0]
+                logger.info(f"[update-nl] Fallback para primeira palavra válida: '{nl_contact_name}'")
 
         if nl_contact_name:
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
