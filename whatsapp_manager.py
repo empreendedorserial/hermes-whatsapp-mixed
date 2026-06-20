@@ -1278,6 +1278,81 @@ def _github_put_file(
         return False
 
 
+def _update_contact_fields(identifier: str, fields: dict) -> str:
+    """Atualiza campos específicos de um contato em personal_contacts.json pelo nome ou número.
+
+    identifier: nome, apelido, pet_name ou número de telefone (parcial aceito)
+    fields: dict com os campos a atualizar (ex: {"relationship": "Filho", "notes": "..."})
+    Retorna string de resultado para exibir ao owner.
+    """
+    pc_path = Path("/opt/data/personal_contacts.json")
+    if not pc_path.exists():
+        return "❌ personal_contacts.json não encontrado."
+
+    try:
+        with open(str(pc_path), "r", encoding="utf-8") as f:
+            personal_contacts = json.load(f)
+    except Exception as e:
+        return f"❌ Erro ao ler personal_contacts.json: {e}"
+
+    id_norm = _normalize_text(identifier)
+    matched_key = None
+
+    # 1. Busca exata por chave (número/JID)
+    for key in personal_contacts:
+        phone = key.split("@")[0]
+        if id_norm in _normalize_text(phone):
+            matched_key = key
+            break
+
+    # 2. Busca por name / nickname / pet_name
+    if not matched_key:
+        best_score = 0
+        for key, data in personal_contacts.items():
+            for field in ["name", "nickname", "pet_name"]:
+                value = _normalize_text(data.get(field) or "")
+                if value and (id_norm in value or value in id_norm):
+                    score = len(value)
+                    if score > best_score:
+                        matched_key = key
+                        best_score = score
+
+    if not matched_key:
+        return f"❌ Contato '{identifier}' não encontrado em personal_contacts.json."
+
+    contact = personal_contacts[matched_key]
+    contact_name = contact.get("name") or contact.get("nickname") or matched_key
+
+    # Campos protegidos que não podem ser sobrescritos por este comando
+    protected = {"last_interaction"}
+    updated_fields = []
+    for field, value in fields.items():
+        if field in protected:
+            continue
+        contact[field] = value
+        updated_fields.append(field)
+
+    if not updated_fields:
+        return f"⚠️ Nenhum campo válido para atualizar em '{contact_name}'."
+
+    personal_contacts[matched_key] = contact
+
+    try:
+        with open(str(pc_path), "w", encoding="utf-8") as f:
+            json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ Erro ao salvar personal_contacts.json: {e}"
+
+    # Push para GitHub em background
+    try:
+        threading.Thread(target=_push_personal_contacts_to_github, daemon=True).start()
+    except Exception:
+        pass
+
+    fields_str = ", ".join(f"`{k}`: {v!r}" for k, v in fields.items() if k not in protected)
+    return f"✅ Contato *{contact_name}* ({matched_key}) atualizado.\nCampos: {fields_str}"
+
+
 def _push_personal_contacts_to_github() -> bool:
     """Envia o arquivo personal_contacts.json local diretamente para o repositório do GitHub."""
     pc_path = Path("/opt/data/personal_contacts.json")
@@ -2263,6 +2338,50 @@ def pre_gateway_dispatch(*args, **kwargs):
                 logger.error(f"Erro ao enviar resposta do comando: {send_err}")
         
         return {"action": "skip", "reason": "sync-contacts-command"}
+
+    # Comando: update contact <nome> <campo>=<valor> [campo=valor ...]
+    # Exemplo: "update contact Isabel relationship=Filha notes=minha filha mais velha"
+    if is_owner and re.match(r"^update\s+contact\s+", normalized_msg, re.IGNORECASE):
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        try:
+            # Extrai: "update contact <identifier> <field>=<value> ..."
+            remainder = re.sub(r"^update\s+contact\s+", "", msg_text, flags=re.IGNORECASE).strip()
+            # Separa o identificador dos campos (identifier é tudo antes do primeiro campo=valor)
+            field_match = re.search(r"\s+\w+=", remainder)
+            if field_match:
+                identifier = remainder[: field_match.start()].strip()
+                fields_str = remainder[field_match.start():].strip()
+            else:
+                identifier = remainder
+                fields_str = ""
+
+            if not identifier:
+                response_msg = "❌ Uso: `update contact <nome ou número> campo=valor [campo=valor ...]`"
+            elif not fields_str:
+                response_msg = f"❌ Nenhum campo especificado. Uso: `update contact {identifier} campo=valor`"
+            else:
+                fields: dict = {}
+                for part in re.findall(r"(\w+)=([^\s=]+(?:\s+[^\s=]+)*?)(?=\s+\w+=|$)", fields_str):
+                    fields[part[0]] = part[1].strip()
+                if fields:
+                    response_msg = _update_contact_fields(identifier, fields)
+                else:
+                    response_msg = "❌ Não foi possível parsear os campos. Use o formato `campo=valor`."
+        except Exception as uc_err:
+            response_msg = f"❌ Erro ao atualizar contato: {uc_err}"
+
+        if chat_id:
+            try:
+                url = f"{BRIDGE_URL}/send"
+                payload = json.dumps({"chatId": chat_id, "message": response_msg}).encode("utf-8")
+                req = urllib.request.Request(url, data=payload, method="POST")
+                req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    pass
+            except Exception as send_err:
+                logger.error(f"Erro ao enviar resposta update contact: {send_err}")
+
+        return {"action": "skip", "reason": "update-contact-command"}
 
     # Se for mensagem manual enviada pelo dono no WhatsApp para outro contato, pulamos a resposta do LLM
     if is_owner and not is_self_chat:
