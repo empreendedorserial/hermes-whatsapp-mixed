@@ -2501,5 +2501,225 @@ class TestSyncContactsNamePreservation(BaseWhatsAppManagerTest):
                          f"Nome real deve ser preservado, mas ficou: {saved_name!r}")
 
 
+class TestLiveClassifyContact(BaseWhatsAppManagerTest):
+    """Testes para _live_classify_contact."""
+
+    def _make_mock_db(self, mock_connect, stats_row, history_rows):
+        """Helper: configura mock SQLite para retornar stats e histórico."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = lambda s: mock_conn
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = stats_row
+        mock_cursor.fetchall.return_value = history_rows
+        return mock_conn, mock_cursor
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
+    def test_classifies_new_contact_with_sufficient_messages(
+        self, mock_open, mock_exists, mock_connect, mock_classify, mock_push
+    ):
+        """Contato novo com mensagens suficientes deve ser classificado via LLM."""
+        mock_conn, mock_cursor = self._make_mock_db(
+            mock_connect,
+            stats_row=(10, 1686440000, 1686450000, "Carlos"),
+            history_rows=[
+                (0, "Carlos", "preciso de ajuda com o sistema"),
+                (1, "André", "claro, pode me dizer o problema?"),
+            ],
+        )
+
+        mock_classify.return_value = {
+            "relationship": "Cliente",
+            "tone": "polido e profissional",
+            "nickname": None, "pet_name": None,
+            "frequent_greeting": None,
+            "summary": "Cliente buscando suporte técnico.",
+            "intent": "Suporte.", "frequency": "esporádica",
+            "guidelines": "Seja prestativo.",
+            "product": None,
+        }
+
+        personal_contacts = {}
+
+        from whatsapp_manager import _live_classify_contact
+        result = _live_classify_contact(
+            sender_id="5511888888888@s.whatsapp.net",
+            db_query_jid="5511888888888@s.whatsapp.net",
+            phone_number="5511888888888@s.whatsapp.net",
+            contact_info=None,
+            target_key="5511888888888@s.whatsapp.net",
+            personal_contacts=personal_contacts,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["name"], "Carlos")
+        self.assertEqual(result["relationship"], "Cliente")
+        mock_classify.assert_called_once()
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("sqlite3.connect")
+    def test_returns_none_when_no_messages(self, mock_connect, mock_exists):
+        """Sem mensagens no DB, deve retornar None sem chamar LLM."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (0, None, None, None)
+        mock_cursor.fetchall.return_value = []
+
+        from whatsapp_manager import _live_classify_contact
+        result = _live_classify_contact(
+            sender_id="5511777777777@s.whatsapp.net",
+            db_query_jid="5511777777777@s.whatsapp.net",
+            phone_number="5511777777777@s.whatsapp.net",
+            contact_info=None,
+            target_key="5511777777777@s.whatsapp.net",
+            personal_contacts={},
+        )
+
+        self.assertIsNone(result)
+
+    def test_returns_none_for_owner(self):
+        """Dono nunca deve ser classificado — deve retornar None imediatamente."""
+        from whatsapp_manager import _live_classify_contact
+        # O número do owner está em WHATSAPP_OWNER_NUMBER = "5511999999999"
+        result = _live_classify_contact(
+            sender_id="5511999999999@s.whatsapp.net",
+            db_query_jid="5511999999999@s.whatsapp.net",
+            phone_number="5511999999999@s.whatsapp.net",
+            contact_info=None,
+            target_key="5511999999999@s.whatsapp.net",
+            personal_contacts={},
+        )
+        self.assertIsNone(result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
+    def test_preserves_manual_relationship(
+        self, mock_open, mock_exists, mock_connect, mock_classify, mock_push
+    ):
+        """manual_relationship definido pelo dono deve sobrescrever o que o LLM classificar."""
+        mock_conn, mock_cursor = self._make_mock_db(
+            mock_connect,
+            stats_row=(5, 1686440000, 1686450000, "Pedro"),
+            history_rows=[(0, "Pedro", "oi André")],
+        )
+
+        mock_classify.return_value = {
+            "relationship": "Cliente",   # LLM acha que é cliente
+            "tone": "polido e profissional",
+            "nickname": None, "pet_name": None, "frequent_greeting": None,
+            "summary": "Conversa casual.", "intent": "Social.",
+            "frequency": "semanal", "guidelines": "Seja gentil.", "product": None,
+        }
+
+        contact_info = {
+            "name": "Pedro",
+            "manual_relationship": "Amigo",  # dono definiu como amigo
+            "relationship": "Amigo",
+            "notes": "vizinho de longa data",
+        }
+
+        from whatsapp_manager import _live_classify_contact
+        result = _live_classify_contact(
+            sender_id="5511666666666@s.whatsapp.net",
+            db_query_jid="5511666666666@s.whatsapp.net",
+            phone_number="5511666666666@s.whatsapp.net",
+            contact_info=contact_info,
+            target_key="5511666666666@s.whatsapp.net",
+            personal_contacts={"5511666666666@s.whatsapp.net": contact_info},
+        )
+
+        self.assertIsNotNone(result)
+        # manual_relationship deve prevalecer sobre o que o LLM retornou
+        self.assertEqual(result["relationship"], "Amigo")
+        self.assertEqual(result["manual_relationship"], "Amigo")
+        # notes devem ser preservadas
+        self.assertEqual(result["notes"], "vizinho de longa data")
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
+    def test_uses_stub_classification_below_min_threshold(
+        self, mock_open, mock_exists, mock_connect, mock_push
+    ):
+        """Com poucas mensagens (< mínimo), deve usar classificação padrão sem chamar LLM."""
+        mock_conn, mock_cursor = self._make_mock_db(
+            mock_connect,
+            stats_row=(1, 1686440000, 1686450000, "Laura"),
+            history_rows=[(0, "Laura", "oi")],
+        )
+
+        from whatsapp_manager import _live_classify_contact
+        with patch("whatsapp_manager._classify_contact_via_llm") as mock_classify:
+            result = _live_classify_contact(
+                sender_id="5511555555555@s.whatsapp.net",
+                db_query_jid="5511555555555@s.whatsapp.net",
+                phone_number="5511555555555@s.whatsapp.net",
+                contact_info=None,
+                target_key="5511555555555@s.whatsapp.net",
+                personal_contacts={},
+            )
+            # LLM não deve ser chamado
+            mock_classify.assert_not_called()
+
+        # Resultado deve usar valores padrão
+        self.assertIsNotNone(result)
+        self.assertEqual(result["relationship"], "Cliente")
+        self.assertEqual(result["summary"], "Conversa muito curta.")
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
+    def test_persists_to_personal_contacts_json(
+        self, mock_open, mock_exists, mock_connect, mock_classify, mock_push
+    ):
+        """Resultado da classificação deve ser gravado em personal_contacts.json."""
+        mock_conn, mock_cursor = self._make_mock_db(
+            mock_connect,
+            stats_row=(8, 1686440000, 1686450000, "Ana"),
+            history_rows=[(0, "Ana", "quero contratar")],
+        )
+
+        mock_classify.return_value = {
+            "relationship": "Cliente", "tone": "formal",
+            "nickname": None, "pet_name": None, "frequent_greeting": None,
+            "summary": "Interesse em contratar.", "intent": "Compra.",
+            "frequency": "esporádica", "guidelines": "Apresente o produto.", "product": "SaaS",
+        }
+
+        personal_contacts = {}
+
+        from whatsapp_manager import _live_classify_contact
+        _live_classify_contact(
+            sender_id="5511444444444@s.whatsapp.net",
+            db_query_jid="5511444444444@s.whatsapp.net",
+            phone_number="5511444444444@s.whatsapp.net",
+            contact_info=None,
+            target_key="5511444444444@s.whatsapp.net",
+            personal_contacts=personal_contacts,
+        )
+
+        # Deve ter tentado abrir o arquivo para escrita
+        write_calls = [c for c in mock_open.call_args_list if "w" in str(c)]
+        self.assertTrue(len(write_calls) > 0, "personal_contacts.json deve ser gravado")
+
+        # Contato deve estar no dict em memória
+        self.assertIn("5511444444444@s.whatsapp.net", personal_contacts)
+        self.assertEqual(personal_contacts["5511444444444@s.whatsapp.net"]["name"], "Ana")
+
+
 if __name__ == "__main__":
     unittest.main()
