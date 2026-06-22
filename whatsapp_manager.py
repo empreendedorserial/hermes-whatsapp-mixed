@@ -1684,6 +1684,11 @@ def _collect_andre_messages_by_relationship(
                         WHERE from_me=1 AND sender_name != 'Bot' AND chat_id=?
                         AND body IS NOT NULL AND length(trim(body)) > 1
                         AND body NOT LIKE '<Media omitted>%'
+                        AND body NOT LIKE '[image received]%'
+                        AND body NOT LIKE '[audio received]%'
+                        AND body NOT LIKE '[video received]%'
+                        AND body NOT LIKE '[sticker received]%'
+                        AND body NOT LIKE '[document received]%'
                         ORDER BY timestamp DESC LIMIT ?
                         """,
                         (chat_id, 100),
