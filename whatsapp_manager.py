@@ -1671,6 +1671,7 @@ def _collect_andre_messages_by_relationship(
                 )
                 chat_ids = [row[0] for row in cur.fetchall()]
 
+                cutoff_ts = int(time.time()) - 90 * 24 * 3600  # últimos 90 dias
                 total_manual = 0
                 for chat_id in chat_ids:
                     phone = chat_id.split("@")[0].split(":")[0]
@@ -1682,6 +1683,7 @@ def _collect_andre_messages_by_relationship(
                         """
                         SELECT body FROM messages
                         WHERE from_me=1 AND sender_name != 'Bot' AND chat_id=?
+                        AND timestamp >= ?
                         AND body IS NOT NULL AND length(trim(body)) > 1
                         AND body NOT LIKE '<Media omitted>%'
                         AND body NOT LIKE '[image received]%'
@@ -1691,7 +1693,7 @@ def _collect_andre_messages_by_relationship(
                         AND body NOT LIKE '[document received]%'
                         ORDER BY timestamp DESC LIMIT ?
                         """,
-                        (chat_id, 100),
+                        (chat_id, cutoff_ts, 100),
                     )
                     msgs = [
                         row[0] for row in cur.fetchall()
