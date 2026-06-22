@@ -1670,7 +1670,7 @@ def _collect_andre_messages_by_relationship(
                 cur.execute(
                     """
                     SELECT chat_id, MAX(timestamp) as last_ts FROM messages
-                    WHERE from_me=1 AND sender_name != 'Bot'
+                    WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot')
                     AND chat_id NOT LIKE '%@g.us%'
                     AND chat_id NOT LIKE '%@lid%'
                     GROUP BY chat_id
@@ -1694,7 +1694,7 @@ def _collect_andre_messages_by_relationship(
                     cur.execute(
                         """
                         SELECT body FROM messages
-                        WHERE from_me=1 AND sender_name != 'Bot' AND chat_id=?
+                        WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot') AND chat_id=?
                         AND timestamp >= ?
                         AND body IS NOT NULL AND length(trim(body)) > 1
                         AND body NOT LIKE '<Media omitted>%'
