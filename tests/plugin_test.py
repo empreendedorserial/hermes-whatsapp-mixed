@@ -2806,6 +2806,20 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
         mock_cursor.fetchall.side_effect = fetchall_side_effect
         return mock_conn
 
+    def _path_factory(self, bridge_exists=True, state_exists=False):
+        """Retorna um side_effect para patch('whatsapp_manager.Path') que distingue bridge_db de state_db."""
+        bridge_mock = MagicMock()
+        bridge_mock.exists.return_value = bridge_exists
+        state_mock = MagicMock()
+        state_mock.exists.return_value = state_exists
+
+        def factory(p):
+            if "whatsapp_messages.db" in str(p):
+                return bridge_mock
+            return state_mock
+
+        return factory
+
     def test_groups_messages_by_relationship(self):
         personal_contacts = {
             "5511111111111@s.whatsapp.net": {"relationship": "Cliente"},
@@ -2818,15 +2832,56 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
         chat_ids = list(messages_by_chat.keys())
         mock_conn = self._make_sqlite_mock(chat_ids, messages_by_chat)
 
-        bridge_db = MagicMock()
-        bridge_db.exists.return_value = True
-
-        with patch("whatsapp_manager.Path", return_value=bridge_db), \
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory(bridge_exists=True, state_exists=False)), \
              patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
             result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
 
         self.assertIn("Cliente", result)
         self.assertIn("Amigo", result)
+
+    def test_excludes_bot_messages(self):
+        """Mensagens geradas pelo bot (presentes no state.db como assistant) devem ser excluídas."""
+        personal_contacts = {
+            "5511111111111@s.whatsapp.net": {"relationship": "Cliente"},
+        }
+        bot_reply = "Olá! Posso ajudar com mais alguma coisa?"
+        manual_msg = "ok entendi, vou verificar"
+
+        bridge_conn = MagicMock()
+        bridge_conn.__enter__ = lambda s: bridge_conn
+        bridge_conn.__exit__ = MagicMock(return_value=False)
+        bridge_cur = MagicMock()
+        bridge_conn.cursor.return_value = bridge_cur
+
+        state_conn = MagicMock()
+        state_conn.__enter__ = lambda s: state_conn
+        state_conn.__exit__ = MagicMock(return_value=False)
+        state_cur = MagicMock()
+        state_conn.cursor.return_value = state_cur
+
+        # state.db retorna o bot_reply como assistant
+        state_cur.fetchall.return_value = [(bot_reply,)]
+
+        call_counts = {"n": 0}
+        def fetchall_bridge():
+            call_counts["n"] += 1
+            if call_counts["n"] == 1:
+                return [("5511111111111@s.whatsapp.net",)]
+            return [(bot_reply,), (manual_msg,)]
+
+        bridge_cur.fetchall.side_effect = fetchall_bridge
+
+        def connect_factory(path, *a, **kw):
+            if "whatsapp_messages" in str(path):
+                return bridge_conn
+            return state_conn
+
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory(bridge_exists=True, state_exists=True)), \
+             patch("whatsapp_manager.sqlite3.connect", side_effect=connect_factory):
+            result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
+
+        if "Cliente" in result:
+            self.assertNotIn(bot_reply, result["Cliente"])
 
     def test_filters_media_messages(self):
         personal_contacts = {
@@ -2839,10 +2894,8 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             ],
         }
         mock_conn = self._make_sqlite_mock(list(messages_by_chat.keys()), messages_by_chat)
-        bridge_db = MagicMock()
-        bridge_db.exists.return_value = True
 
-        with patch("whatsapp_manager.Path", return_value=bridge_db), \
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory(bridge_exists=True, state_exists=False)), \
              patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
             result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
 
@@ -2851,10 +2904,7 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("omitted", msg.lower())
 
     def test_returns_empty_when_db_missing(self):
-        bridge_db = MagicMock()
-        bridge_db.exists.return_value = False
-
-        with patch("whatsapp_manager.Path", return_value=bridge_db):
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory(bridge_exists=False, state_exists=False)):
             result = whatsapp_manager._collect_andre_messages_by_relationship({"any": {}})
 
         self.assertEqual(result, {})

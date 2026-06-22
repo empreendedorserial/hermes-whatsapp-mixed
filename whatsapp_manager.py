@@ -1657,6 +1657,25 @@ def _collect_andre_messages_by_relationship(
         result: dict[str, list[str]] = {}
 
         if use_bridge:
+            # Carregar conteúdos gerados pelo bot (role='assistant' no state.db) para exclusão
+            bot_contents: set[str] = set()
+            if state_db.exists():
+                try:
+                    with sqlite3.connect(str(state_db)) as sconn:
+                        scur = sconn.cursor()
+                        scur.execute(
+                            """
+                            SELECT m.content FROM messages m
+                            JOIN sessions s ON m.session_id = s.id
+                            WHERE s.source = 'whatsapp' AND m.role = 'assistant'
+                            AND m.content IS NOT NULL
+                            """
+                        )
+                        bot_contents = {row[0].strip() for row in scur.fetchall()}
+                    logger.info(f"[style-learning] {len(bot_contents)} respostas do bot carregadas para exclusão.")
+                except Exception as e:
+                    logger.warning(f"[style-learning] Falha ao carregar respostas do bot do state.db: {e}")
+
             with sqlite3.connect(str(bridge_db)) as conn:
                 cur = conn.cursor()
                 cur.execute(
@@ -1677,54 +1696,21 @@ def _collect_andre_messages_by_relationship(
                         WHERE from_me=1 AND chat_id=? AND body IS NOT NULL AND length(trim(body)) > 3
                         ORDER BY timestamp DESC LIMIT ?
                         """,
-                        (chat_id, limit_per_contact),
+                        (chat_id, limit_per_contact * 3),  # buscar mais para compensar o filtro
                     )
                     msgs = [
                         row[0] for row in cur.fetchall()
-                        if not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
-                    ]
+                        if row[0].strip() not in bot_contents
+                        and not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
+                    ][:limit_per_contact]
                     if msgs:
                         result.setdefault(rel, []).extend(msgs)
 
         elif use_state:
-            # Fallback: state.db — role='assistant' = André, role='user' = contato
-            logger.info("[style-learning] Usando state.db como fallback para coletar mensagens do André.")
-            with sqlite3.connect(str(state_db)) as conn:
-                cur = conn.cursor()
-                # Buscar sessões WhatsApp com user_id mapeável
-                cur.execute(
-                    """
-                    SELECT DISTINCT s.user_id FROM sessions s
-                    JOIN messages m ON m.session_id = s.id
-                    WHERE s.source = 'whatsapp' AND m.role = 'assistant'
-                    AND s.user_id NOT LIKE '%@g.us%'
-                    """
-                )
-                user_ids = [row[0] for row in cur.fetchall()]
-
-                for user_id in user_ids:
-                    phone = user_id.split("@")[0].split(":")[0]
-                    phone_norm = _normalize_brazilian_phone("".join(c for c in phone if c.isdigit()))
-                    rel = phone_to_rel.get(phone_norm)
-                    if not rel:
-                        continue
-
-                    cur.execute(
-                        """
-                        SELECT m.content FROM messages m
-                        JOIN sessions s ON m.session_id = s.id
-                        WHERE s.user_id = ? AND m.role = 'assistant'
-                        AND m.content IS NOT NULL AND length(trim(m.content)) > 3
-                        ORDER BY m.timestamp DESC LIMIT ?
-                        """,
-                        (user_id, limit_per_contact),
-                    )
-                    msgs = [
-                        row[0] for row in cur.fetchall()
-                        if not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
-                    ]
-                    if msgs:
-                        result.setdefault(rel, []).extend(msgs)
+            # Fallback: state.db — role='user' = mensagens DO contato, role='assistant' = bot
+            # Não há acesso às mensagens manuais do André neste fallback
+            logger.warning("[style-learning] whatsapp_messages.db ausente — impossível distinguir mensagens manuais do André das respostas do bot via state.db. Style learning ignorado.")
+            return {}
 
         # Cap de 50 por grupo (sample aleatório)
         import random
