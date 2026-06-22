@@ -2271,5 +2271,235 @@ class TestNLUpdateOwnerFieldsRestriction(BaseWhatsAppManagerTest):
             self.assertNotIn("frequency", fields_passed)
 
 
+class TestFetchChatHistory(BaseWhatsAppManagerTest):
+    """Testes para _fetch_chat_history."""
+
+    @patch("urllib.request.urlopen")
+    def test_returns_history_string(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"history": "Carlos: oi\nAndré: tudo bem"}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _fetch_chat_history
+        result = _fetch_chat_history("5511888@s.whatsapp.net", limit=10)
+        self.assertEqual(result, "Carlos: oi\nAndré: tudo bem")
+
+    @patch("urllib.request.urlopen", side_effect=OSError("offline"))
+    def test_returns_empty_when_server_offline(self, mock_urlopen):
+        from whatsapp_manager import _fetch_chat_history
+        result = _fetch_chat_history("5511888@s.whatsapp.net")
+        self.assertEqual(result, "")
+
+    @patch("urllib.request.urlopen")
+    def test_returns_empty_when_no_history_key(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"other": "data"}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _fetch_chat_history
+        result = _fetch_chat_history("5511888@s.whatsapp.net")
+        self.assertEqual(result, "")
+
+
+class TestResolveContactNameFromBridge(BaseWhatsAppManagerTest):
+    """Testes para _resolve_contact_name_from_bridge."""
+
+    @patch("urllib.request.urlopen")
+    def test_returns_name_when_found(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"name": "Isabel Alencar"}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _resolve_contact_name_from_bridge
+        result = _resolve_contact_name_from_bridge("5511777777777@s.whatsapp.net")
+        self.assertEqual(result, "Isabel Alencar")
+
+    @patch("urllib.request.urlopen")
+    def test_returns_none_when_name_is_empty(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"name": ""}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _resolve_contact_name_from_bridge
+        result = _resolve_contact_name_from_bridge("5511777@s.whatsapp.net")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen", side_effect=Exception("bridge offline"))
+    def test_returns_none_when_bridge_fails(self, mock_urlopen):
+        from whatsapp_manager import _resolve_contact_name_from_bridge
+        result = _resolve_contact_name_from_bridge("5511777@s.whatsapp.net")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_empty_jid(self):
+        from whatsapp_manager import _resolve_contact_name_from_bridge
+        self.assertIsNone(_resolve_contact_name_from_bridge(""))
+        self.assertIsNone(_resolve_contact_name_from_bridge(None))
+
+    @patch("urllib.request.urlopen")
+    def test_strips_whitespace_from_name(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"name": "  Carlos  "}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _resolve_contact_name_from_bridge
+        result = _resolve_contact_name_from_bridge("5511888@s.whatsapp.net")
+        self.assertEqual(result, "Carlos")
+
+
+class TestPushPersonalContactsToGithub(BaseWhatsAppManagerTest):
+    """Testes para _push_personal_contacts_to_github."""
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("pathlib.Path.exists", return_value=True)
+    def test_returns_false_without_config_repo(self, mock_exists):
+        from whatsapp_manager import _push_personal_contacts_to_github
+        # Sem CONFIG_REPO nem token, deve retornar False imediatamente
+        result = _push_personal_contacts_to_github()
+        self.assertFalse(result)
+
+    @patch("pathlib.Path.exists", return_value=False)
+    def test_returns_false_when_file_not_found(self, mock_exists):
+        from whatsapp_manager import _push_personal_contacts_to_github
+        result = _push_personal_contacts_to_github()
+        self.assertFalse(result)
+
+    @patch("whatsapp_manager._github_put_file", return_value=True)
+    @patch("pathlib.Path.read_bytes", return_value=b'{"test": 1}')
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch.dict(os.environ, {"CONFIG_REPO": "user/repo", "CONFIG_GITHUB_TOKEN": "fake-token"})
+    def test_calls_github_put_file_with_correct_args(self, mock_exists, mock_read, mock_put):
+        from whatsapp_manager import _push_personal_contacts_to_github
+        result = _push_personal_contacts_to_github()
+        self.assertTrue(result)
+        mock_put.assert_called_once()
+        call_kwargs = mock_put.call_args
+        self.assertEqual(call_kwargs[1].get("github_path") or call_kwargs[0][3], "personal_contacts.json")
+
+
+class TestRunSyncInBackground(BaseWhatsAppManagerTest):
+    """Testes para _run_sync_in_background."""
+
+    def setUp(self):
+        super().setUp()
+        import whatsapp_manager
+        whatsapp_manager._sync_running.clear()
+
+    def tearDown(self):
+        import whatsapp_manager
+        whatsapp_manager._sync_running.clear()
+        super().tearDown()
+
+    @patch("whatsapp_manager._sync_contacts_from_db_internal", return_value="10 contatos sincronizados")
+    def test_starts_thread_and_sets_sync_running(self, mock_sync):
+        import time
+        import whatsapp_manager
+        from whatsapp_manager import _run_sync_in_background
+
+        _run_sync_in_background(force=True, chat_id=None)
+
+        # Aguardar thread completar (máx 2s)
+        for _ in range(20):
+            if mock_sync.called:
+                break
+            time.sleep(0.1)
+
+        self.assertTrue(mock_sync.called)
+        # Após conclusão, o lock deve estar limpo
+        self.assertFalse(whatsapp_manager._sync_running.is_set())
+
+    @patch("whatsapp_manager._sync_contacts_from_db_internal", return_value="ok")
+    def test_blocks_concurrent_sync(self, mock_sync):
+        import whatsapp_manager
+        from whatsapp_manager import _run_sync_in_background
+
+        # Simular sync já em andamento
+        whatsapp_manager._sync_running.set()
+
+        _run_sync_in_background(force=True, chat_id=None)
+
+        # _sync_contacts_from_db_internal NÃO deve ter sido chamado
+        mock_sync.assert_not_called()
+
+    @patch("urllib.request.urlopen")
+    @patch("whatsapp_manager._sync_contacts_from_db_internal", return_value="5 atualizados")
+    def test_notifies_owner_when_chat_id_provided(self, mock_sync, mock_urlopen):
+        import time
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _run_sync_in_background
+        _run_sync_in_background(force=False, chat_id="5511999999999@s.whatsapp.net")
+
+        for _ in range(20):
+            if mock_urlopen.called:
+                break
+            time.sleep(0.1)
+
+        self.assertTrue(mock_urlopen.called)
+        req = mock_urlopen.call_args[0][0]
+        self.assertIn("/send", req.full_url)
+
+
+class TestSyncContactsNamePreservation(BaseWhatsAppManagerTest):
+    """Garante que sync não substitui nome real por nome genérico 'Contato XXXX'."""
+
+    @patch("sqlite3.connect")
+    @patch("whatsapp_manager._classify_contact_via_llm")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_does_not_overwrite_real_name_with_generic(
+        self, mock_open, mock_exists, mock_classify, mock_connect
+    ):
+        from whatsapp_manager import _sync_contacts_from_db_internal
+
+        existing = {
+            "5511777777777@s.whatsapp.net": {
+                "name": "Isabel Alencar",
+                "relationship": "Parente",
+                "tone": "informal",
+                "guidelines": "seja gentil",
+                "last_interaction": 1686450000,
+            }
+        }
+
+        mock_file = unittest.mock.mock_open(read_data=json.dumps(existing))
+        mock_open.side_effect = lambda path, *a, **kw: mock_file(path, *a, **kw)
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+
+        # Sync retorna nome genérico "Contato 7777" (como Baileys faz em multi-device)
+        mock_cursor.fetchall.side_effect = [
+            [("5511777777777@s.whatsapp.net", 1686450001, 1)],
+            [("5511777777777@s.whatsapp.net", "Contato 7777", 10, 1686440000, 1686450001)],
+            [("user", "5511777777777", "oi tudo bem")],
+        ]
+
+        mock_classify.return_value = {
+            "relationship": "Parente",
+            "tone": "informal",
+            "nickname": None, "pet_name": None, "frequent_greeting": None,
+            "summary": "Conversa familiar.", "intent": "Manter contato.",
+            "frequency": "semanal", "product": None,
+            "guidelines": "seja gentil.",
+        }
+
+        with patch.dict(os.environ, {"CONFIG_REPO": ""}):
+            _sync_contacts_from_db_internal(force=True)
+
+        write_calls = mock_file().write.call_args_list
+        written_data = "".join(c[0][0] for c in write_calls)
+        written = json.loads(written_data)
+
+        # Nome real deve ser preservado, não substituído por "Contato 7777"
+        saved_name = written.get("5511777777777@s.whatsapp.net", {}).get("name")
+        self.assertEqual(saved_name, "Isabel Alencar",
+                         f"Nome real deve ser preservado, mas ficou: {saved_name!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
