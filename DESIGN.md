@@ -37,15 +37,51 @@ graph TD
     checkOwner -- Sim --> checkPersonal{No chat pessoal/self-chat?}
     checkPersonal -- Sim --> checkCmd{É um comando de controle?}
     checkCmd -- Sim --> execCmd[Executa Comando e Confirma]
-    checkCmd -- Não --> runAssistant[Responde com Persona: Assistente Pessoal]
-    
+    checkCmd -- Sim --> checkSyncCmd{É sync/update contact?}
+    checkSyncCmd -- Sim --> runBgSync[Executa em background, notifica quando concluir]
+    checkSyncCmd -- Não --> execCmd[Executa Comando e Confirma]
+
+    checkCmd -- Não --> checkNLUpdate{Contém verbo de atualização?}
+    checkNLUpdate -- Sim --> extractName[LLM extrai nome do contato]
+    extractName --> findContact{Contato encontrado?}
+    findContact -- Sim --> updateFields[Atualiza campos e salva]
+    findContact -- Não --> askPhone[Pergunta número ao dono]
+    checkNLUpdate -- Não --> checkCrossSession{Pergunta sobre outra conversa?}
+    checkCrossSession -- Sim --> injectHistory[Busca histórico cross-session e injeta no contexto]
+    checkCrossSession -- Não --> runAssistant[Responde com Persona: Assistente Pessoal]
+
     checkPersonal -- Não --> checkCmdClient{É um comando de controle?}
     checkCmdClient -- Sim --> ignoreCmd[Ignora Comando / Não faz nada]
     checkCmdClient -- Não --> silenceChat[Silencia esta conversa por 10 min] --> skipMsg[Ignora mensagem da IA]
-    
+
     checkOwner -- Não --> checkGlobal{Bot pausado globalmente?}
     checkGlobal -- Sim --> dropMsg[Ignora Mensagem]
     checkGlobal -- Não --> checkSilenced{Chat está sob silêncio de 10 min?}
     checkSilenced -- Sim --> dropMsg
     checkSilenced -- Não --> runSupport[Responde com Persona: Suporte ao Cliente]
 ```
+
+---
+
+## 3. 🔍 Detecção Cross-Session (Self-Chat)
+
+Quando o dono pergunta sobre uma conversa com outro contato, o plugin detecta o nome via regex + stopwords em `pre_llm_call`, busca o histórico em `whatsapp_messages.db` e `state.db`, e injeta no contexto antes da chamada ao LLM.
+
+---
+
+## 4. 📇 Atualização de Contatos em Linguagem Natural
+
+Detectada em `pre_gateway_dispatch` quando a mensagem do dono contém verbos de atualização (atualizar, mudar, registrar, etc.). O LLM extrai o nome do contato e os campos mencionados. Atualização é persistida em `personal_contacts.json` e sincronizada com GitHub. Campos auto-gerados (`tone`, `summary`, `guidelines`) não são sobrescritos por updates manuais.
+
+---
+
+## 5. 📊 Resumo Cumulativo (`full_summary`)
+
+Processado a cada sync a partir do `state.db`. Apenas mensagens do contato (`role=user`) são incluídas. O LLM incrementa o `full_summary` com cada sessão nova, acumulando o histórico por período. Quando longo, é comprimido em `summary` de 1-2 frases para uso no contexto de atendimento.
+
+---
+
+## 6. ⚡ Sync Não-Bloqueante
+
+O sync de contatos roda sempre em thread daemon via `_run_sync_in_background`. O bot permanece disponível durante o processo. Não há sync automático no boot — apenas no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`) ou quando solicitado via chat.
+
