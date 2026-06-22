@@ -1657,35 +1657,19 @@ def _collect_andre_messages_by_relationship(
         result: dict[str, list[str]] = {}
 
         if use_bridge:
-            # Carregar conteúdos gerados pelo bot (role='assistant' no state.db) para exclusão.
-            # Só excluir mensagens longas (>15 chars) para não descartar respostas curtas manuais
-            # como "ok", "sim", "blz" que podem coincidir com respostas curtas do bot.
-            bot_contents: set[str] = set()
-            if state_db.exists():
-                try:
-                    with sqlite3.connect(str(state_db)) as sconn:
-                        scur = sconn.cursor()
-                        scur.execute(
-                            """
-                            SELECT m.content FROM messages m
-                            JOIN sessions s ON m.session_id = s.id
-                            WHERE s.source = 'whatsapp' AND m.role = 'assistant'
-                            AND m.content IS NOT NULL AND length(trim(m.content)) > 15
-                            """
-                        )
-                        bot_contents = {row[0].strip() for row in scur.fetchall()}
-                    logger.info(f"[style-learning] {len(bot_contents)} respostas longas do bot carregadas para exclusão.")
-                except Exception as e:
-                    logger.warning(f"[style-learning] Falha ao carregar respostas do bot do state.db: {e}")
-
+            # sender_name='Bot' identifica mensagens enviadas pelo bot automaticamente.
+            # Todas as outras (sender_name='André Alencar' ou LID) são mensagens manuais do André.
             with sqlite3.connect(str(bridge_db)) as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    "SELECT DISTINCT chat_id FROM messages WHERE from_me=1 AND chat_id NOT LIKE '%@g.us%'"
+                    """
+                    SELECT DISTINCT chat_id FROM messages
+                    WHERE from_me=1 AND sender_name != 'Bot' AND chat_id NOT LIKE '%@g.us%'
+                    """
                 )
                 chat_ids = [row[0] for row in cur.fetchall()]
 
-                total_raw, total_filtered = 0, 0
+                total_raw, total_manual = 0, 0
                 for chat_id in chat_ids:
                     phone = chat_id.split("@")[0].split(":")[0]
                     phone_norm = _normalize_brazilian_phone("".join(c for c in phone if c.isdigit()))
@@ -1696,23 +1680,23 @@ def _collect_andre_messages_by_relationship(
                     cur.execute(
                         """
                         SELECT body FROM messages
-                        WHERE from_me=1 AND chat_id=? AND body IS NOT NULL AND length(trim(body)) > 1
+                        WHERE from_me=1 AND sender_name != 'Bot' AND chat_id=?
+                        AND body IS NOT NULL AND length(trim(body)) > 1
+                        AND body NOT LIKE '<Media omitted>%'
                         ORDER BY timestamp DESC LIMIT ?
                         """,
-                        (chat_id, limit_per_contact * 5),
+                        (chat_id, limit_per_contact),
                     )
-                    raw = cur.fetchall()
-                    total_raw += len(raw)
                     msgs = [
-                        row[0] for row in raw
-                        if row[0].strip() not in bot_contents
-                        and not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
-                    ][:limit_per_contact]
-                    total_filtered += len(msgs)
+                        row[0] for row in cur.fetchall()
+                        if not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
+                    ]
+                    total_raw += len(msgs)
                     if msgs:
+                        total_manual += len(msgs)
                         result.setdefault(rel, []).extend(msgs)
 
-                logger.info(f"[style-learning] Mensagens: {total_raw} brutas → {total_filtered} após filtro bot. Grupos: {dict((r, len(m)) for r, m in result.items())}")
+                logger.info(f"[style-learning] {total_manual} mensagens manuais do André coletadas. Grupos: {dict((r, len(m)) for r, m in result.items())}")
 
         elif use_state:
             logger.warning("[style-learning] whatsapp_messages.db ausente — impossível distinguir mensagens manuais do André. Style learning ignorado.")
