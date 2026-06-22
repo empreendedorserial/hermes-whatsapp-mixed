@@ -2,6 +2,7 @@
 
 import os
 import json
+import sqlite3
 import unittest
 import sys
 from unittest.mock import patch, MagicMock
@@ -1381,6 +1382,450 @@ class TestUtilityFunctionsAndLogs(BaseWhatsAppManagerTest):
                 
             self.assertEqual(mock_update.call_count, 2)
             mock_sleep.assert_called_with(1)
+
+
+class TestUpdateContactFields(BaseWhatsAppManagerTest):
+    """Testes para _update_contact_fields — busca em cascata por níveis 1-6."""
+
+    def _make_contacts(self):
+        return {
+            "5511777777777@s.whatsapp.net": {
+                "name": "Isabel Alencar",
+                "relationship": "Parente",
+                "nickname": "Bel",
+                "pet_name": None,
+                "notes": None,
+            },
+            "5511888888888@s.whatsapp.net": {
+                "name": "Carlos Silva",
+                "relationship": "Cliente",
+                "nickname": None,
+                "pet_name": None,
+                "notes": None,
+            },
+        }
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_level2_exact_name_match(self, mock_open, mock_exists, mock_push):
+        contacts = self._make_contacts()
+        mock_open.return_value.__enter__.return_value = MagicMock(
+            read=lambda: json.dumps(contacts)
+        )
+        written = {}
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            if "w" in mode:
+                def capture_write(data):
+                    written["data"] = data
+                m.write = capture_write
+            return m
+
+        mock_open.side_effect = fake_open
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("Isabel Alencar", {"notes": "filha mais velha"})
+        self.assertIn("Isabel Alencar", result)
+        self.assertIn("✅", result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_level3_nickname_match(self, mock_open, mock_exists, mock_push):
+        contacts = self._make_contacts()
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            m.write = lambda data: None
+            return m
+
+        mock_open.side_effect = fake_open
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("Bel", {"notes": "via apelido"})
+        self.assertIn("✅", result)
+        self.assertIn("Isabel Alencar", result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_level4_substring_name_match(self, mock_open, mock_exists, mock_push):
+        contacts = self._make_contacts()
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            m.write = lambda data: None
+            return m
+
+        mock_open.side_effect = fake_open
+
+        from whatsapp_manager import _update_contact_fields
+        # "Isabel" é substring de "Isabel Alencar"
+        result = _update_contact_fields("Isabel", {"relationship": "Filha"})
+        self.assertIn("✅", result)
+        self.assertIn("Isabel Alencar", result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    @patch("sqlite3.connect")
+    def test_level5_sender_name_db_match(self, mock_connect, mock_open, mock_exists, mock_push):
+        """Nível 5: contato sem nome no JSON mas com sender_name no DB."""
+        contacts = {
+            "5511999111111@s.whatsapp.net": {
+                "name": "Contato 1111",
+                "relationship": "Cliente",
+                "nickname": None, "pet_name": None, "notes": None,
+            }
+        }
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            m.write = lambda data: None
+            return m
+
+        mock_open.side_effect = fake_open
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        # DB retorna sender_name "Pedro Souza" para o chat_id correspondente
+        mock_cursor.fetchall.return_value = [
+            ("5511999111111@s.whatsapp.net", "Pedro Souza")
+        ]
+        mock_conn.__enter__ = lambda s: mock_conn
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("Pedro", {"notes": "encontrado via DB"})
+        self.assertIn("✅", result)
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    @patch("sqlite3.connect", side_effect=sqlite3.DatabaseError("db error"))
+    @patch("urllib.request.urlopen", side_effect=Exception("bridge error"))
+    def test_not_found_returns_error_message(self, mock_urlopen, mock_connect, mock_open, mock_exists):
+        contacts = self._make_contacts()
+        mock_open.return_value.__enter__.return_value = MagicMock(
+            read=lambda: json.dumps(contacts)
+        )
+
+        def fake_open(path, mode="r", **kwargs):
+            return unittest.mock.mock_open(read_data=json.dumps(contacts))()
+
+        mock_open.side_effect = fake_open
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("Desconhecido XYZ", {"notes": "x"})
+        self.assertIn("❌", result)
+        self.assertIn("não encontrado", result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    @patch("sqlite3.connect", side_effect=Exception("no db"))
+    @patch("urllib.request.urlopen")
+    def test_level6_bridge_search_match(self, mock_urlopen, mock_connect, mock_open, mock_exists, mock_push):
+        """Nível 6: bridge /contacts/search retorna resultado."""
+        contacts = self._make_contacts()
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            m.write = lambda data: None
+            return m
+
+        mock_open.side_effect = fake_open
+
+        bridge_resp = json.dumps({
+            "results": [{"jid": "5511777777777@s.whatsapp.net", "name": "Isabel Alencar"}]
+        }).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = bridge_resp
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("Isabel", {"notes": "via bridge"})
+        self.assertIn("✅", result)
+
+    @patch("whatsapp_manager._push_personal_contacts_to_github")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("builtins.open")
+    def test_level1_phone_number_match(self, mock_open, mock_exists, mock_push):
+        """Nível 1: busca por número de telefone."""
+        contacts = self._make_contacts()
+
+        def fake_open(path, mode="r", **kwargs):
+            m = unittest.mock.mock_open(read_data=json.dumps(contacts))()
+            m.write = lambda data: None
+            return m
+
+        mock_open.side_effect = fake_open
+
+        from whatsapp_manager import _update_contact_fields
+        result = _update_contact_fields("5511777777777", {"notes": "via número"})
+        self.assertIn("✅", result)
+        self.assertIn("Isabel Alencar", result)
+
+
+class TestPendingContactUpdate(BaseWhatsAppManagerTest):
+    """Testes para o fluxo _pending_contact_update: não encontrado → pede número → aplica."""
+
+    def setUp(self):
+        super().setUp()
+        import whatsapp_manager
+        whatsapp_manager._pending_contact_update.clear()
+
+    def tearDown(self):
+        import whatsapp_manager
+        whatsapp_manager._pending_contact_update.clear()
+        super().tearDown()
+
+    @patch("whatsapp_manager._update_contact_fields", return_value="❌ Contato 'Maria' não encontrado em personal_contacts.json nem no histórico de mensagens.")
+    @patch("whatsapp_manager._extract_contact_name_via_llm", return_value="Maria")
+    @patch("whatsapp_manager._classify_contact_via_llm", return_value={
+        "relationship": "Parente", "manual_relationship": "Parente",
+        "name": "Maria", "nickname": None, "pet_name": None,
+        "notes": None, "product": None, "frequent_greeting": None,
+    })
+    @patch("urllib.request.urlopen")
+    def test_not_found_stores_pending_and_asks_phone(
+        self, mock_urlopen, mock_classify, mock_extract, mock_update
+    ):
+        """Quando contato não é encontrado, armazena pendência e pergunta o número."""
+        import whatsapp_manager
+
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = "5511999999999@s.whatsapp.net"
+        event.source.chat_id = "5511999999999@s.whatsapp.net"
+        event.text = "atualize a Maria, ela é minha parente"
+        event.has_media = False
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "sess_pending"
+        gateway._session_model_overrides = {}
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        pre_dispatch("pre_gateway_dispatch", {"event": event, "gateway": gateway})
+
+        sender_id = "5511999999999@s.whatsapp.net"
+        self.assertIn(sender_id, whatsapp_manager._pending_contact_update)
+        pending = whatsapp_manager._pending_contact_update[sender_id]
+        self.assertEqual(pending["name"], "Maria")
+
+    @patch("whatsapp_manager._update_contact_fields")
+    @patch("urllib.request.urlopen")
+    def test_phone_reply_resolves_pending(self, mock_urlopen, mock_update):
+        """Quando dono responde com número, pendência é aplicada e removida."""
+        import whatsapp_manager
+
+        sender_id = "5511999999999@s.whatsapp.net"
+        whatsapp_manager._pending_contact_update[sender_id] = {
+            "name": "Maria",
+            "fields": {"relationship": "Parente", "manual_relationship": "Parente", "name": "Maria"},
+        }
+        mock_update.return_value = "✅ Contato Maria atualizado."
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = sender_id
+        event.source.chat_id = sender_id
+        event.text = "5511888777666"
+        event.has_media = False
+
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "sess_resolve"
+        gateway._session_model_overrides = {}
+
+        res = pre_dispatch("pre_gateway_dispatch", {"event": event, "gateway": gateway})
+
+        self.assertEqual(res, {"action": "skip", "reason": "update-contact-pending"})
+        self.assertNotIn(sender_id, whatsapp_manager._pending_contact_update)
+        mock_update.assert_called()
+
+
+class TestFullSummaryFunctions(BaseWhatsAppManagerTest):
+    """Testes para _update_full_summary, _compress_full_summary e _sync_full_summaries."""
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_update_full_summary_returns_llm_result(self, mock_urlopen):
+        """_update_full_summary deve retornar texto do LLM."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "Jun/25: perguntou sobre preços."}]}}]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _update_full_summary
+        result = _update_full_summary(
+            name="Carlos",
+            existing_full_summary="",
+            new_session_text="quanto custa o serviço?",
+            session_date="Jun/25",
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("Jun/25", result)
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_update_full_summary_no_api_key_returns_none(self):
+        """Sem chave de API, _update_full_summary deve retornar None."""
+        from whatsapp_manager import _update_full_summary
+        result = _update_full_summary("Maria", "", "oi tudo bem", "Jun/25")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_compress_full_summary_returns_llm_result(self, mock_urlopen):
+        """_compress_full_summary deve retornar 1-2 frases do LLM."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "Carlos é cliente recorrente que busca suporte técnico."}]}}]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _compress_full_summary
+        long_summary = "Jun/25: " + ("x" * 300) + " Jul/25: " + ("y" * 300)
+        result = _compress_full_summary("Carlos", long_summary)
+        self.assertIsNotNone(result)
+        self.assertIn("Carlos", result)
+
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("whatsapp_manager._update_full_summary", return_value="Jun/25: pediu informações sobre produto.")
+    def test_sync_full_summaries_only_includes_user_role(self, mock_update_summary, mock_exists, mock_connect):
+        """_sync_full_summaries deve passar ao LLM apenas mensagens role=user (contato)."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = lambda s: mock_conn
+        mock_conn.__exit__ = MagicMock(return_value=False)
+
+        # Uma sessão nova para Carlos
+        mock_cursor.fetchall.side_effect = [
+            [(42, 1750000000.0, "sessão junho")],  # new_sessions
+            [
+                ("user", "preciso de suporte"),
+                ("assistant", "claro, como posso ajudar?"),
+                ("user", "problema no acesso"),
+                ("assistant", "vou verificar para você"),
+            ],  # messages da sessão
+        ]
+
+        personal_contacts = {
+            "5511888888888@s.whatsapp.net": {
+                "name": "Carlos",
+                "relationship": "Cliente",
+                "full_summary": "",
+                "last_summarized_at": 0,
+            }
+        }
+
+        from whatsapp_manager import _sync_full_summaries
+        count = _sync_full_summaries(personal_contacts, "/fake/state.db")
+
+        self.assertEqual(count, 1)
+
+        # Verificar que apenas mensagens role=user foram passadas ao LLM
+        call_kwargs = mock_update_summary.call_args
+        session_text = call_kwargs[1]["new_session_text"] if call_kwargs[1] else call_kwargs[0][2]
+        self.assertIn("preciso de suporte", session_text)
+        self.assertIn("problema no acesso", session_text)
+        # Respostas do bot NÃO devem aparecer
+        self.assertNotIn("claro, como posso ajudar", session_text)
+        self.assertNotIn("vou verificar para você", session_text)
+
+    @patch("pathlib.Path.exists", return_value=False)
+    def test_sync_full_summaries_no_state_db_returns_zero(self, mock_exists):
+        """Sem state.db, retorna 0 sem erros."""
+        from whatsapp_manager import _sync_full_summaries
+        result = _sync_full_summaries({"k": {"name": "X"}}, "/nonexistent/state.db")
+        self.assertEqual(result, 0)
+
+    @patch("sqlite3.connect")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("whatsapp_manager._update_full_summary", return_value=None)
+    def test_sync_full_summaries_skips_owner(self, mock_update, mock_exists, mock_connect):
+        """_sync_full_summaries não deve processar o número do owner."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = lambda s: mock_conn
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchall.return_value = []
+
+        owner_jid = "5511999999999@s.whatsapp.net"
+        personal_contacts = {
+            owner_jid: {"name": "André", "relationship": "Owner"},
+        }
+
+        from whatsapp_manager import _sync_full_summaries
+        _sync_full_summaries(personal_contacts, "/fake/state.db")
+        mock_update.assert_not_called()
+
+
+class TestExtractContactNameViaLLM(BaseWhatsAppManagerTest):
+    """Testes para _extract_contact_name_via_llm."""
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_returns_name_from_llm(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "Isabel Alencar"}]}}]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _extract_contact_name_via_llm
+        result = _extract_contact_name_via_llm("atualize a Isabel Alencar, ela é minha filha")
+        self.assertEqual(result, "Isabel Alencar")
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_returns_none_when_llm_says_none(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": "NONE"}]}}]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _extract_contact_name_via_llm
+        result = _extract_contact_name_via_llm("bom dia")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"})
+    def test_returns_none_when_name_too_long(self, mock_urlopen):
+        long_name = "A" * 65
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "candidates": [{"content": {"parts": [{"text": long_name}]}}]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from whatsapp_manager import _extract_contact_name_via_llm
+        result = _extract_contact_name_via_llm("alguma mensagem longa")
+        self.assertIsNone(result)
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_returns_none_without_api_keys(self):
+        from whatsapp_manager import _extract_contact_name_via_llm
+        result = _extract_contact_name_via_llm("atualize o Carlos")
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

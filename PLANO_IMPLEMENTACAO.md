@@ -1,19 +1,16 @@
 # Plano de Implementação — Hermes WhatsApp Manager
 
-**Data:** 2026-06-18  
-**Status:** Rascunho / Aprovação pendente  
-**Escopo:** Performance + Integração Chatwoot
+**Data:** 2026-06-18 | **Atualizado:** 2026-06-22  
+**Status:** Em andamento (Eixo A parcialmente implementado; Eixo B cancelado)  
+**Escopo:** Performance
 
 ---
 
 ## Visão geral
 
-Este documento consolida dois eixos de evolução identificados na análise técnica:
+Este documento consolida o eixo de performance identificado na análise técnica.
 
-1. **Eixo A — Performance**: eliminação de gargalos no caminho crítico de cada mensagem
-2. **Eixo B — Chatwoot**: exportação automática de leads qualificados para o CRM
-
-Os eixos são **independentes** e podem ser implementados em paralelo ou em sequência, conforme prioridade.
+> **Nota:** O Eixo B (Integração Chatwoot) foi cancelado. Nenhuma das fases B1-B4 foi implementada.
 
 ---
 
@@ -67,7 +64,7 @@ Invalidar explicitamente ao final de `_pull_and_merge_configurations()`.
 
 ---
 
-### Fase A2 — Mover live classification para background
+### Fase A2 — Mover live classification para background ✅ IMPLEMENTADO
 **Prioridade:** Crítica | **Esforço estimado:** 3-4h
 
 Resolve P3. Elimina a janela de 0-45s de delay visível para o usuário na primeira mensagem ou após cooldown expirar.
@@ -228,12 +225,9 @@ with ThreadPoolExecutor(max_workers=5) as ex:
 
 `max_workers=5` para não exceder rate limits das APIs LLM. Tornar configurável via env var `WHATSAPP_SYNC_LLM_WORKERS`.
 
-**A6.2 — Rodar sync do boot em thread separada**
+**A6.2 — ~~Rodar sync do boot em thread separada~~** ✅ IMPLEMENTADO (diferente do previsto)
 
-O sync do boot (linha 2496) é chamado síncronamente no `register()`, bloqueando a inicialização do plugin. Mover para uma thread daemon:
-```python
-threading.Thread(target=_sync_contacts_from_db_internal, kwargs={"force": True}, daemon=True).start()
-```
+O sync do boot foi **removido completamente** — o plugin não faz sync automático na inicialização. Sync ocorre apenas via chat (`sync contacts`) ou no intervalo periódico (`WHATSAPP_SYNC_INTERVAL_HOURS`). A thread daemon `_run_sync_in_background` já está implementada para execuções sob demanda.
 
 **Critério de conclusão:** sync de 50 contatos completa em menos de 2 minutos (vs. potenciais 37min anteriores).
 
@@ -265,9 +259,11 @@ No `_run_periodic_sync`, a verificação de mtime do `personal_contacts.json` po
 
 ---
 
-## Eixo B — Integração Chatwoot
+## ~~Eixo B — Integração Chatwoot~~ (CANCELADO)
 
-### Fase B1 — Infraestrutura e configuração
+> Nenhuma das fases abaixo foi implementada. Removido do roadmap.
+
+### ~~Fase B1 — Infraestrutura e configuração~~
 **Prioridade:** Alta | **Esforço estimado:** 1-2h
 
 **Arquivos afetados:** `whatsapp_manager.py` (classe `PluginConfig`)
@@ -435,16 +431,12 @@ for field in ["chatwoot_exported", "chatwoot_conversation_id"]:
 ## Dependências entre fases
 
 ```
-A1 ──────────────────────────────────────────────── A2
+A1 ──────────────────────────────────────────────── A2 (✅ implementado)
 A1 ──────────────────────────────────────────────── A6
 A3 (independente)
 A4 (independente)
 A5 (independente)
 A7 (independente, pode ser feito a qualquer momento)
-
-B1 → B2 → B3 → B4
-B3 depende de A1 (para invalidar cache após export)
-B3 depende de A2 (export dispara junto com live classification em background)
 ```
 
 ---
@@ -453,11 +445,10 @@ B3 depende de A2 (export dispara junto com live classification em background)
 
 | Sprint | Fases | Justificativa |
 |---|---|---|
-| 1 | A1, A2, A3 | Maior impacto na latência percebida pelo usuário; baixo risco |
-| 2 | A4, A6 | Elimina HTTP desnecessário e lentidão no boot |
-| 3 | B1, B2, B3 | Chatwoot: infraestrutura + core da integração |
-| 4 | A5 | Mídia em background (maior complexidade de integração) |
-| 5 | A7, B4 | Otimizações menores + export batch histórico |
+| 1 | A1, ~~A2~~, A3 | A2 já implementado; A1 e A3 eliminam I/O síncrono |
+| 2 | A4, A6 | Elimina HTTP desnecessário |
+| 3 | A5 | Mídia em background (maior complexidade) |
+| 4 | A7 | Otimizações menores |
 
 ---
 
@@ -469,8 +460,6 @@ B3 depende de A2 (export dispara junto com live classification em background)
 | Live classification em background pode usar dados desatualizados como base | A2 | Aceito: a resposta imediata usa dados existentes; próxima mensagem já tem classificação nova |
 | Thread race condition: duas threads tentam gravar `personal_contacts.json` ao mesmo tempo | A2, B3 | Usar `threading.Lock()` em torno do `json.dump` |
 | `ThreadPoolExecutor` no sync sobrecarrega API LLM | A6 | `max_workers=5` + env var configurável; implementar retry com backoff exponencial |
-| Campos `chatwoot_*` perdidos após merge remoto do GitHub | B3 | Regra explícita de preservação nos dois pontos de merge (B3.3) |
-| Conversas duplicadas no Chatwoot se `chatwoot_exported` não for salvo antes da thread concluir | B3 | `_export_lead_to_chatwoot` deve ser atômica: marcar como exportado **antes** de chamar a API, reverter em caso de falha |
 
 ---
 
@@ -478,11 +467,6 @@ B3 depende de A2 (export dispara junto com live classification em background)
 
 | Variável | Default | Fase |
 |---|---|---|
-| `CHATWOOT_URL` | `""` | B1 |
-| `CHATWOOT_API_TOKEN` | `""` | B1 |
-| `CHATWOOT_ACCOUNT_ID` | `""` | B1 |
-| `CHATWOOT_INBOX_ID` | `""` | B1 |
-| `CHATWOOT_EXPORT_ENABLED` | `false` | B1 |
 | `WHATSAPP_SYNC_LLM_WORKERS` | `5` | A6 |
 
 ---
@@ -490,7 +474,6 @@ B3 depende de A2 (export dispara junto com live classification em background)
 ## Critério global de conclusão
 
 - Latência de `pre_llm_call` para contatos já conhecidos: < 50ms (sem I/O de disco ou HTTP)
-- Primeira mensagem de contato novo: sem delay extra visível (classificação em background)
-- Boot do plugin: completo em < 5s (sync em background, downloads em paralelo)
-- Contatos classificados como "Cliente": exportados automaticamente no Chatwoot sem duplicatas
+- Primeira mensagem de contato novo: sem delay extra visível (classificação em background) ✅
+- Boot do plugin: completo em < 5s (sem sync no boot) ✅
 - Cobertura de testes: novas funções com mocks para HTTP e I/O de disco
