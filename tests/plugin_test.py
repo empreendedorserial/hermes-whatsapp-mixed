@@ -2797,11 +2797,12 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
         def fetchall_side_effect():
             call_count = mock_cursor.fetchall.call_count
             if call_count == 1:
-                return [(cid,) for cid in chat_ids]
+                return [(cid, 0) for cid in chat_ids]
             # Para as chamadas subsequentes, retorna mensagens do último chat_id executado
             last_args = mock_cursor.execute.call_args_list[-1]
             chat_id = last_args[0][1][0] if last_args[0][1] else None
-            return [(m,) for m in messages_by_chat.get(chat_id, [])]
+            # Retorna (body, timestamp, contact_msg) conforme nova query de diálogo
+            return [(m, 1700000000, None) for m in messages_by_chat.get(chat_id, [])]
 
         mock_cursor.fetchall.side_effect = fetchall_side_effect
         return mock_conn
@@ -2867,7 +2868,7 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             call_counts["n"] += 1
             if call_counts["n"] == 1:
                 return [("5511111111111@s.whatsapp.net",)]
-            return [(bot_reply,), (manual_msg,)]
+            return [(bot_reply, 1700000000, None), (manual_msg, 1700000001, None)]
 
         bridge_cur.fetchall.side_effect = fetchall_bridge
 
@@ -2881,7 +2882,8 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
 
         if "Cliente" in result:
-            self.assertNotIn(bot_reply, result["Cliente"])
+            andres = [item["andre"] if isinstance(item, dict) else item for item in result["Cliente"]]
+            self.assertNotIn(bot_reply, andres)
 
     def test_filters_media_messages(self):
         personal_contacts = {
@@ -2900,8 +2902,9 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
 
         if "Parente" in result:
-            for msg in result["Parente"]:
-                self.assertNotIn("omitted", msg.lower())
+            for item in result["Parente"]:
+                text = item["andre"] if isinstance(item, dict) else item
+                self.assertNotIn("omitted", text.lower())
 
     def test_returns_empty_when_db_missing(self):
         with patch("whatsapp_manager.Path", side_effect=self._path_factory(bridge_exists=False, state_exists=False)):

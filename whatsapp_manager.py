@@ -1716,27 +1716,40 @@ def _collect_andre_messages_by_relationship(
                     # Relacionamento conhecido → agrupa por tipo; desconhecido → grupo "Geral"
                     rel = phone_to_rel.get(phone_norm, "Geral")
 
+                    # Buscar diálogos: mensagem do contato + resposta do André
                     cur.execute(
                         """
-                        SELECT body FROM messages
-                        WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot') AND chat_id=?
-                        AND timestamp >= ?
-                        AND body IS NOT NULL AND length(trim(body)) > 1
-                        AND body NOT LIKE '<Media omitted>%'
-                        AND body NOT LIKE '[image received]%'
-                        AND body NOT LIKE '[audio received]%'
-                        AND body NOT LIKE '[video received]%'
-                        AND body NOT LIKE '[sticker received]%'
-                        AND body NOT LIKE '[document received]%'
-                        AND length(body) <= 300
-                        ORDER BY timestamp DESC LIMIT ?
+                        SELECT m.body, m.timestamp,
+                               (SELECT body FROM messages
+                                WHERE chat_id=? AND from_me=0 AND timestamp < m.timestamp
+                                AND body IS NOT NULL AND length(trim(body)) > 1
+                                AND body NOT LIKE '<Media omitted>%'
+                                AND length(body) <= 300
+                                ORDER BY timestamp DESC LIMIT 1) as contact_msg
+                        FROM messages m
+                        WHERE m.from_me=1 AND (m.sender_name IS NULL OR m.sender_name != 'Bot') AND m.chat_id=?
+                        AND m.timestamp >= ?
+                        AND m.body IS NOT NULL AND length(trim(m.body)) > 1
+                        AND m.body NOT LIKE '<Media omitted>%'
+                        AND m.body NOT LIKE '[image received]%'
+                        AND m.body NOT LIKE '[audio received]%'
+                        AND m.body NOT LIKE '[video received]%'
+                        AND m.body NOT LIKE '[sticker received]%'
+                        AND m.body NOT LIKE '[document received]%'
+                        AND length(m.body) <= 300
+                        ORDER BY m.timestamp DESC LIMIT ?
                         """,
-                        (chat_id, cutoff_ts, 100),
+                        (chat_id, chat_id, cutoff_ts, 100),
                     )
-                    msgs = [
-                        row[0] for row in cur.fetchall()
-                        if not any(row[0].lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES)
-                    ]
+                    msgs = []
+                    for row in cur.fetchall():
+                        andre_msg, _, contact_msg = row
+                        if any(andre_msg.lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES):
+                            continue
+                        if contact_msg:
+                            msgs.append({"contact": contact_msg, "andre": andre_msg})
+                        else:
+                            msgs.append({"contact": None, "andre": andre_msg})
                     if msgs:
                         total_manual += len(msgs)
                         result.setdefault(rel, []).extend(msgs)
@@ -1780,9 +1793,16 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
     ]
     for rel, msgs in messages_by_relationship.items():
         lines.append(f"### {rel}")
-        lines.append("**Exemplos reais de mensagens do André:**")
-        for msg in msgs:
-            lines.append(f'- "{msg}"')
+        lines.append("**Exemplos reais de diálogos do André:**")
+        for item in msgs:
+            if isinstance(item, dict):
+                if item.get("contact"):
+                    lines.append(f'- **Contato:** "{item["contact"]}"')
+                    lines.append(f'  **André:** "{item["andre"]}"')
+                else:
+                    lines.append(f'- **André:** "{item["andre"]}"')
+            else:
+                lines.append(f'- **André:** "{item}"')
         lines.append("")
 
     return "\n".join(lines)
@@ -1799,8 +1819,16 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
 
     sections = []
     for rel, msgs in messages_by_relationship.items():
-        sample = "\n".join(f'- "{m}"' for m in msgs[:30])
-        sections.append(f"### {rel} ({len(msgs)} mensagens)\n{sample}")
+        lines = []
+        for item in msgs[:30]:
+            if isinstance(item, dict):
+                if item.get("contact"):
+                    lines.append(f'- Contato: "{item["contact"]}" → André: "{item["andre"]}"')
+                else:
+                    lines.append(f'- André: "{item["andre"]}"')
+            else:
+                lines.append(f'- André: "{item}"')
+        sections.append(f"### {rel} ({len(msgs)} diálogos)\n" + "\n".join(lines))
 
     mensagens_block = "\n\n".join(sections)
 
@@ -1822,10 +1850,10 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
         "**Padrões identificados:**\n"
         "- [padrão 1]\n"
         "- [padrão 2]\n\n"
-        "**Exemplos reais (TODAS as mensagens fornecidas, copiadas literalmente):**\n"
-        '- "mensagem 1"\n'
-        '- "mensagem 2"\n'
-        '- "..."\n\n'
+        "**Exemplos reais de diálogos (copiados literalmente):**\n"
+        '- **Contato:** "pergunta do contato"\n'
+        '  **André:** "resposta do André"\n'
+        '- **André:** "mensagem sem contexto"\n\n'
         "[repita para cada grupo]\n\n"
         "---\n\n"
         "MENSAGENS POR RELACIONAMENTO:\n\n"
