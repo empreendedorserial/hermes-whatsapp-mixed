@@ -4012,11 +4012,8 @@ def pre_gateway_dispatch(*args, **kwargs):
                 )
                 # Permitir apenas campos que fazem sentido em updates manuais
                 # tone/guidelines/summary/intent/frequency só devem vir do histórico real
-                owner_update_fields = {"name", "relationship", "manual_relationship", "nickname", "pet_name", "notes", "product", "frequent_greeting"}
+                owner_update_fields = {"relationship", "manual_relationship", "nickname", "pet_name", "product", "frequent_greeting"}
                 fields_to_update = {k: v for k, v in extracted.items() if k in owner_update_fields and v is not None}
-
-                # Garantir que o nome completo extraído pela LLM seja usado (não encurtado pelo classificador)
-                fields_to_update["name"] = nl_contact_name
 
                 # Garantir manual_relationship quando relationship for definido pelo owner
                 if "relationship" in fields_to_update and "manual_relationship" not in fields_to_update:
