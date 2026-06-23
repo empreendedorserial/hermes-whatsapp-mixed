@@ -1728,6 +1728,7 @@ def _collect_andre_messages_by_relationship(
                         AND body NOT LIKE '[video received]%'
                         AND body NOT LIKE '[sticker received]%'
                         AND body NOT LIKE '[document received]%'
+                        AND length(body) <= 300
                         ORDER BY timestamp DESC LIMIT ?
                         """,
                         (chat_id, cutoff_ts, 100),
