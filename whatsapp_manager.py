@@ -2002,9 +2002,9 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
         "- [padrão 1]\n"
         "- [padrão 2]\n\n"
         "**Exemplos reais de diálogos (copiados literalmente):**\n"
-        '- **Contato:** "pergunta do contato"\n'
-        '  **André:** "resposta do André"\n'
-        '- **André:** "mensagem sem contexto"\n\n'
+        '- **[nome do contato]:** "pergunta do contato"\n'
+        '  **André → [nome do contato]:** "resposta do André"\n'
+        '- **André → [nome do contato]:** "mensagem sem contexto do contato"\n\n'
         "[repita para cada grupo]\n\n"
         "---\n\n"
         "MENSAGENS POR RELACIONAMENTO:\n\n"
