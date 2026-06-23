@@ -3308,11 +3308,16 @@ def pre_gateway_dispatch(*args, **kwargs):
     _owner_phone_clean = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
     _is_real_self_chat = _normalize_brazilian_phone(_chat_phone) == _normalize_brazilian_phone(_owner_phone_clean)
     if _is_from_me and not _is_group and not _is_real_self_chat and chat_id:
+        _ts = getattr(event, "timestamp", None)
+        if hasattr(_ts, "timestamp"):
+            _ts = int(_ts.timestamp())
+        else:
+            _ts = int(_ts) if _ts else int(time.time())
         _persist_owner_message_to_db(
             chat_id=chat_id,
             message_id=media_info.get("message_id") or "",
             body=(event.text or "").strip(),
-            timestamp=int(getattr(event, "timestamp", None) or time.time()),
+            timestamp=_ts,
             sender_name="André Alencar",
         )
 
