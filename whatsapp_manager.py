@@ -2054,13 +2054,17 @@ def _collect_andre_messages_by_relationship(
 
                     msgs = []
                     used_contact_ts: set = set()
+                    used_contact_bodies: set = set()
                     for andre_msg, ts in andre_rows:
                         if any(andre_msg.lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES):
                             continue
-                        # Mensagem do contato mais próxima dentro de 24h (cada uma usada uma vez)
+                        # Mensagem do contato mais próxima dentro de 24h
+                        # (cada timestamp e cada conteúdo usado uma única vez)
                         candidates = sorted(
                             ((abs(cts - ts), cts, cb) for cb, cts in contact_rows
-                             if abs(cts - ts) <= 86400 and cts not in used_contact_ts),
+                             if abs(cts - ts) <= 86400
+                             and cts not in used_contact_ts
+                             and " ".join(cb.split()) not in used_contact_bodies),
                             key=lambda x: x[0],
                         )
                         contact_msg = None
@@ -2068,6 +2072,7 @@ def _collect_andre_messages_by_relationship(
                             _, nearest_cts, nearest_cb = candidates[0]
                             contact_msg = " ".join(nearest_cb.split())
                             used_contact_ts.add(nearest_cts)
+                            used_contact_bodies.add(contact_msg)
                         msgs.append({"contact": contact_msg, "andre": andre_msg, "contact_name": contact_name})
                     if msgs:
                         total_manual += len(msgs)

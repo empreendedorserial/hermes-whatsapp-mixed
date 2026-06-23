@@ -236,22 +236,27 @@ def main():
 
             msgs = []
             used_contact_ts = set()
+            used_contact_bodies = set()
             for body, ts in andre_msgs:
                 body_clean = sanitize(body)
                 if not body_clean:
                     log(f"  ⚠️  filtrado (sensível): {body[:50]}")
                     continue
-                # Mensagem do contato mais próxima dentro de 24h (cada uma usada uma vez)
+                # Mensagem do contato mais próxima dentro de 24h
+                # (cada timestamp e cada conteúdo usado uma única vez)
                 candidates = sorted(
                     ((abs(cts - ts), cts, cb) for cb, cts in contact_msgs
-                     if abs(cts - ts) <= 86400 and cts not in used_contact_ts),
+                     if abs(cts - ts) <= 86400
+                     and cts not in used_contact_ts
+                     and " ".join(cb.split()) not in used_contact_bodies),
                     key=lambda x: x[0],
                 )
                 contact_msg = None
                 if candidates:
                     _, nearest_cts, nearest_cb = candidates[0]
-                    contact_msg = " ".join(nearest_cb.split())  # normaliza espaços/quebras
+                    contact_msg = " ".join(nearest_cb.split())
                     used_contact_ts.add(nearest_cts)
+                    used_contact_bodies.add(contact_msg)
                 msgs.append({"contact": contact_msg, "andre": body_clean})
 
             if not msgs:
