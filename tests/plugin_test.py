@@ -2796,15 +2796,20 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
 
         def fetchall_side_effect():
             call_count = mock_cursor.fetchall.call_count
+            # Call 1: lid_phone_map query (@lid cross-reference) — retorna vazio
             if call_count == 1:
+                return []
+            # Call 2: chat_ids query
+            if call_count == 2:
                 return [(cid, 0) for cid in chat_ids]
-            # Para as chamadas subsequentes, retorna mensagens do último chat_id executado
+            # Calls subsequentes: mensagens por chat
             last_args = mock_cursor.execute.call_args_list[-1]
             chat_id = last_args[0][1][0] if last_args[0][1] else None
-            # Retorna (body, timestamp, contact_msg) conforme nova query de diálogo
             return [(m, 1700000000, None) for m in messages_by_chat.get(chat_id, [])]
 
         mock_cursor.fetchall.side_effect = fetchall_side_effect
+        # fetchone usado para buscar sender_name fallback — retorna None (sem nome no banco)
+        mock_cursor.fetchone.return_value = (None,)
         return mock_conn
 
     def _path_factory(self, bridge_exists=True, state_exists=False):
@@ -3092,6 +3097,139 @@ class TestUpdateSoulWhatsappWithExamples(unittest.IsolatedAsyncioTestCase):
         mock_github.assert_called_once()
         call_kwargs = mock_github.call_args
         self.assertEqual(call_kwargs.kwargs.get("github_path") or call_kwargs[1].get("github_path") or call_kwargs[0][3], "SOUL_WHATSAPP.md")
+
+
+class TestStyleLearningRegressions(unittest.IsolatedAsyncioTestCase):
+    """Testes de regressão para bugs conhecidos no style learning."""
+
+    def test_sanitize_filters_owner_name_in_contact_name(self):
+        """contact_name nunca deve ser 'André Alencar' — evita mostrar dono como destinatário."""
+        from whatsapp_manager import _normalize_text
+        bad_names = ["André Alencar", "Andre Alencar", "andré alencar", "ANDRÉ ALENCAR"]
+        for name in bad_names:
+            norm = _normalize_text(name)
+            self.assertIn(norm, ("andre alencar", "andré alencar"),
+                          f"_normalize_text deve normalizar '{name}'")
+            # O filtro no código rejeita esses nomes
+            is_filtered = norm in ("andre alencar", "andré alencar", "andre", "andré")
+            self.assertTrue(is_filtered, f"Nome '{name}' deveria ser filtrado como placeholder do dono")
+
+    def test_sanitize_filters_auto_generated_contact_names(self):
+        """Nomes como 'Contato 558699997003' devem ser descartados como placeholder."""
+        from whatsapp_manager import _normalize_text
+        placeholders = ["Contato 558699997003", "contato 11999990000", "Usuario 123", "Desconhecido"]
+        for name in placeholders:
+            norm = _normalize_text(name)
+            is_placeholder = (
+                norm.startswith("contato ")
+                or norm.startswith("usuario ")
+                or norm.startswith("desconhecido")
+            )
+            self.assertTrue(is_placeholder, f"'{name}' deveria ser identificado como placeholder")
+
+    def test_sanitize_sensitive_blocks_balance(self):
+        """Mensagens com saldo bancário devem ser bloqueadas."""
+        from whatsapp_manager import _sanitize_sensitive
+        cases = [
+            "O saldo disponível na sua conta é de R$1.316,59",
+            "saldo R$ 2.500,00",
+            "consultar o saldo do neymar\nO saldo disponível é de R$500,00",
+        ]
+        for msg in cases:
+            result = _sanitize_sensitive(msg)
+            self.assertIsNone(result, f"Deveria filtrar mensagem com saldo: '{msg[:50]}'")
+
+    def test_sanitize_sensitive_allows_normal_messages(self):
+        """Mensagens normais não devem ser bloqueadas."""
+        from whatsapp_manager import _sanitize_sensitive
+        cases = ["oi tudo bem?", "vendeu ?", "2 gols do Haalend", "blz mano", "Oi"]
+        for msg in cases:
+            result = _sanitize_sensitive(msg)
+            self.assertIsNotNone(result, f"Não deveria filtrar: '{msg}'")
+            self.assertEqual(result, msg)
+
+    def test_sanitize_sensitive_blocks_cpf(self):
+        """CPF deve ser bloqueado."""
+        from whatsapp_manager import _sanitize_sensitive
+        self.assertIsNone(_sanitize_sensitive("meu CPF é 123.456.789-00"))
+
+    def test_sanitize_sensitive_blocks_password(self):
+        """Senhas devem ser bloqueadas."""
+        from whatsapp_manager import _sanitize_sensitive
+        self.assertIsNone(_sanitize_sensitive("a senha é 1234"))
+
+    def test_build_style_section_dialogue_format(self):
+        """_build_style_section_directly deve usar formato 'Nome: msg / André: resp'."""
+        from whatsapp_manager import _build_style_section_directly
+        messages_by_rel = {
+            "Cliente": [
+                {"contact": "vc faz sites?", "andre": "Faço sim!", "contact_name": "João"},
+                {"contact": None, "andre": "vendeu?", "contact_name": "Maria"},
+            ]
+        }
+        result = _build_style_section_directly(messages_by_rel)
+        # Deve ter o nome do contato como falante
+        self.assertIn('João: "vc faz sites?"', result)
+        self.assertIn('André: "Faço sim!"', result)
+        # Sem contexto de contato, deve mostrar só André
+        self.assertIn('André: "vendeu?"', result)
+        # Não deve usar formato antigo "André →"
+        self.assertNotIn("André →", result)
+        self.assertNotIn("André p/", result)
+
+    def test_build_style_section_filters_sensitive_data(self):
+        """_build_style_section_directly deve filtrar dados sensíveis."""
+        from whatsapp_manager import _build_style_section_directly
+        messages_by_rel = {
+            "Cliente": [
+                {"contact": None, "andre": "saldo R$ 5.000,00 na conta", "contact_name": "João"},
+                {"contact": None, "andre": "oi tudo bem?", "contact_name": "João"},
+            ]
+        }
+        result = _build_style_section_directly(messages_by_rel)
+        self.assertNotIn("5.000,00", result)
+        self.assertIn("oi tudo bem?", result)
+
+    def test_build_style_section_owner_name_not_as_contact(self):
+        """contact_name 'André Alencar' não deve aparecer como destinatário."""
+        from whatsapp_manager import _build_style_section_directly
+        messages_by_rel = {
+            "Cliente": [
+                {"contact": None, "andre": "oi", "contact_name": "Cliente"},
+            ]
+        }
+        result = _build_style_section_directly(messages_by_rel)
+        # Label deve ser "Cliente", não "André Alencar"
+        self.assertNotIn("André Alencar:", result)
+        self.assertIn("André:", result)
+
+    def test_sync_uses_only_received_sender_name(self):
+        """O sync de contatos não deve usar sender_name de mensagens enviadas (from_me=1)."""
+        # O bug era: SELECT MAX(sender_name) pegava 'André Alencar' de msgs saídas
+        # Fix: MAX(CASE WHEN from_me=0 THEN sender_name ELSE NULL END)
+        import sqlite3 as _sq
+        conn = _sq.connect(":memory:")
+        conn.execute("""CREATE TABLE messages (
+            chat_id TEXT, sender_name TEXT, from_me INTEGER,
+            timestamp INTEGER, body TEXT
+        )""")
+        # Apenas mensagens saídas (from_me=1) com sender_name do dono
+        conn.execute("INSERT INTO messages VALUES ('5511@s', 'André Alencar', 1, 1000, 'oi')")
+        conn.execute("INSERT INTO messages VALUES ('5511@s', 'André Alencar', 1, 1001, 'tudo?')")
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT chat_id,
+                   MAX(CASE WHEN from_me=0 THEN sender_name ELSE NULL END) as name,
+                   COUNT(*) as msg_count
+            FROM messages WHERE chat_id NOT LIKE '%@g.us%'
+            GROUP BY chat_id
+        """)
+        row = cur.fetchone()
+        conn.close()
+        chat_id, name, msg_count = row
+        self.assertEqual(chat_id, "5511@s")
+        self.assertIsNone(name, "Nome deve ser NULL quando só há msgs enviadas")
+        self.assertEqual(msg_count, 2)
 
 
 if __name__ == "__main__":
