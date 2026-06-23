@@ -2020,41 +2020,50 @@ def _collect_andre_messages_by_relationship(
                     if contact_name is None:
                         contact_name = phone_to_name.get(phone_norm, rel)
 
-                    # Buscar diálogos: mensagem do contato + resposta do André
+                    # Buscar mensagens do André
                     cur.execute(
                         """
-                        SELECT m.body, m.timestamp,
-                               (SELECT cm.body FROM messages AS cm
-                                WHERE cm.chat_id=? AND cm.from_me=0
-                                AND cm.body IS NOT NULL AND length(trim(cm.body)) > 1
-                                AND cm.body NOT LIKE '<Media omitted>%'
-                                AND length(cm.body) <= 300
-                                AND ABS(cm.timestamp - m.timestamp) <= 86400
-                                ORDER BY ABS(cm.timestamp - m.timestamp) ASC LIMIT 1) as contact_msg
-                        FROM messages m
-                        WHERE m.from_me=1 AND (m.sender_name IS NULL OR m.sender_name != 'Bot') AND m.chat_id=?
-                        AND m.timestamp >= ?
-                        AND m.body IS NOT NULL AND length(trim(m.body)) > 1
-                        AND m.body NOT LIKE '<Media omitted>%'
-                        AND m.body NOT LIKE '[image received]%'
-                        AND m.body NOT LIKE '[audio received]%'
-                        AND m.body NOT LIKE '[video received]%'
-                        AND m.body NOT LIKE '[sticker received]%'
-                        AND m.body NOT LIKE '[document received]%'
-                        AND length(m.body) <= 300
-                        ORDER BY m.timestamp DESC LIMIT ?
+                        SELECT body, timestamp FROM messages
+                        WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot')
+                        AND chat_id=? AND timestamp >= ?
+                        AND body IS NOT NULL AND length(trim(body)) > 1
+                        AND body NOT LIKE '<Media omitted>%'
+                        AND body NOT LIKE '[image received]%'
+                        AND body NOT LIKE '[audio received]%'
+                        AND body NOT LIKE '[video received]%'
+                        AND body NOT LIKE '[sticker received]%'
+                        AND body NOT LIKE '[document received]%'
+                        AND length(body) <= 300
+                        ORDER BY timestamp DESC LIMIT ?
                         """,
-                        (chat_id, chat_id, cutoff_ts, 100),
+                        (chat_id, cutoff_ts, 100),
                     )
+                    andre_rows = cur.fetchall()
+
+                    # Buscar mensagens do contato (janela estendida para pegar respostas)
+                    cur.execute(
+                        """
+                        SELECT body, timestamp FROM messages
+                        WHERE from_me=0 AND chat_id=? AND timestamp >= ?
+                        AND body IS NOT NULL AND length(trim(body)) > 1
+                        AND body NOT LIKE '<Media omitted>%' AND length(body) <= 300
+                        """,
+                        (chat_id, cutoff_ts - 86400),
+                    )
+                    contact_rows = cur.fetchall()
+
                     msgs = []
-                    for row in cur.fetchall():
-                        andre_msg, _, contact_msg = row
+                    for andre_msg, ts in andre_rows:
                         if any(andre_msg.lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES):
                             continue
-                        if contact_msg:
-                            msgs.append({"contact": contact_msg, "andre": andre_msg, "contact_name": contact_name})
-                        else:
-                            msgs.append({"contact": None, "andre": andre_msg, "contact_name": contact_name})
+                        # Mensagem do contato mais próxima dentro de 24h (antes ou depois)
+                        nearest = min(
+                            ((abs(cts - ts), cb) for cb, cts in contact_rows if abs(cts - ts) <= 86400),
+                            key=lambda x: x[0],
+                            default=(None, None),
+                        )
+                        contact_msg = nearest[1] if nearest[0] is not None else None
+                        msgs.append({"contact": contact_msg, "andre": andre_msg, "contact_name": contact_name})
                     if msgs:
                         total_manual += len(msgs)
                         result.setdefault(rel, []).extend(msgs)

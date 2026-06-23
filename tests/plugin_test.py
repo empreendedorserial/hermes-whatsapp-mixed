@@ -2803,10 +2803,14 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             # Call 2: chat_ids query
             if call_count == 2:
                 return [(cid, 0) for cid in chat_ids]
-            # Calls subsequentes: mensagens por chat
+            # Calls subsequentes: duas por chat (André messages + contact messages)
             last_args = mock_cursor.execute.call_args_list[-1]
-            chat_id = last_args[0][1][0] if last_args[0][1] else None
-            return [(m, 1700000000, None) for m in messages_by_chat.get(chat_id, [])]
+            last_sql = last_args[0][0] if last_args[0] else ""
+            last_params = last_args[0][1] if len(last_args[0]) > 1 else (last_args[1] or {})
+            chat_id = last_params[0] if last_params else None
+            if "from_me=0" in last_sql:
+                return []  # sem mensagens do contato nos testes
+            return [(m, 1700000000) for m in messages_by_chat.get(chat_id, [])]
 
         mock_cursor.fetchall.side_effect = fetchall_side_effect
         return mock_conn

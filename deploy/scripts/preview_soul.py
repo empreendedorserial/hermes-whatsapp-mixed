@@ -215,29 +215,38 @@ def main():
             rel, contact_name = lookup_contact(chat_id, lid_phone_map, raw_to_rel, raw_to_name, phone_to_rel, phone_to_name)
 
             cur.execute("""
-                SELECT m.body, m.timestamp,
-                       (SELECT cm.body FROM messages AS cm
-                        WHERE cm.chat_id=? AND cm.from_me=0
-                        AND cm.body IS NOT NULL AND length(trim(cm.body)) > 1
-                        AND cm.body NOT LIKE '<Media omitted>%' AND length(cm.body) <= 300
-                        AND ABS(cm.timestamp - m.timestamp) <= 86400
-                        ORDER BY ABS(cm.timestamp - m.timestamp) ASC LIMIT 1) as contact_msg
-                FROM messages m
-                WHERE m.from_me=1 AND (m.sender_name IS NULL OR m.sender_name != 'Bot')
-                AND m.chat_id=? AND m.timestamp >= ?
-                AND m.body IS NOT NULL AND length(trim(m.body)) > 1
-                AND m.body NOT LIKE '<Media omitted>%'
-                AND m.body NOT LIKE '[%'
-                AND length(m.body) <= 300
-                ORDER BY m.timestamp DESC LIMIT 20
-            """, (chat_id, chat_id, cutoff))
+                SELECT body, timestamp FROM messages
+                WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot')
+                AND chat_id=? AND timestamp >= ?
+                AND body IS NOT NULL AND length(trim(body)) > 1
+                AND body NOT LIKE '<Media omitted>%'
+                AND body NOT LIKE '[%'
+                AND length(body) <= 300
+                ORDER BY timestamp DESC LIMIT 20
+            """, (chat_id, cutoff))
+            andre_msgs = cur.fetchall()
+
+            cur.execute("""
+                SELECT body, timestamp FROM messages
+                WHERE from_me=0 AND chat_id=? AND timestamp >= ?
+                AND body IS NOT NULL AND length(trim(body)) > 1
+                AND body NOT LIKE '<Media omitted>%' AND length(body) <= 300
+            """, (chat_id, cutoff - 86400))
+            contact_msgs = cur.fetchall()
 
             msgs = []
-            for body, ts, contact_msg in cur.fetchall():
+            for body, ts in andre_msgs:
                 body_clean = sanitize(body)
                 if not body_clean:
                     log(f"  ⚠️  filtrado (sensível): {body[:50]}")
                     continue
+                # Encontrar a mensagem do contato mais próxima (dentro de 24h)
+                nearest = min(
+                    ((abs(cts - ts), cb) for cb, cts in contact_msgs if abs(cts - ts) <= 86400),
+                    key=lambda x: x[0],
+                    default=(None, None),
+                )
+                contact_msg = nearest[1] if nearest[0] is not None else None
                 msgs.append({"contact": contact_msg, "andre": body_clean})
 
             if not msgs:
