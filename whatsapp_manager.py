@@ -1697,15 +1697,28 @@ def _collect_andre_messages_by_relationship(
         result: dict[str, list[str]] = {}
 
         if use_bridge:
-            # sender_name='Bot' = mensagens automáticas do bot.
-            # sender_name='André Alencar' ou LID = mensagens digitadas manualmente pelo André.
-            # Coleta de TODOS os chats (não só os classificados) para maximizar o volume.
             owner_phone = _normalize_brazilian_phone(
                 "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
             )
 
             with sqlite3.connect(str(bridge_db)) as conn:
                 cur = conn.cursor()
+
+                # Cross-reference @lid → telefone real via sender_id das mensagens recebidas
+                cur.execute("""
+                    SELECT DISTINCT chat_id, sender_id FROM messages
+                    WHERE from_me=0 AND chat_id LIKE '%@lid%'
+                    AND sender_id IS NOT NULL
+                    AND sender_id NOT LIKE '%@lid%'
+                    AND sender_id NOT LIKE '%@g.us%'
+                """)
+                lid_phone_map: dict[str, str] = {}
+                for _cid, _sid in cur.fetchall():
+                    _lid = _cid.split("@")[0]
+                    _phone = _sid.split("@")[0].split(":")[0]
+                    if _phone and _phone.isdigit():
+                        lid_phone_map[_lid] = _phone
+
                 cur.execute(
                     """
                     SELECT chat_id, MAX(timestamp) as last_ts FROM messages
@@ -1715,20 +1728,31 @@ def _collect_andre_messages_by_relationship(
                     ORDER BY last_ts DESC
                     """
                 )
-                # Excluir self-chat (mensagens para si mesmo / comandos ao bot)
                 chat_ids = [
                     row[0] for row in cur.fetchall()
                     if _normalize_brazilian_phone("".join(c for c in row[0].split("@")[0].split(":")[0] if c.isdigit())) != owner_phone
                 ]
 
-                cutoff_ts = int(time.time()) - 90 * 24 * 3600  # últimos 90 dias
+                cutoff_ts = int(time.time()) - 90 * 24 * 3600
                 total_manual = 0
                 for chat_id in chat_ids:
-                    phone = chat_id.split("@")[0].split(":")[0]
-                    phone_norm = _normalize_brazilian_phone("".join(c for c in phone if c.isdigit()))
-                    # Tentar pelo raw prefix (funciona para @lid) e depois pelo telefone normalizado
-                    rel = raw_to_rel.get(phone, phone_to_rel.get(phone_norm, "Geral"))
-                    contact_name = raw_to_name.get(phone, phone_to_name.get(phone_norm, rel))
+                    raw = chat_id.split("@")[0].split(":")[0]
+                    digits = "".join(c for c in raw if c.isdigit())
+                    phone_norm = _normalize_brazilian_phone(digits)
+
+                    # Resolver relacionamento: raw → lid_phone_map → phone_norm
+                    rel = raw_to_rel.get(raw)
+                    contact_name = raw_to_name.get(raw)
+                    if rel is None and "@lid" in chat_id:
+                        _alt_phone = lid_phone_map.get(raw, "")
+                        if _alt_phone:
+                            _palt = _normalize_brazilian_phone("".join(c for c in _alt_phone if c.isdigit()))
+                            rel = raw_to_rel.get(_alt_phone, phone_to_rel.get(_palt))
+                            contact_name = raw_to_name.get(_alt_phone, phone_to_name.get(_palt))
+                    if rel is None:
+                        rel = phone_to_rel.get(phone_norm, "Geral")
+                    if contact_name is None:
+                        contact_name = phone_to_name.get(phone_norm, rel)
 
                     # Buscar diálogos: mensagem do contato + resposta do André
                     cur.execute(

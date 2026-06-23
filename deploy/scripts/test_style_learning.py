@@ -1,44 +1,48 @@
 #!/usr/bin/env python3
 """
-Testa o style learning localmente sem enviar mensagem ao bot.
+Diagnóstico e teste do style learning.
 
 Uso:
-  python3 test_style_learning.py              # mostra diálogos coletados
-  python3 test_style_learning.py --preview    # mostra como ficaria o SOUL_WHATSAPP.md
-  python3 test_style_learning.py --db         # mostra mensagens brutas do banco
+  python3 test_style_learning.py              # diálogos coletados (como o bot veria)
+  python3 test_style_learning.py --preview    # preview do SOUL_WHATSAPP.md
+  python3 test_style_learning.py --diag       # diagnóstico completo de contatos e banco
 """
 
 import sys
-import sqlite3
+import re
 import json
+import sqlite3
+import unicodedata
+import time
 from pathlib import Path
 
 DB_PATH = Path("/opt/data/.hermes/whatsapp_messages.db")
 CONTACTS_PATH = Path("/opt/data/personal_contacts.json")
-SOUL_PATH = Path("/opt/data/.hermes/SOUL_WHATSAPP.md")
 
 PREVIEW = "--preview" in sys.argv
-SHOW_DB = "--db" in sys.argv
+DIAG = "--diag" in sys.argv
+MIN_MSGS = 3  # mesmo threshold do bot
 
 
-def normalize_phone(phone: str) -> str:
-    digits = "".join(c for c in phone if c.isdigit())
-    if digits.startswith("55") and len(digits) == 13:
-        # Remove 9 duplicado: 5586 9 XXXX → 5586 XXXX (formato antigo)
-        pass
-    return digits
-
-
-def normalize_text(s: str) -> str:
-    import unicodedata
+def norm_text(s: str) -> str:
     return "".join(
         c for c in unicodedata.normalize("NFD", s.lower())
         if unicodedata.category(c) != "Mn"
     )
 
 
+def norm_phone(digits: str) -> str:
+    """Normaliza telefone brasileiro (remove 9 extra quando necessário)."""
+    if len(digits) == 13 and digits.startswith("55"):
+        # Remove o 9 extra: 5586 9XXXX → 5586 XXXX para comparação
+        area = digits[2:4]
+        rest = digits[4:]
+        if rest.startswith("9") and len(rest) == 9:
+            return digits[:4] + rest[1:]
+    return digits
+
+
 def sanitize(text: str) -> str | None:
-    import re
     if not text:
         return None
     patterns = [
@@ -63,76 +67,153 @@ def sanitize(text: str) -> str | None:
     return text
 
 
+def load_contacts():
+    if not CONTACTS_PATH.exists():
+        print(f"❌ personal_contacts.json não encontrado em {CONTACTS_PATH}")
+        sys.exit(1)
+    with open(CONTACTS_PATH) as f:
+        return json.load(f)
+
+
+def build_lookups(personal_contacts: dict):
+    """
+    Retorna:
+      raw_to_rel, raw_to_name  — indexados pelo prefixo bruto (antes do @)
+      phone_to_rel, phone_to_name — indexados pelo telefone normalizado
+    """
+    raw_to_rel, raw_to_name = {}, {}
+    phone_to_rel, phone_to_name = {}, {}
+
+    for key, data in personal_contacts.items():
+        rel = data.get("manual_relationship") or data.get("relationship") or "Cliente"
+        name = data.get("nickname") or data.get("name") or ""
+        if norm_text(name) in ("andre alencar", "andré alencar", "andre", "andré"):
+            name = ""
+
+        raw = key.split("@")[0]
+        digits = "".join(c for c in raw if c.isdigit())
+        pnorm = norm_phone(digits)
+
+        raw_to_rel[raw] = rel
+        phone_to_rel[pnorm] = rel
+        if name:
+            raw_to_name[raw] = name
+            phone_to_name[pnorm] = name
+
+    return raw_to_rel, raw_to_name, phone_to_rel, phone_to_name
+
+
+def build_lid_phone_map(conn) -> dict[str, str]:
+    """
+    Constrói mapa lid_prefix → phone_prefix usando sender_id das mensagens recebidas.
+    Em chats @lid, o sender_id costuma ser o telefone real do contato.
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DISTINCT chat_id, sender_id FROM messages
+        WHERE from_me=0
+        AND chat_id LIKE '%@lid%'
+        AND sender_id IS NOT NULL
+        AND sender_id NOT LIKE '%@lid%'
+        AND sender_id NOT LIKE '%@g.us%'
+    """)
+    mapping = {}
+    for chat_id, sender_id in cur.fetchall():
+        lid = chat_id.split("@")[0]
+        phone = sender_id.split("@")[0].split(":")[0]
+        if phone and phone.isdigit():
+            mapping[lid] = phone
+    return mapping
+
+
+def lookup_contact(chat_id: str, lid_phone_map: dict,
+                   raw_to_rel, raw_to_name, phone_to_rel, phone_to_name):
+    """
+    Resolve relacionamento e nome para um chat_id.
+    Tenta: raw prefix → cross-reference lid→phone → phone normalizado.
+    """
+    raw = chat_id.split("@")[0].split(":")[0]
+    digits = "".join(c for c in raw if c.isdigit())
+    pnorm = norm_phone(digits)
+
+    # 1. Tentativa direta pelo raw prefix
+    rel = raw_to_rel.get(raw)
+    name = raw_to_name.get(raw)
+
+    # 2. Para @lid, tentar via mapa lid→phone
+    if rel is None and "@lid" in chat_id:
+        phone_from_lid = lid_phone_map.get(raw, "")
+        if phone_from_lid:
+            palt = norm_phone("".join(c for c in phone_from_lid if c.isdigit()))
+            rel = raw_to_rel.get(phone_from_lid, phone_to_rel.get(palt))
+            name = raw_to_name.get(phone_from_lid, phone_to_name.get(palt))
+
+    # 3. Fallback pelo telefone normalizado
+    if rel is None:
+        rel = phone_to_rel.get(pnorm, "Geral")
+    if name is None:
+        name = phone_to_name.get(pnorm, rel)
+
+    return rel or "Geral", name or rel or "Geral"
+
+
 def main():
     if not DB_PATH.exists():
         print(f"❌ Banco não encontrado: {DB_PATH}")
         sys.exit(1)
 
-    personal_contacts = {}
-    if CONTACTS_PATH.exists():
-        with open(CONTACTS_PATH) as f:
-            personal_contacts = json.load(f)
-
-    # Construir lookups
-    phone_to_rel = {}
-    phone_to_name = {}
-    raw_to_rel = {}
-    raw_to_name = {}
-
-    for key, data in personal_contacts.items():
-        rel = data.get("manual_relationship") or data.get("relationship") or "Cliente"
-        name = data.get("nickname") or data.get("name") or ""
-        if normalize_text(name) in ("andre alencar", "andre", "andré alencar", "andré"):
-            name = ""
-        raw_prefix = key.split("@")[0]
-        phone_norm = normalize_phone(raw_prefix)
-        phone_to_rel[phone_norm] = rel
-        raw_to_rel[raw_prefix] = rel
-        if name:
-            phone_to_name[phone_norm] = name
-            raw_to_name[raw_prefix] = name
+    personal_contacts = load_contacts()
+    raw_to_rel, raw_to_name, phone_to_rel, phone_to_name = build_lookups(personal_contacts)
 
     with sqlite3.connect(str(DB_PATH)) as conn:
+        lid_phone_map = build_lid_phone_map(conn)
         cur = conn.cursor()
 
-        if SHOW_DB:
-            print("=== MENSAGENS BRUTAS (from_me=1, últimas 20) ===\n")
+        if DIAG:
+            print("=== DIAGNÓSTICO ===\n")
+            print(f"personal_contacts.json: {len(personal_contacts)} contatos")
+            print(f"Cross-reference @lid→phone: {len(lid_phone_map)} mapeamentos")
+            if lid_phone_map:
+                for lid, phone in list(lid_phone_map.items())[:10]:
+                    rel = raw_to_rel.get(phone, phone_to_rel.get(norm_phone("".join(c for c in phone if c.isdigit())), "?"))
+                    name = raw_to_name.get(phone, phone_to_name.get(norm_phone("".join(c for c in phone if c.isdigit())), ""))
+                    print(f"  {lid}@lid → {phone} → {rel} / {name or '(sem nome)'}")
+            print()
+
             cur.execute("""
-                SELECT chat_id, sender_name, body, timestamp, from_me
+                SELECT chat_id,
+                       SUM(CASE WHEN from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot') THEN 1 ELSE 0 END) as manual_out,
+                       SUM(CASE WHEN from_me=0 THEN 1 ELSE 0 END) as received,
+                       MAX(timestamp) as last_ts
                 FROM messages
-                WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot')
-                AND chat_id NOT LIKE '%@g.us%'
-                ORDER BY timestamp DESC LIMIT 20
+                WHERE chat_id NOT LIKE '%@g.us%'
+                GROUP BY chat_id ORDER BY last_ts DESC
             """)
-            for row in cur.fetchall():
-                print(f"chat: {row[0]}")
-                print(f"  sender: {row[1]} | body: {row[2][:80]}")
-                print()
+            rows = cur.fetchall()
+            print(f"Chats no banco: {len(rows)}\n")
+            for chat_id, manual_out, received, last_ts in rows:
+                rel, name = lookup_contact(chat_id, lid_phone_map, raw_to_rel, raw_to_name, phone_to_rel, phone_to_name)
+                flag = "✅" if manual_out >= MIN_MSGS else ("⚠️" if manual_out > 0 else "❌")
+                print(f"{flag} {chat_id}")
+                print(f"   msgs_saída={manual_out} recebidas={received} | {rel} / {name}")
             return
 
-        # Owner phone
-        cur.execute("SELECT chat_id FROM messages WHERE from_me=1 LIMIT 1")
-        owner_phone = ""
-
+        # Coleta normal
         cur.execute("""
-            SELECT chat_id, MAX(timestamp) FROM messages
+            SELECT chat_id, MAX(timestamp) as last_ts FROM messages
             WHERE from_me=1 AND (sender_name IS NULL OR sender_name != 'Bot')
             AND chat_id NOT LIKE '%@g.us%'
-            GROUP BY chat_id ORDER BY 2 DESC
+            GROUP BY chat_id ORDER BY last_ts DESC
         """)
-        chat_rows = cur.fetchall()
+        all_chats = cur.fetchall()
+        print(f"=== STYLE LEARNING — {len(all_chats)} chat(s) com msgs saídas ===\n")
 
-        print(f"=== STYLE LEARNING — {len(chat_rows)} chat(s) encontrado(s) ===\n")
-
-        import time
         cutoff = int(time.time()) - 90 * 24 * 3600
+        groups: dict[str, list] = {}
         total = 0
 
-        for chat_id, _ in chat_rows:
-            phone = chat_id.split("@")[0].split(":")[0]
-            phone_norm = normalize_phone("".join(c for c in phone if c.isdigit()))
-            rel = raw_to_rel.get(phone, phone_to_rel.get(phone_norm, "Geral"))
-            contact_name = raw_to_name.get(phone, phone_to_name.get(phone_norm, rel))
+        for chat_id, _ in all_chats:
+            rel, contact_name = lookup_contact(chat_id, lid_phone_map, raw_to_rel, raw_to_name, phone_to_rel, phone_to_name)
 
             cur.execute("""
                 SELECT m.body, m.timestamp,
@@ -147,66 +228,63 @@ def main():
                 AND m.chat_id=? AND m.timestamp >= ?
                 AND m.body IS NOT NULL AND length(trim(m.body)) > 1
                 AND m.body NOT LIKE '[%'
-                ORDER BY m.timestamp DESC LIMIT 5
+                AND m.body NOT LIKE '<Media omitted>%'
+                AND length(m.body) <= 300
+                ORDER BY m.timestamp DESC LIMIT 20
             """, (chat_id, chat_id, cutoff))
 
-            rows = cur.fetchall()
-            if not rows:
-                continue
-
-            print(f"📱 {chat_id}")
-            print(f"   Relacionamento: {rel} | Label: {contact_name}")
-            for body, ts, contact_msg in rows:
+            msgs = []
+            for body, ts, contact_msg in cur.fetchall():
                 body_clean = sanitize(body)
                 if not body_clean:
                     continue
-                if contact_msg:
-                    print(f'   {contact_name}: "{contact_msg[:60]}"')
-                print(f'   André → {contact_name}: "{body_clean[:80]}"')
-                print()
-            total += len(rows)
+                msgs.append({
+                    "contact": contact_msg,
+                    "andre": body_clean,
+                    "contact_name": contact_name,
+                })
 
-        print(f"Total: {total} mensagem(ns) coletada(s)\n")
+            if not msgs:
+                continue
 
-        if PREVIEW:
-            print("=== PREVIEW SOUL_WHATSAPP.md ===\n")
+            total += len(msgs)
+            groups.setdefault(rel, []).extend(msgs)
+            flag = "✅" if len(msgs) >= MIN_MSGS else "⚠️ (poucas msgs — bot descarta)"
+            print(f"📱 {chat_id} {flag}")
+            print(f"   Relacionamento: {rel} | Label: {contact_name} | {len(msgs)} msg(s)")
+            for item in msgs[:5]:
+                if item["contact"]:
+                    print(f'   {contact_name}: "{item["contact"][:60]}"')
+                print(f'   André → {contact_name}: "{item["andre"][:80]}"')
+            print()
+
+        # Aplicar filtro >= MIN_MSGS (igual ao bot)
+        filtered = {r: m for r, m in groups.items() if len(m) >= MIN_MSGS}
+        dropped = [r for r in groups if r not in filtered]
+
+        print(f"Total coletado: {total} msg(s)")
+        if dropped:
+            print(f"⚠️  Grupos descartados pelo bot (< {MIN_MSGS} msgs): {dropped}")
+        print(f"Grupos que passam para o SOUL_WHATSAPP.md: {list(filtered.keys())}")
+
+        if PREVIEW and filtered:
             from datetime import datetime
+            print(f"\n=== PREVIEW SOUL_WHATSAPP.md ===\n")
             print(f"## EXEMPLOS REAIS DE ESCRITA")
             print(f"> Gerado em {datetime.now().strftime('%d/%m/%Y')}\n")
-            # Re-run grouped by rel
-            groups = {}
-            for chat_id, _ in chat_rows:
-                phone = chat_id.split("@")[0].split(":")[0]
-                phone_norm = normalize_phone("".join(c for c in phone if c.isdigit()))
-                rel = raw_to_rel.get(phone, phone_to_rel.get(phone_norm, "Geral"))
-                contact_name = raw_to_name.get(phone, phone_to_name.get(phone_norm, rel))
-                cur.execute("""
-                    SELECT m.body,
-                           (SELECT body FROM messages
-                            WHERE chat_id=? AND from_me=0 AND timestamp < m.timestamp
-                            AND body IS NOT NULL AND length(trim(body)) > 1
-                            AND body NOT LIKE '<Media omitted>%'
-                            AND length(body) <= 300
-                            ORDER BY timestamp DESC LIMIT 1) as contact_msg
-                    FROM messages m
-                    WHERE m.from_me=1 AND (m.sender_name IS NULL OR m.sender_name != 'Bot')
-                    AND m.chat_id=? AND m.timestamp >= ?
-                    AND m.body IS NOT NULL AND length(trim(m.body)) > 1
-                    AND m.body NOT LIKE '[%'
-                    ORDER BY m.timestamp DESC LIMIT 5
-                """, (chat_id, chat_id, cutoff))
-                for body, contact_msg in cur.fetchall():
-                    if sanitize(body):
-                        groups.setdefault(rel, []).append((contact_name, body, contact_msg))
-
-            for rel, items in groups.items():
+            for rel, msgs in filtered.items():
                 print(f"### {rel}")
-                for contact_name, andre_text, contact_text in items:
-                    if contact_text:
-                        print(f'- **{contact_name}:** "{contact_text[:60]}"')
-                        print(f'  **André → {contact_name}:** "{andre_text[:80]}"')
+                for item in msgs[:5]:
+                    label = item["contact_name"]
+                    ct = sanitize(item.get("contact") or "")
+                    at = sanitize(item.get("andre", ""))
+                    if not at:
+                        continue
+                    if ct:
+                        print(f'- **{label}:** "{ct[:60]}"')
+                        print(f'  **André → {label}:** "{at[:80]}"')
                     else:
-                        print(f'- **André → {contact_name}:** "{andre_text[:80]}"')
+                        print(f'- **André → {label}:** "{at[:80]}"')
                 print()
 
 
