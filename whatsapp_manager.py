@@ -1673,13 +1673,17 @@ def _collect_andre_messages_by_relationship(
             logger.warning("[style-learning] Nenhum banco disponível para coletar mensagens.")
             return {}
 
-        # Reverse lookup: phone_norm → relationship
+        # Reverse lookup: phone_norm → relationship e nome
         phone_to_rel: dict[str, str] = {}
+        phone_to_name: dict[str, str] = {}
         for key, data in personal_contacts.items():
             rel = data.get("manual_relationship") or data.get("relationship") or "Cliente"
+            name = data.get("name") or data.get("nickname") or ""
             phone = key.split("@")[0]
             phone_norm = _normalize_brazilian_phone("".join(c for c in phone if c.isdigit()))
             phone_to_rel[phone_norm] = rel
+            if name:
+                phone_to_name[phone_norm] = name
 
         result: dict[str, list[str]] = {}
 
@@ -1713,8 +1717,8 @@ def _collect_andre_messages_by_relationship(
                 for chat_id in chat_ids:
                     phone = chat_id.split("@")[0].split(":")[0]
                     phone_norm = _normalize_brazilian_phone("".join(c for c in phone if c.isdigit()))
-                    # Relacionamento conhecido → agrupa por tipo; desconhecido → grupo "Geral"
                     rel = phone_to_rel.get(phone_norm, "Geral")
+                    contact_name = phone_to_name.get(phone_norm, rel)  # nome ou fallback p/ relacionamento
 
                     # Buscar diálogos: mensagem do contato + resposta do André
                     cur.execute(
@@ -1747,9 +1751,9 @@ def _collect_andre_messages_by_relationship(
                         if any(andre_msg.lower().startswith(p.lower()) for p in _MEDIA_FILTER_PREFIXES):
                             continue
                         if contact_msg:
-                            msgs.append({"contact": contact_msg, "andre": andre_msg})
+                            msgs.append({"contact": contact_msg, "andre": andre_msg, "contact_name": contact_name})
                         else:
-                            msgs.append({"contact": None, "andre": andre_msg})
+                            msgs.append({"contact": None, "andre": andre_msg, "contact_name": contact_name})
                     if msgs:
                         total_manual += len(msgs)
                         result.setdefault(rel, []).extend(msgs)
@@ -1829,7 +1833,8 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 if contact_text:
-                    lines.append(f'- **{rel}:** "{contact_text}"')
+                    label = item.get("contact_name") or rel
+                    lines.append(f'- **{label}:** "{contact_text}"')
                     lines.append(f'  **André:** "{andre_text}"')
                 else:
                     lines.append(f'- **André:** "{andre_text}"')
@@ -1861,7 +1866,8 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 if contact_text:
-                    lines.append(f'- {rel}: "{contact_text}" → André: "{andre_text}"')
+                    label = item.get("contact_name") or rel
+                    lines.append(f'- {label}: "{contact_text}" → André: "{andre_text}"')
                 else:
                     lines.append(f'- André: "{andre_text}"')
             else:
