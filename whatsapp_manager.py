@@ -1122,6 +1122,25 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         if _names_updated:
             logger.info(f"[sync] {_names_updated} nome(s) atualizado(s) via bridge /contacts/all")
 
+    # 1b-fix. Limpar nomes do dono gravados incorretamente em entradas de contatos externos
+    _owner_name_norms = {"andre alencar", "andré alencar", "andre", "andré"}
+    _fixed_owner_names = 0
+    for _k, _v in personal_contacts.items():
+        if not isinstance(_v, dict):
+            continue
+        _cur = _normalize_text(_v.get("name") or "")
+        if _cur in _owner_name_norms:
+            # Tentar substituir pelo nome do bridge se disponível
+            _bridge_name = (_bridge_names or {}).get(_k, "")
+            if _bridge_name and _normalize_text(_bridge_name) not in _owner_name_norms:
+                _v["name"] = _bridge_name
+            else:
+                _v["name"] = None
+            _fixed_owner_names += 1
+            metadata_updated = True
+    if _fixed_owner_names:
+        logger.info(f"[sync] {_fixed_owner_names} nome(s) do dono removido(s) de contatos externos")
+
     # 1c. Remover entradas do owner do arquivo (não devem estar no personal_contacts)
     owner_phone_norm = _normalize_brazilian_phone(
         "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
