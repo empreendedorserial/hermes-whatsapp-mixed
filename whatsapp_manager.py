@@ -4029,7 +4029,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 )
                 # Permitir apenas campos que fazem sentido em updates manuais
                 # tone/guidelines/summary/intent/frequency só devem vir do histórico real
-                owner_update_fields = {"relationship", "manual_relationship", "nickname", "pet_name", "product", "frequent_greeting"}
+                owner_update_fields = {"name", "relationship", "manual_relationship", "nickname", "pet_name", "product", "frequent_greeting"}
                 fields_to_update = {k: v for k, v in extracted.items() if k in owner_update_fields and v is not None}
 
                 # Garantir manual_relationship quando relationship for definido pelo owner
@@ -4054,7 +4054,20 @@ def pre_gateway_dispatch(*args, **kwargs):
                         break
 
                 if fields_to_update:
-                    result = _update_contact_fields(nl_contact_name, fields_to_update)
+                    # Se há cartão pendente, tentar pelo número do cartão diretamente (evita busca por nome que pode falhar)
+                    card = _pending_contact_card.get(sender_id)
+                    if card and card.get("phone") and "name" in fields_to_update:
+                        # Atualiza pelo número do cartão e aplica nome da mensagem
+                        result = _update_contact_fields(card["phone"], fields_to_update)
+                        logger.info(f"[update-nl] Tentativa via cartão pendente ({card['phone']}): {result}")
+                        if "não encontrado" not in result:
+                            del _pending_contact_card[sender_id]
+                            response_msg = result
+                            card = None  # já resolvido
+                    else:
+                        result = None
+                    if card is not None or result is None:
+                        result = _update_contact_fields(nl_contact_name, fields_to_update)
                     logger.info(f"[update-nl] Resultado: {result}")
                     if "não encontrado" in result:
                         # Tentar com cartão de contato compartilhado anteriormente
