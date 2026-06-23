@@ -813,6 +813,30 @@ let onMessagesUpsert = async ({ messages, type }) => {
       }
     }
 
+    // Persistir mensagens recebidas no SQLite para o style learning capturar contexto
+    if (!msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim()) {
+      try {
+        const _dbPath = '/opt/data/.hermes/whatsapp_messages.db';
+        const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
+        const _msgId = msg.key.id || `recv_${chatId}_${_ts}`;
+        const _senderName = msg.pushName || senderId.replace(/@.*/, '');
+        const _pyScript = [
+          'import sqlite3, sys',
+          'args = sys.argv[1:]',
+          "conn = sqlite3.connect(args[0])",
+          "conn.execute('INSERT OR IGNORE INTO messages (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,from_me) VALUES (?,?,?,?,?,?,?,0)', [args[1],args[2],args[3],args[4],args[5],args[6],int(args[7])])",
+          "conn.commit()",
+          "conn.close()",
+        ].join('\n');
+        const proc = spawn('python3', ['-c', _pyScript, _dbPath, chatId, senderId, _senderName, _msgId, 'text', body, String(_ts)], { stdio: 'pipe' });
+        proc.on('close', (code) => {
+          if (code !== 0) proc.stderr.on('data', (d) => console.log(`[bridge-recv-msg] Erro: ${d.toString().slice(0, 100)}`));
+        });
+      } catch (e) {
+        console.log(`[bridge-recv-msg] Exceção: ${e.message?.slice(0, 100)}`);
+      }
+    }
+
     // Capturar pushName de mensagens recebidas e salvar em sock.contacts
     if (!msg.key.fromMe && msg.pushName && sock && sock.contacts) {
       const _existingContact = sock.contacts[chatId] || {};
