@@ -21,7 +21,7 @@ CONTACTS_PATH = Path("/opt/data/personal_contacts.json")
 
 PREVIEW = "--preview" in sys.argv
 DIAG = "--diag" in sys.argv
-MIN_MSGS = 3  # mesmo threshold do bot
+MIN_MSGS = 1  # mesmo threshold do bot
 
 
 def norm_text(s: str) -> str:

@@ -1804,11 +1804,11 @@ def _collect_andre_messages_by_relationship(
             if len(result[rel]) > 100:
                 result[rel] = random.sample(result[rel], 100)
 
-        # Remover grupos com menos de 3 mensagens (sinal insuficiente)
-        filtered = {rel: msgs for rel, msgs in result.items() if len(msgs) >= 3}
+        # Remover grupos sem nenhuma mensagem
+        filtered = {rel: msgs for rel, msgs in result.items() if len(msgs) >= 1}
         if len(filtered) < len(result):
             dropped = [r for r in result if r not in filtered]
-            logger.info(f"[style-learning] Grupos descartados por ter < 3 mensagens: {dropped}")
+            logger.info(f"[style-learning] Grupos descartados por estar vazios: {dropped}")
         return filtered
 
     except Exception as e:
