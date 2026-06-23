@@ -1989,7 +1989,8 @@ def _build_style_section_with_patterns(messages_by_relationship: dict, llm_patte
                 label = item.get("contact_name") or rel
                 if contact_text:
                     lines.append(f'- {label}: "{contact_text}"')
-                    lines.append(f'  André: "{andre_text}"')
+                    lines.append(f'- André: "{andre_text}"')
+                    lines.append("")
                 else:
                     lines.append(f'- André: "{andre_text}"')
             else:
@@ -2026,13 +2027,14 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
                 label = item.get("contact_name") or rel
                 if contact_text:
                     lines.append(f'- {label}: "{contact_text}"')
-                    lines.append(f'  André: "{andre_text}"')
+                    lines.append(f'- André: "{andre_text}"')
+                    lines.append("")
                 else:
                     lines.append(f'- André: "{andre_text}"')
             else:
                 sanitized = _sanitize_sensitive(item)
                 if sanitized:
-                    lines.append(f'- **André:** "{sanitized}"')
+                    lines.append(f'- André: "{sanitized}"')
         lines.append("")
 
     return "\n".join(lines)
