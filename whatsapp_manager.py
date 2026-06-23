@@ -1125,6 +1125,34 @@ def _build_lid_phone_map(db_path: "Path | None" = None,
     return lid_phone_map
 
 
+def _resolve_man_rel(existing_data: dict, personal_contacts: dict) -> "str | None":
+    """Retorna o manual_relationship mais confiável para um contato.
+
+    Lê do existing_data e também do @lid correspondente (campo 'lid'),
+    evitando que o sync sobrescreva valores definidos via bot no @lid.
+    """
+    _non_manual = {"Cliente", "Geral"}
+    man_rel = existing_data.get("manual_relationship")
+    # Fallback: relationship explícito que era tratado como manual
+    if not man_rel and existing_data.get("relationship") in [
+        "Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"
+    ]:
+        man_rel = existing_data.get("relationship")
+    # Checar entrada @lid correspondente (campo 'lid' gravado pelo dedup)
+    lid_key = existing_data.get("lid")
+    if lid_key and lid_key in personal_contacts:
+        lid_entry = personal_contacts[lid_key]
+        lid_man_rel = lid_entry.get("manual_relationship")
+        if not lid_man_rel and lid_entry.get("relationship") in [
+            "Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"
+        ]:
+            lid_man_rel = lid_entry.get("relationship")
+        # @lid vence se tem valor e o atual está vazio ou é genérico
+        if lid_man_rel and (not man_rel or man_rel in _non_manual):
+            man_rel = lid_man_rel
+    return man_rel
+
+
 def _merge_contact_entries(primary: dict, secondary: dict) -> None:
     """
     Mescla `secondary` em `primary` in-place.
@@ -1511,12 +1539,10 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 skipped_few_msgs += 1
                 target_key = existing_key if existing_key else resolved_chat
                 existing_data = personal_contacts.get(target_key, {})
-                
-                # Preservação/migração de manual_relationship
-                man_rel = existing_data.get("manual_relationship")
-                if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
-                    man_rel = existing_data.get("relationship")
-                
+
+                # Preservação/migração de manual_relationship (inclui @lid correspondente)
+                man_rel = _resolve_man_rel(existing_data, personal_contacts)
+
                 # Se for stale (antigo e incompleto), não reaproveitamos as propriedades padrão antigas
                 rel_val = man_rel or ("Cliente" if is_stale else (existing_data.get("relationship") or "Cliente"))
                 tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
@@ -1550,10 +1576,8 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 target_key = existing_key if existing_key else resolved_chat
                 existing_data = personal_contacts.get(target_key, {})
 
-                # Preservação/migração de manual_relationship
-                man_rel = existing_data.get("manual_relationship")
-                if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
-                    man_rel = existing_data.get("relationship")
+                # Preservação/migração de manual_relationship (inclui @lid correspondente)
+                man_rel = _resolve_man_rel(existing_data, personal_contacts)
 
                 rel_val = man_rel or ("Cliente" if is_stale else (existing_data.get("relationship") or "Cliente"))
                 tone_val = "polido e profissional" if is_stale else (existing_data.get("tone") or "polido e profissional")
@@ -1683,9 +1707,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         existing_data = personal_contacts.get(target_key, {})
 
         if is_stale:
-            man_rel = existing_data.get("manual_relationship")
-            if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
-                man_rel = existing_data.get("relationship")
+            man_rel = _resolve_man_rel(existing_data, personal_contacts)
 
             personal_contacts[target_key] = {
                 "name": (name if (not existing_data.get("name") or re.match(r"^Contato\s+\d+$", existing_data.get("name") or "")) else existing_data.get("name")) or f"Contato {phone}",
@@ -1706,9 +1728,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
                 "last_interaction": max_ts or existing_data.get("last_interaction", 0)
             }
         else:
-            man_rel = existing_data.get("manual_relationship")
-            if not man_rel and existing_data.get("relationship") in ["Vendedor", "Amigo", "AmigoProximo", "Parente", "Filho"]:
-                man_rel = existing_data.get("relationship")
+            man_rel = _resolve_man_rel(existing_data, personal_contacts)
 
             personal_contacts[target_key] = {
                 "name": (name if (not existing_data.get("name") or re.match(r"^Contato\s+\d+$", existing_data.get("name") or "")) else existing_data.get("name")) or f"Contato {phone}",
