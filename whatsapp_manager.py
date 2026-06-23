@@ -1832,12 +1832,12 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
                 if not andre_text:
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
+                label = item.get("contact_name") or rel
                 if contact_text:
-                    label = item.get("contact_name") or rel
                     lines.append(f'- **{label}:** "{contact_text}"')
-                    lines.append(f'  **André:** "{andre_text}"')
+                    lines.append(f'  **André → {label}:** "{andre_text}"')
                 else:
-                    lines.append(f'- **André:** "{andre_text}"')
+                    lines.append(f'- **André → {label}:** "{andre_text}"')
             else:
                 sanitized = _sanitize_sensitive(item)
                 if sanitized:
@@ -1865,11 +1865,11 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
                 if not andre_text:
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
+                label = item.get("contact_name") or rel
                 if contact_text:
-                    label = item.get("contact_name") or rel
-                    lines.append(f'- {label}: "{contact_text}" → André: "{andre_text}"')
+                    lines.append(f'- {label}: "{contact_text}" → André p/ {label}: "{andre_text}"')
                 else:
-                    lines.append(f'- André: "{andre_text}"')
+                    lines.append(f'- André p/ {label}: "{andre_text}"')
             else:
                 sanitized = _sanitize_sensitive(item)
                 if sanitized:
