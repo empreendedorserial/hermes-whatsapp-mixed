@@ -2721,6 +2721,7 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
 
     contact = personal_contacts[matched_key]
     contact_name = contact.get("name") or contact.get("nickname") or matched_key
+    logger.info(f"[update-contact] '{identifier}' → matched_key={matched_key} name='{contact_name}' fields={list(fields.keys())}")
 
     # Campos protegidos que não podem ser sobrescritos por este comando
     protected = {"last_interaction"}
@@ -2756,6 +2757,9 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
             if field not in protected:
                 mirror[field] = value
         personal_contacts[mirror_key] = mirror
+        logger.info(f"[update-contact] espelhado em mirror_key={mirror_key}")
+    else:
+        logger.warning(f"[update-contact] sem mirror encontrado para matched_key={matched_key} (campo lid='{contact.get('lid')}')")
 
     try:
         with open(str(pc_path), "w", encoding="utf-8") as f:
