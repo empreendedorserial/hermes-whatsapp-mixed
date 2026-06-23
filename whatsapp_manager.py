@@ -2574,11 +2574,14 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
 
     # 1. Busca exata por número/JID (apenas se identifier parece ser um número)
     if re.match(r"^\+?[\d\s\-]+$", identifier):
+        id_digits = id_norm.replace(" ", "").replace("-", "")
+        id_norm_br = _normalize_brazilian_phone(id_digits)
         for key in personal_contacts:
             if _is_owner_key(key):
                 continue
-            phone = key.split("@")[0]
-            if id_norm.replace(" ", "").replace("-", "") in phone:
+            phone = key.split("@")[0].split(":")[0]
+            phone_norm_br = _normalize_brazilian_phone(phone)
+            if id_digits in phone or phone in id_digits or id_norm_br == phone_norm_br:
                 matched_key = key
                 break
 
@@ -4082,29 +4085,48 @@ def pre_gateway_dispatch(*args, **kwargs):
                                 del _pending_contact_card[sender_id]
                                 response_msg = result
                             else:
-                                # Contato não existe — criar nova entrada com número do cartão
+                                # Contato não existe — verificar variação de 9º dígito antes de criar
                                 pc_path = Path("/opt/data/personal_contacts.json")
                                 try:
                                     with open(str(pc_path), "r", encoding="utf-8") as _f:
                                         _pc = json.load(_f)
-                                    new_key = f"{card['phone']}@s.whatsapp.net"
-                                    new_name = fields_to_update.get("name") or card.get("name") or nl_contact_name
-                                    _pc[new_key] = {
-                                        "name": new_name,
-                                        "relationship": fields_to_update.get("relationship", "Cliente"),
-                                        "manual_relationship": fields_to_update.get("manual_relationship", fields_to_update.get("relationship", "Cliente")),
-                                        "nickname": fields_to_update.get("nickname"),
-                                        "notes": None, "product": None, "tone": "polido e profissional",
-                                        "frequent_greeting": None, "summary": "Pendente de classificação.",
-                                        "intent": "Contato inicial.", "frequency": "esporádica",
-                                        "guidelines": "Responda de forma prestativa.",
-                                        "last_interaction": time.time(),
-                                    }
-                                    with open(str(pc_path), "w", encoding="utf-8") as _f:
-                                        json.dump(_pc, _f, ensure_ascii=False, indent=2)
-                                    del _pending_contact_card[sender_id]
-                                    logger.info(f"[update-nl] Novo contato criado via cartão: {new_key} name='{new_name}'")
-                                    response_msg = f"✅ Contato *{new_name}* ({new_key}) criado com sucesso."
+                                    card_phone = card["phone"]
+                                    card_norm = _normalize_brazilian_phone(card_phone)
+                                    existing_key = next(
+                                        (k for k in _pc if "@s.whatsapp.net" in k and
+                                         _normalize_brazilian_phone(k.split("@")[0]) == card_norm),
+                                        None
+                                    )
+                                    if existing_key:
+                                        # Atualizar entrada existente (variação de 9º dígito)
+                                        for field, value in fields_to_update.items():
+                                            if value is not None:
+                                                _pc[existing_key][field] = value
+                                        with open(str(pc_path), "w", encoding="utf-8") as _f:
+                                            json.dump(_pc, _f, ensure_ascii=False, indent=2)
+                                        del _pending_contact_card[sender_id]
+                                        upd_name = _pc[existing_key].get("name") or existing_key
+                                        logger.info(f"[update-nl] Contato existente atualizado via normalização: {existing_key}")
+                                        response_msg = f"✅ Contato *{upd_name}* ({existing_key}) atualizado."
+                                    else:
+                                        new_key = f"{card_phone}@s.whatsapp.net"
+                                        new_name = fields_to_update.get("name") or card.get("name") or nl_contact_name
+                                        _pc[new_key] = {
+                                            "name": new_name,
+                                            "relationship": fields_to_update.get("relationship", "Cliente"),
+                                            "manual_relationship": fields_to_update.get("manual_relationship", fields_to_update.get("relationship", "Cliente")),
+                                            "nickname": fields_to_update.get("nickname"),
+                                            "notes": None, "product": None, "tone": "polido e profissional",
+                                            "frequent_greeting": None, "summary": "Pendente de classificação.",
+                                            "intent": "Contato inicial.", "frequency": "esporádica",
+                                            "guidelines": "Responda de forma prestativa.",
+                                            "last_interaction": time.time(),
+                                        }
+                                        with open(str(pc_path), "w", encoding="utf-8") as _f:
+                                            json.dump(_pc, _f, ensure_ascii=False, indent=2)
+                                        del _pending_contact_card[sender_id]
+                                        logger.info(f"[update-nl] Novo contato criado via cartão: {new_key} name='{new_name}'")
+                                        response_msg = f"✅ Contato *{new_name}* ({new_key}) criado com sucesso."
                                 except Exception as _ce:
                                     logger.error(f"[update-nl] Erro ao criar contato via cartão: {_ce}")
                                     _pending_contact_update[sender_id] = {"name": nl_contact_name, "fields": fields_to_update}
