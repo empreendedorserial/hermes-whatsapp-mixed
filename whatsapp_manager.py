@@ -3869,8 +3869,9 @@ def pre_gateway_dispatch(*args, **kwargs):
     except Exception as log_e:
         logger.error(f"Erro ao gravar debug log: {log_e}")
     # Cartão de contato compartilhado pelo owner — guardar pendência para próximo comando
-    if is_owner and msg_text.startswith("[CONTACT_CARD:"):
-        card_content = msg_text[len("[CONTACT_CARD:"):].rstrip("]").strip()
+    if is_owner and "[CONTACT_CARD:" in msg_text:
+        card_start = msg_text.index("[CONTACT_CARD:")
+        card_content = msg_text[card_start + len("[CONTACT_CARD:"):].rstrip("]").strip()
         # Pode haver múltiplos cartões separados por ';'
         first_card = card_content.split(";")[0].strip()
         parts = first_card.split("|")
