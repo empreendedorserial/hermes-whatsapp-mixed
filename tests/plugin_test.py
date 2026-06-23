@@ -3440,17 +3440,15 @@ class TestDedupPersonalContacts(unittest.TestCase):
         self.assertEqual(entry["name"], "Pedrinho")
         self.assertEqual(entry["lid"], "abc@lid")
 
-    def test_lid_manual_relationship_wins(self):
-        """@lid é mais autoritativo: sua manual_relationship vence sobre @s.whatsapp.net.
-        Caso real: Mayra tinha 'Amigo' no @s e 'namorada' no @lid — @lid deve vencer.
-        """
+    def test_manual_relationship_not_overwritten(self):
+        """manual_relationship no @s.whatsapp.net nunca deve ser sobrescrito."""
         pc = self._contacts({
-            "5586@s.whatsapp.net": {"manual_relationship": "Amigo", "relationship": "Amigo"},
-            "abc@lid": {"manual_relationship": "namorada"},
+            "5586@s.whatsapp.net": {"manual_relationship": "VIP", "relationship": "Amigo"},
+            "abc@lid": {"manual_relationship": "Filho"},
         })
         lid_map = {"abc": "5586"}
         self._dedup(pc, lid_map)
-        self.assertEqual(pc["5586@s.whatsapp.net"]["manual_relationship"], "namorada")
+        self.assertEqual(pc["5586@s.whatsapp.net"]["manual_relationship"], "VIP")
 
     def test_lid_manual_relationship_fills_empty(self):
         """manual_relationship do @lid preenche se @s.whatsapp.net não tem."""

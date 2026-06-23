@@ -1107,22 +1107,18 @@ def _build_lid_phone_map(db_path: "Path | None" = None) -> dict[str, str]:
     return lid_phone_map
 
 
-def _merge_contact_entries(primary: dict, secondary: dict, secondary_is_lid: bool = False) -> None:
+def _merge_contact_entries(primary: dict, secondary: dict) -> None:
     """
     Mescla `secondary` em `primary` in-place.
     Regras de precedência (ordem decrescente de confiabilidade):
-      1. manual_relationship do @lid — mais específico, vence mesmo sobre @s.whatsapp.net
-      2. manual_relationship do primary se secondary não é @lid
-      3. Campos do secondary se primary tiver placeholder/vazio
-      4. relationship: secondary vence se primary não tem manual_relationship
+      1. manual_relationship  — definido pelo usuário, nunca sobrescrever
+      2. Campos do secondary se primary tiver placeholder/vazio
+      3. relationship: secondary vence se primary não tem manual_relationship
     """
     _owner_norms = {"andre alencar", "andré alencar", "andre", "andré"}
 
-    # @lid é mais autoritativo: sua manual_relationship vence sempre
-    if secondary_is_lid and secondary.get("manual_relationship"):
-        primary["manual_relationship"] = secondary["manual_relationship"]
-        primary["relationship"] = secondary["manual_relationship"]
-    elif secondary.get("manual_relationship") and not primary.get("manual_relationship"):
+    # manual_relationship: never overwrite, only fill if missing
+    if secondary.get("manual_relationship") and not primary.get("manual_relationship"):
         primary["manual_relationship"] = secondary["manual_relationship"]
 
     # relationship: secondary vence se primary não tem manual_relationship
@@ -1182,7 +1178,7 @@ def _dedup_personal_contacts(personal_contacts: dict, lid_phone_map: dict) -> in
             entry["lid"] = lid_key  # sempre registrar o lid conhecido
             lid_entry = personal_contacts.get(lid_key)
             if isinstance(lid_entry, dict) and lid_key not in to_remove:
-                _merge_contact_entries(primary=entry, secondary=lid_entry, secondary_is_lid=True)
+                _merge_contact_entries(primary=entry, secondary=lid_entry)
                 to_remove.append(lid_key)
 
     # --- Passo 2: @s.whatsapp.net duplicados por normalização de telefone ---
