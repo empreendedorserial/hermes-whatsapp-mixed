@@ -3230,5 +3230,111 @@ class TestStyleLearningRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(msg_count, 2)
 
 
+class TestBuildStyleSectionWithPatterns(unittest.TestCase):
+    """Testa a geração do SOUL_WHATSAPP.md com padrões do LLM + exemplos do Python."""
+
+    def _make_msgs(self, contact_name, pairs):
+        """Cria lista de dicts com pares (contact_msg, andre_msg). None = sem contexto."""
+        return [
+            {"contact": c, "andre": a, "contact_name": contact_name}
+            for c, a in pairs
+        ]
+
+    def test_format_dialogue_pair_uses_separate_bullets(self):
+        """Diálogo com contexto deve ter dois bullets separados, não indentado."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("João", [("vc faz sites?", "Faço sim!")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        lines = result.splitlines()
+        contact_line = next((l for l in lines if 'João: "vc faz sites?"' in l), None)
+        andre_line = next((l for l in lines if 'André: "Faço sim!"' in l), None)
+        self.assertIsNotNone(contact_line, "Linha do contato não encontrada")
+        self.assertIsNotNone(andre_line, "Linha do André não encontrada")
+        self.assertTrue(contact_line.startswith("- "), "Contato deve ser bullet '- '")
+        self.assertTrue(andre_line.startswith("- "), "André deve ser bullet '- ', não indentado")
+
+    def test_blank_line_between_dialogue_pairs(self):
+        """Deve haver linha em branco entre pares de diálogo."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("Pedro", [
+            ("tudo bem?", "tudo!"),
+            ("vc faz app?", "faço sim"),
+        ])
+        result = _build_style_section_with_patterns({"Amigo": msgs}, None)
+        # Deve haver linha em branco separando os pares
+        self.assertIn('\n\n', result)
+
+    def test_contact_name_appears_as_label(self):
+        """O nome do contato deve aparecer como label no bullet."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("EmpreendedorSerial", [("oi", "olá!")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        self.assertIn('EmpreendedorSerial: "oi"', result)
+        self.assertIn('André: "olá!"', result)
+
+    def test_no_owner_name_as_label(self):
+        """Nome do dono nunca deve aparecer como label do contato."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("André Alencar", [("oi", "olá!")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        # "André Alencar:" não deve aparecer como label de contato (só "André:" como resposta)
+        self.assertNotIn('André Alencar: "oi"', result)
+
+    def test_message_without_context_no_contact_bullet(self):
+        """Mensagem sem contexto deve ter só bullet do André."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("João", [(None, "vendeu?")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        self.assertIn('André: "vendeu?"', result)
+        self.assertNotIn('João: "None"', result)
+
+    def test_sentinel_header_present(self):
+        """O sentinel ## EXEMPLOS REAIS DE ESCRITA deve estar no output."""
+        from whatsapp_manager import _build_style_section_with_patterns, _STYLE_SENTINEL
+        msgs = self._make_msgs("João", [("oi", "olá")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        self.assertIn(_STYLE_SENTINEL, result)
+
+    def test_llm_patterns_included_when_provided(self):
+        """Padrões do LLM devem aparecer no output quando fornecidos."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("João", [("oi", "olá")])
+        llm_output = "### Cliente\n**Padrões identificados:**\n- Usa 'vc' frequentemente"
+        result = _build_style_section_with_patterns({"Cliente": msgs}, llm_output)
+        self.assertIn("Usa 'vc' frequentemente", result)
+
+    def test_sensitive_data_filtered(self):
+        """Dados sensíveis devem ser removidos dos exemplos."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("João", [
+            (None, "saldo R$ 5.000,00 na conta"),
+            (None, "oi tudo bem?"),
+        ])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        self.assertNotIn("5.000,00", result)
+        self.assertIn("oi tudo bem?", result)
+
+    def test_no_arrow_format(self):
+        """Nunca deve usar formato com seta 'André →'."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs = self._make_msgs("João", [("pergunta", "resposta")])
+        result = _build_style_section_with_patterns({"Cliente": msgs}, None)
+        self.assertNotIn("André →", result)
+        self.assertNotIn("André p/", result)
+
+    def test_multiple_relationship_groups(self):
+        """Deve gerar seção separada para cada relacionamento."""
+        from whatsapp_manager import _build_style_section_with_patterns
+        msgs_by_rel = {
+            "Cliente": self._make_msgs("João", [(None, "oi cliente")]),
+            "Amigo": self._make_msgs("Pedro", [(None, "oi amigo")]),
+        }
+        result = _build_style_section_with_patterns(msgs_by_rel, None)
+        self.assertIn("### Cliente", result)
+        self.assertIn("### Amigo", result)
+        self.assertIn('André: "oi cliente"', result)
+        self.assertIn('André: "oi amigo"', result)
+
+
 if __name__ == "__main__":
     unittest.main()

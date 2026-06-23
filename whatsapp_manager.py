@@ -1674,6 +1674,7 @@ _SOUL_LEARNING_STATE_PATH = Path("/opt/data/.hermes/soul_learning_state.json")
 _SOUL_WHATSAPP_PATH = Path("/opt/data/SOUL_WHATSAPP.md")
 _STYLE_SENTINEL = "## EXEMPLOS REAIS DE ESCRITA"
 _MEDIA_FILTER_PREFIXES = ("<Media omitted>", "image omitted", "video omitted", "audio omitted", "sticker omitted")
+_OWNER_NAME_NORMS = {"andre alencar", "andré alencar", "andre", "andré"}
 
 
 def _should_run_style_learning() -> bool:
@@ -1987,6 +1988,8 @@ def _build_style_section_with_patterns(messages_by_relationship: dict, llm_patte
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 label = item.get("contact_name") or rel
+                if _normalize_text(label) in _OWNER_NAME_NORMS:
+                    label = rel
                 if contact_text:
                     lines.append(f'- {label}: "{contact_text}"')
                     lines.append(f'- André: "{andre_text}"')
@@ -2025,6 +2028,8 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 label = item.get("contact_name") or rel
+                if _normalize_text(label) in _OWNER_NAME_NORMS:
+                    label = rel
                 if contact_text:
                     lines.append(f'- {label}: "{contact_text}"')
                     lines.append(f'- André: "{andre_text}"')
@@ -2062,6 +2067,8 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
                     continue
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 label = item.get("contact_name") or rel
+                if _normalize_text(label) in _OWNER_NAME_NORMS:
+                    label = rel
                 if contact_text:
                     lines.append(f'{label}: "{contact_text}" / André: "{andre_text}"')
                 else:
