@@ -3314,9 +3314,15 @@ def pre_gateway_dispatch(*args, **kwargs):
             _ts = int(_ts.timestamp())
         else:
             _ts = int(_ts) if _ts else int(time.time())
+        _msg_id = (
+            _raw_msg.get("messageId")
+            or media_info.get("message_id")
+            or getattr(event, "message_id", None)
+            or f"owner_{chat_id}_{_ts}"
+        )
         _persist_owner_message_to_db(
             chat_id=chat_id,
-            message_id=media_info.get("message_id") or "",
+            message_id=_msg_id,
             body=(event.text or "").strip(),
             timestamp=_ts,
             sender_name="André Alencar",
