@@ -1237,7 +1237,8 @@ class TestUtilityFunctionsAndLogs(BaseWhatsAppManagerTest):
         mock_urlopen.return_value.__enter__.return_value = mock_response
         
         whatsapp_manager._lid_to_phone.clear()
-        
+        whatsapp_manager._bot_status_cache = {"paused": False, "ts": 0}
+
         result = whatsapp_manager._check_bot_paused()
         
         self.assertFalse(result)
