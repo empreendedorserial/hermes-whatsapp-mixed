@@ -2788,12 +2788,18 @@ class TestShouldRunStyleLearning(unittest.IsolatedAsyncioTestCase):
 class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
     """Testa coleta de mensagens do André agrupadas por relacionamento."""
 
-    def _make_sqlite_mock(self, chat_ids, messages_by_chat):
+    def _make_sqlite_mock(self, chat_ids, messages_by_chat, contact_msgs_by_chat=None):
+        """
+        contact_msgs_by_chat: dict {chat_id: [(body, timestamp), ...]}
+          mensagens recebidas (from_me=0) para simular diálogos.
+          Se None, retorna lista vazia para todas as queries de from_me=0.
+        """
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
         mock_conn.__enter__ = lambda s: mock_conn
         mock_conn.__exit__ = MagicMock(return_value=False)
+        contact_msgs_by_chat = contact_msgs_by_chat or {}
 
         def fetchall_side_effect():
             call_count = mock_cursor.fetchall.call_count
@@ -2809,7 +2815,7 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
             last_params = last_args[0][1] if len(last_args[0]) > 1 else (last_args[1] or {})
             chat_id = last_params[0] if last_params else None
             if "from_me=0" in last_sql:
-                return []  # sem mensagens do contato nos testes
+                return contact_msgs_by_chat.get(chat_id, [])
             return [(m, 1700000000) for m in messages_by_chat.get(chat_id, [])]
 
         mock_cursor.fetchall.side_effect = fetchall_side_effect
@@ -2847,6 +2853,72 @@ class TestCollectAndreMessagesByRelationship(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Cliente", result)
         self.assertIn("Amigo", result)
+
+    def test_dialogue_contact_message_after_andre(self):
+        """Regressão: mensagem do contato chegando DEPOIS de André deve ser pareada (André iniciou)."""
+        personal_contacts = {"5511111111111@s.whatsapp.net": {"relationship": "Cliente"}}
+        messages_by_chat = {"5511111111111@s.whatsapp.net": ["vc viu o jogo?", "e do Brasil?"]}
+        # Contato responde 2h depois da primeira mensagem do André
+        contact_msgs = {"5511111111111@s.whatsapp.net": [("sou cliente sim", 1700007200)]}
+        mock_conn = self._make_sqlite_mock(
+            list(messages_by_chat.keys()), messages_by_chat, contact_msgs
+        )
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory()), \
+             patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
+            result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
+        self.assertIn("Cliente", result)
+        dialogues = [m for m in result["Cliente"] if m.get("contact")]
+        self.assertGreater(len(dialogues), 0, "Deve existir pelo menos um diálogo com mensagem do contato")
+        self.assertEqual(dialogues[0]["contact"], "sou cliente sim")
+
+    def test_dialogue_each_contact_msg_used_once(self):
+        """Regressão: a mesma mensagem do contato não deve ser pareada com múltiplas mensagens do André."""
+        personal_contacts = {"5511111111111@s.whatsapp.net": {"relationship": "Cliente"}}
+        messages_by_chat = {"5511111111111@s.whatsapp.net": ["msg1", "msg2"]}
+        # Uma única mensagem do contato — deve ser usada só uma vez
+        contact_msgs = {"5511111111111@s.whatsapp.net": [("resposta unica", 1700003600)]}
+        mock_conn = self._make_sqlite_mock(
+            list(messages_by_chat.keys()), messages_by_chat, contact_msgs
+        )
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory()), \
+             patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
+            result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
+        if "Cliente" in result:
+            paired = [m for m in result["Cliente"] if m.get("contact") == "resposta unica"]
+            self.assertEqual(len(paired), 1, "Mesma mensagem do contato não deve aparecer em múltiplos pares")
+
+    def test_dialogue_contact_msg_outside_24h_not_paired(self):
+        """Regressão: mensagem do contato fora da janela de 24h não deve ser pareada."""
+        personal_contacts = {"5511111111111@s.whatsapp.net": {"relationship": "Cliente"}}
+        messages_by_chat = {"5511111111111@s.whatsapp.net": ["oi"]}
+        # Contato respondeu 25h depois — fora da janela
+        contact_msgs = {"5511111111111@s.whatsapp.net": [("resposta tardia", 1700000000 + 90001)]}
+        mock_conn = self._make_sqlite_mock(
+            list(messages_by_chat.keys()), messages_by_chat, contact_msgs
+        )
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory()), \
+             patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
+            result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
+        if "Cliente" in result:
+            paired = [m for m in result["Cliente"] if m.get("contact")]
+            self.assertEqual(len(paired), 0, "Mensagem fora de 24h não deve ser pareada")
+
+    def test_dialogue_contact_msg_whitespace_normalized(self):
+        """Regressão: quebras de linha extras na mensagem do contato devem ser normalizadas."""
+        personal_contacts = {"5511111111111@s.whatsapp.net": {"relationship": "Cliente"}}
+        messages_by_chat = {"5511111111111@s.whatsapp.net": ["blz"]}
+        contact_msgs = {"5511111111111@s.whatsapp.net": [("oi\n\n\n como vai\n", 1700003600)]}
+        mock_conn = self._make_sqlite_mock(
+            list(messages_by_chat.keys()), messages_by_chat, contact_msgs
+        )
+        with patch("whatsapp_manager.Path", side_effect=self._path_factory()), \
+             patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
+            result = whatsapp_manager._collect_andre_messages_by_relationship(personal_contacts)
+        if "Cliente" in result:
+            paired = [m for m in result["Cliente"] if m.get("contact")]
+            self.assertTrue(len(paired) > 0)
+            self.assertNotIn("\n", paired[0]["contact"], "Quebras de linha não devem aparecer no contato")
+            self.assertEqual(paired[0]["contact"], "oi como vai")
 
     def test_excludes_bot_messages(self):
         """Mensagens geradas pelo bot (presentes no state.db como assistant) devem ser excluídas."""
