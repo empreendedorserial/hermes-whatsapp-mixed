@@ -1778,6 +1778,34 @@ def _collect_andre_messages_by_relationship(
         return {}
 
 
+def _sanitize_sensitive(text: str) -> str | None:
+    """Remove mensagens com dados sensíveis. Retorna None se deve ser descartada."""
+    import re
+    if not text:
+        return None
+    # Descartar mensagens com padrões sensíveis
+    _SENSITIVE_PATTERNS = [
+        r"\b\d{4,6}\b.*senha|senha.*\b\d{4,6}\b",   # senha + número
+        r"senha|password|pin\b",                       # palavras de senha
+        r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b",            # CPF
+        r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b",      # CNPJ
+        r"ag[eê]ncia\s*:?\s*\d{3,6}",                # agência bancária
+        r"conta\s*:?\s*\d{4,}",                       # número de conta
+        r"cart[aã]o\s*:?\s*[\d\s]{13,19}",           # número de cartão
+        r"\b\d{13,19}\b",                              # número de cartão longo
+        r"cvv|cvc\s*:?\s*\d{3}",                     # CVV
+        r"saldo.*R\$\s*[\d.,]+",                      # saldo bancário
+        r"R\$\s*[\d.,]{4,}",                          # valores altos (R$ 1.000+)
+        r"chave\s+pix.*@|@.*chave\s+pix",            # chave pix com email
+        r"token|código de verificação|código de acesso",  # tokens de auth
+    ]
+    text_lower = text.lower()
+    for pattern in _SENSITIVE_PATTERNS:
+        if re.search(pattern, text_lower, re.IGNORECASE):
+            return None
+    return text
+
+
 def _build_style_section_directly(messages_by_relationship: dict) -> str:
     """Gera a seção de exemplos reais diretamente, sem LLM.
 
@@ -1796,13 +1824,19 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
         lines.append("**Exemplos reais de diálogos do André:**")
         for item in msgs:
             if isinstance(item, dict):
-                if item.get("contact"):
-                    lines.append(f'- **Contato:** "{item["contact"]}"')
-                    lines.append(f'  **André:** "{item["andre"]}"')
+                andre_text = _sanitize_sensitive(item.get("andre", ""))
+                if not andre_text:
+                    continue
+                contact_text = _sanitize_sensitive(item.get("contact") or "")
+                if contact_text:
+                    lines.append(f'- **{rel}:** "{contact_text}"')
+                    lines.append(f'  **André:** "{andre_text}"')
                 else:
-                    lines.append(f'- **André:** "{item["andre"]}"')
+                    lines.append(f'- **André:** "{andre_text}"')
             else:
-                lines.append(f'- **André:** "{item}"')
+                sanitized = _sanitize_sensitive(item)
+                if sanitized:
+                    lines.append(f'- **André:** "{sanitized}"')
         lines.append("")
 
     return "\n".join(lines)
@@ -1822,12 +1856,18 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
         lines = []
         for item in msgs[:30]:
             if isinstance(item, dict):
-                if item.get("contact"):
-                    lines.append(f'- Contato: "{item["contact"]}" → André: "{item["andre"]}"')
+                andre_text = _sanitize_sensitive(item.get("andre", ""))
+                if not andre_text:
+                    continue
+                contact_text = _sanitize_sensitive(item.get("contact") or "")
+                if contact_text:
+                    lines.append(f'- {rel}: "{contact_text}" → André: "{andre_text}"')
                 else:
-                    lines.append(f'- André: "{item["andre"]}"')
+                    lines.append(f'- André: "{andre_text}"')
             else:
-                lines.append(f'- André: "{item}"')
+                sanitized = _sanitize_sensitive(item)
+                if sanitized:
+                    lines.append(f'- André: "{sanitized}"')
         sections.append(f"### {rel} ({len(msgs)} diálogos)\n" + "\n".join(lines))
 
     mensagens_block = "\n\n".join(sections)
