@@ -1553,11 +1553,9 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
             if _messages_by_rel:
                 groups_info = ", ".join(f"{r}({len(m)})" for r, m in _messages_by_rel.items())
                 logger.info(f"[style-learning] Grupos coletados: {groups_info}")
-                # Sempre gera a seção com os exemplos literais; LLM enriquece com padrões
-                _style_section = _build_style_section_directly(_messages_by_rel)
-                _llm_section = _extract_style_patterns_via_llm(_messages_by_rel)
-                if _llm_section:
-                    _style_section = _llm_section  # LLM já inclui os exemplos + padrões
+                # LLM gera só os padrões; Python garante os exemplos no formato correto
+                _llm_patterns = _extract_style_patterns_via_llm(_messages_by_rel)
+                _style_section = _build_style_section_with_patterns(_messages_by_rel, _llm_patterns)
                 if _style_section:
                     if _update_soul_whatsapp_with_examples(_style_section):
                         logger.info("[style-learning] SOUL_WHATSAPP.md atualizado com exemplos reais de escrita.")
@@ -1915,6 +1913,68 @@ def _sanitize_sensitive(text: str) -> str | None:
     return text
 
 
+def _build_style_section_with_patterns(messages_by_relationship: dict, llm_patterns: str | None) -> str:
+    """Combina padrões do LLM com exemplos de diálogo gerados pelo Python.
+
+    O LLM fornece análise de padrões; o Python garante o formato exato dos exemplos.
+    """
+    from datetime import datetime
+    hoje = datetime.now().strftime("%d/%m/%Y")
+
+    # Extrai padrões por relacionamento do output do LLM
+    patterns_by_rel: dict[str, str] = {}
+    if llm_patterns:
+        current_rel = None
+        current_lines: list[str] = []
+        for line in llm_patterns.splitlines():
+            if line.startswith("### "):
+                if current_rel:
+                    patterns_by_rel[current_rel] = "\n".join(current_lines).strip()
+                current_rel = line[4:].strip()
+                current_lines = []
+            elif current_rel:
+                current_lines.append(line)
+        if current_rel:
+            patterns_by_rel[current_rel] = "\n".join(current_lines).strip()
+
+    lines = [
+        _STYLE_SENTINEL,
+        f"> Gerado automaticamente em {hoje}.\n",
+    ]
+    for rel, msgs in messages_by_relationship.items():
+        lines.append(f"### {rel}")
+        # Padrões do LLM (busca pelo nome exato ou prefixo)
+        pattern_text = patterns_by_rel.get(rel, "")
+        if not pattern_text:
+            for k, v in patterns_by_rel.items():
+                if k.lower().startswith(rel.lower()) or rel.lower().startswith(k.lower()):
+                    pattern_text = v
+                    break
+        if pattern_text:
+            lines.append(pattern_text)
+        lines.append("")
+        lines.append("**Exemplos reais de diálogos (copiados literalmente):**")
+        for item in msgs:
+            if isinstance(item, dict):
+                andre_text = _sanitize_sensitive(item.get("andre", ""))
+                if not andre_text:
+                    continue
+                contact_text = _sanitize_sensitive(item.get("contact") or "")
+                label = item.get("contact_name") or rel
+                if contact_text:
+                    lines.append(f'- {label}: "{contact_text}"')
+                    lines.append(f'  André: "{andre_text}"')
+                else:
+                    lines.append(f'- André: "{andre_text}"')
+            else:
+                sanitized = _sanitize_sensitive(item)
+                if sanitized:
+                    lines.append(f'- André: "{sanitized}"')
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def _build_style_section_directly(messages_by_relationship: dict) -> str:
     """Gera a seção de exemplos reais diretamente, sem LLM.
 
@@ -1953,14 +2013,17 @@ def _build_style_section_directly(messages_by_relationship: dict) -> str:
 
 
 def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | None:
-    """Chama o LLM para extrair padrões de escrita e exemplos reais por relacionamento.
+    """Chama o LLM para extrair padrões de escrita por relacionamento.
 
+    O LLM gera APENAS os padrões identificados (texto analítico).
+    Os exemplos de diálogo são inseridos pelo Python com formato garantido.
     Retorna seção markdown pronta para inserção no SOUL_WHATSAPP.md, ou None em falha.
     """
     from datetime import datetime
 
     hoje = datetime.now().strftime("%d/%m/%Y")
 
+    # Bloco de mensagens para o LLM analisar (sem pedir que ele as reproduza)
     sections = []
     for rel, msgs in messages_by_relationship.items():
         lines = []
@@ -1972,46 +2035,30 @@ def _extract_style_patterns_via_llm(messages_by_relationship: dict) -> str | Non
                 contact_text = _sanitize_sensitive(item.get("contact") or "")
                 label = item.get("contact_name") or rel
                 if contact_text:
-                    lines.append(f'- {label}: "{contact_text}"')
-                    lines.append(f'  André: "{andre_text}"')
+                    lines.append(f'{label}: "{contact_text}" / André: "{andre_text}"')
                 else:
-                    lines.append(f'- André: "{andre_text}"')
+                    lines.append(f'André: "{andre_text}"')
             else:
                 sanitized = _sanitize_sensitive(item)
                 if sanitized:
-                    lines.append(f'- André: "{sanitized}"')
-        sections.append(f"### {rel} ({len(msgs)} diálogos)\n" + "\n".join(lines))
+                    lines.append(f'André: "{sanitized}"')
+        sections.append(f"### {rel}\n" + "\n".join(lines))
 
     mensagens_block = "\n\n".join(sections)
 
     prompt = (
         "Você é um analista de estilo de escrita do WhatsApp.\n\n"
         "Abaixo estão mensagens REAIS enviadas por André Alencar, separadas por tipo de relacionamento.\n"
-        "Sua tarefa é:\n"
-        "1. Identificar padrões de escrita (abreviações, gírias, emojis, pontuação, formalidade, comprimento)\n"
-        "2. LISTAR TODAS as mensagens fornecidas como exemplos reais — não selecione, não resuma, copie todas\n\n"
-        "REGRAS CRÍTICAS:\n"
-        "- COPIE LITERALMENTE todas as mensagens fornecidas na seção 'Exemplos reais'. Não omita nenhuma.\n"
-        "- Não invente, não reescreva, não resuma. Copie o texto exato de cada mensagem.\n"
-        "- Se uma mensagem for curta ('ok', 'sim', 'blz'), inclua assim mesmo — faz parte do estilo.\n"
-        "- Escreva os padrões em português brasileiro.\n\n"
-        "Formato de saída EXATO (markdown, sem texto antes ou depois):\n\n"
-        f"{_STYLE_SENTINEL}\n"
-        f"> Gerado automaticamente em {hoje}.\n\n"
+        "Sua tarefa é APENAS identificar e listar os padrões de escrita de André — NÃO reproduza as mensagens.\n\n"
+        "Para cada grupo, retorne SOMENTE:\n"
         "### [Nome do relacionamento]\n"
         "**Padrões identificados:**\n"
         "- [padrão 1]\n"
-        "- [padrão 2]\n\n"
-        "**Exemplos reais de diálogos (copiados literalmente):**\n"
-        '- [Nome do contato]: "mensagem do contato"\n'
-        '  André: "resposta do André"\n'
-        '- André: "mensagem sem contexto anterior"\n\n'
-        "[repita para cada grupo]\n\n"
-        "---\n\n"
-        "ATENÇÃO AO FORMATO DOS EXEMPLOS:\n"
-        "- O remetente da resposta é SEMPRE escrito como 'André:' (sem seta, sem '→', sem nome do contato depois)\n"
-        "- NUNCA escreva 'André → NomeContato:' — use apenas 'André:'\n"
-        "- NUNCA escreva 'André → Amigo:', 'André → Cliente:' ou qualquer variação com seta\n\n"
+        "- [padrão 2]\n"
+        "- [padrão 3]\n\n"
+        "Analise: abreviações usadas, gírias, emojis, pontuação, formalidade, comprimento das mensagens, "
+        "tom (direto, amigável, técnico), perguntas abertas ou fechadas.\n"
+        "Escreva em português brasileiro. Sem texto antes ou depois dos grupos.\n\n"
         "MENSAGENS POR RELACIONAMENTO:\n\n"
         f"{mensagens_block}"
     )
