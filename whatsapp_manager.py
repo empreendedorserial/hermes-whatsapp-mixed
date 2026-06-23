@@ -160,6 +160,9 @@ _lid_to_phone: dict[str, str] = {}
 # Atualização de contato pendente aguardando número do owner: { sender_id -> {name, fields} }
 _pending_contact_update: dict[str, dict] = {}
 
+# Último cartão de contato compartilhado pelo owner: { sender_id -> {name, phone} }
+_pending_contact_card: dict[str, dict] = {}
+
 # Cache TTL para _check_bot_paused() — evita HTTP a cada mensagem
 _BOT_STATUS_TTL_S: int = int(os.getenv("WHATSAPP_BOT_STATUS_TTL_S", "5"))
 _bot_status_cache: dict = {"paused": False, "ts": 0.0}
@@ -3865,6 +3868,19 @@ def pre_gateway_dispatch(*args, **kwargs):
         )
     except Exception as log_e:
         logger.error(f"Erro ao gravar debug log: {log_e}")
+    # Cartão de contato compartilhado pelo owner — guardar pendência para próximo comando
+    if is_owner and msg_text.startswith("[CONTACT_CARD:"):
+        card_content = msg_text[len("[CONTACT_CARD:"):].rstrip("]").strip()
+        # Pode haver múltiplos cartões separados por ';'
+        first_card = card_content.split(";")[0].strip()
+        parts = first_card.split("|")
+        card_name = parts[0].strip() if len(parts) > 0 else ""
+        card_phone = parts[1].strip() if len(parts) > 1 else ""
+        if card_phone or card_name:
+            _pending_contact_card[sender_id] = {"name": card_name, "phone": card_phone}
+            logger.info(f"[contact-card] Cartão guardado: name='{card_name}' phone='{card_phone}'")
+        return {"action": "skip", "reason": "contact-card-stored"}
+
     sync_keywords = [
         "sync contacts", "sync contatos", "sincronizar contatos",
         "sincronize contatos", "sincronize os contatos", "sincronizar os contatos",
@@ -4040,15 +4056,30 @@ def pre_gateway_dispatch(*args, **kwargs):
                     result = _update_contact_fields(nl_contact_name, fields_to_update)
                     logger.info(f"[update-nl] Resultado: {result}")
                     if "não encontrado" in result:
-                        _pending_contact_update[sender_id] = {
-                            "name": nl_contact_name,
-                            "fields": fields_to_update,
-                        }
-                        response_msg = (
-                            f"Não encontrei '{nl_contact_name}' nos seus contatos. "
-                            f"Qual é o número do WhatsApp dela? (Ex: 5511999998888)"
-                        )
+                        # Tentar com cartão de contato compartilhado anteriormente
+                        card = _pending_contact_card.get(sender_id)
+                        if card and card.get("phone"):
+                            if card.get("name"):
+                                fields_to_update["name"] = card["name"]
+                            result = _update_contact_fields(card["phone"], fields_to_update)
+                            logger.info(f"[update-nl] Resultado via cartão ({card['phone']}): {result}")
+                            if "não encontrado" not in result:
+                                del _pending_contact_card[sender_id]
+                                response_msg = result
+                            else:
+                                _pending_contact_update[sender_id] = {"name": nl_contact_name, "fields": fields_to_update}
+                                response_msg = f"Não encontrei '{nl_contact_name}' nem pelo número do cartão. Qual é o número do WhatsApp? (Ex: 5511999998888)"
+                        else:
+                            _pending_contact_update[sender_id] = {
+                                "name": nl_contact_name,
+                                "fields": fields_to_update,
+                            }
+                            response_msg = (
+                                f"Não encontrei '{nl_contact_name}' nos seus contatos. "
+                                f"Compartilhe o cartão do contato ou informe o número (Ex: 5511999998888)"
+                            )
                     else:
+                        _pending_contact_card.pop(sender_id, None)
                         response_msg = result
                 else:
                     logger.warning(f"[update-nl] Nenhum campo extraído para '{nl_contact_name}'")

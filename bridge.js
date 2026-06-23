@@ -783,6 +783,27 @@ let onMessagesUpsert = async ({ messages, type }) => {
       }
     }
 
+    // Contact card (vCard) shared in chat
+    if (!body && (messageContent.contactMessage || messageContent.contactsArrayMessage)) {
+      const contacts = messageContent.contactsArrayMessage?.contacts || (messageContent.contactMessage ? [messageContent.contactMessage] : []);
+      const cards = [];
+      for (const c of contacts) {
+        const vcard = c.vcard || '';
+        const displayName = c.displayName || '';
+        // Extract phone from TEL line in vCard
+        const telMatch = vcard.match(/TEL[^:\n]*:([+\d\s\-().]+)/i);
+        const phone = telMatch ? telMatch[1].replace(/\D/g, '') : '';
+        const name = displayName || (vcard.match(/FN:(.+)/)?.[1]?.trim()) || '';
+        if (phone || name) {
+          cards.push(`${name}|${phone}`);
+        }
+      }
+      if (cards.length > 0) {
+        body = `[CONTACT_CARD: ${cards.join('; ')}]`;
+        console.log(`[bridge] contact card detected: ${body}`);
+      }
+    }
+
     // For media without caption, use a placeholder so the API message is never empty
     if (hasMedia && !body) {
       body = `[${mediaType} received]`;
