@@ -1684,7 +1684,10 @@ def _collect_andre_messages_by_relationship(
             rel = data.get("manual_relationship") or data.get("relationship") or "Cliente"
             # Preferir nickname; usar name só se não for o nome do próprio André
             name = data.get("nickname") or data.get("name") or ""
-            if _normalize_text(name) in ("andre alencar", "andré alencar", "andre", "andré"):
+            _name_norm = _normalize_text(name)
+            if _name_norm in ("andre alencar", "andré alencar", "andre", "andré"):
+                name = ""
+            elif _name_norm.startswith("contato ") or _name_norm.startswith("usuario ") or _name_norm.startswith("desconhecido"):
                 name = ""
             raw_prefix = key.split("@")[0]  # ex: "265231477510271" (lid) ou "5586..." (phone)
             phone_norm = _normalize_brazilian_phone("".join(c for c in raw_prefix if c.isdigit()))

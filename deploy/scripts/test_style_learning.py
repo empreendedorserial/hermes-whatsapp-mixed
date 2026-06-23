@@ -87,7 +87,10 @@ def build_lookups(personal_contacts: dict):
     for key, data in personal_contacts.items():
         rel = data.get("manual_relationship") or data.get("relationship") or "Cliente"
         name = data.get("nickname") or data.get("name") or ""
-        if norm_text(name) in ("andre alencar", "andré alencar", "andre", "andré"):
+        _nn = norm_text(name)
+        if _nn in ("andre alencar", "andré alencar", "andre", "andré"):
+            name = ""
+        elif _nn.startswith("contato ") or _nn.startswith("usuario ") or _nn.startswith("desconhecido"):
             name = ""
 
         raw = key.split("@")[0]
