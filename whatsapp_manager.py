@@ -3289,8 +3289,17 @@ def pre_gateway_dispatch(*args, **kwargs):
     clean_chat = "".join(c for c in resolved_chat.split("@")[0].split(":")[0] if c.isdigit())
     is_self_chat = (clean_sender == clean_chat)
 
+    # Detectar from_me via evento bruto (para from_me=1, sender_id é o contato, não o André)
+    _raw_event = None
+    for _attr in ["raw", "raw_event", "payload", "data"]:
+        _val = getattr(event, _attr, None)
+        if isinstance(_val, dict):
+            _raw_event = _val
+            break
+    _is_from_me = bool((_raw_event or {}).get("fromMe") or (_raw_event or {}).get("from_me"))
+
     # Persistir mensagens manuais do André no SQLite (Hermes não grava from_me=1 automaticamente)
-    if is_owner and not is_self_chat and chat_id:
+    if _is_from_me and not is_self_chat and chat_id:
         _persist_owner_message_to_db(
             chat_id=chat_id,
             message_id=media_info.get("message_id") or "",
