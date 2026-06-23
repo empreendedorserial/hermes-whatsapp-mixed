@@ -4020,14 +4020,21 @@ def pre_gateway_dispatch(*args, **kwargs):
                     fields_to_update["manual_relationship"] = fields_to_update["relationship"]
 
                 # Se não extraiu relacionamento mas a mensagem menciona "filho/filha", inferir
-                rel_keywords = {"filho": "Filho", "filha": "Filho", "parente": "Parente",
-                                "irmão": "Parente", "irmã": "Parente", "amigo": "Amigo",
-                                "amiga": "Amigo", "cliente": "Cliente", "vendedor": "Vendedor"}
+                # kw → (relationship enum, manual_relationship label)
+                rel_keywords = {
+                    "filho": ("Filho", "Filho"), "filha": ("Filho", "Filha"),
+                    "parente": ("Parente", "Parente"), "irmão": ("Parente", "Irmão"),
+                    "irmã": ("Parente", "Irmã"), "amigo": ("Amigo", "Amigo"),
+                    "amiga": ("Amigo", "Amiga"), "cliente": ("Cliente", "Cliente"),
+                    "vendedor": ("Vendedor", "Vendedor"), "namorada": ("AmigoProximo", "Namorada"),
+                    "namorado": ("AmigoProximo", "Namorado"), "esposa": ("Parente", "Esposa"),
+                    "marido": ("Parente", "Marido"), "esposo": ("Parente", "Esposo"),
+                }
                 if "relationship" not in fields_to_update:
-                    for kw, rel in rel_keywords.items():
+                    for kw, (rel, man_rel) in rel_keywords.items():
                         if kw in msg_text.lower():
                             fields_to_update["relationship"] = rel
-                            fields_to_update["manual_relationship"] = rel
+                            fields_to_update["manual_relationship"] = man_rel
                             break
 
                 if fields_to_update:
