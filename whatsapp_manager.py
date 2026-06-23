@@ -369,15 +369,16 @@ def _persist_owner_message_to_db(chat_id: str, message_id: str, body: str, times
     if not db_path.exists():
         return
     try:
+        _sender_id = config.whatsapp_owner_number or sender_name
         with sqlite3.connect(str(db_path)) as conn:
             cur = conn.cursor()
             cur.execute(
                 """
                 INSERT OR IGNORE INTO messages
-                    (chat_id, sender_name, message_id, message_type, body, timestamp, from_me)
-                VALUES (?, ?, ?, 'text', ?, ?, 1)
+                    (chat_id, sender_id, sender_name, message_id, message_type, body, timestamp, from_me)
+                VALUES (?, ?, ?, ?, 'text', ?, ?, 1)
                 """,
-                (chat_id, sender_name, message_id or f"owner_{int(time.time())}", body, timestamp),
+                (chat_id, _sender_id, sender_name, message_id or f"owner_{int(time.time())}", body, timestamp),
             )
             conn.commit()
             if cur.rowcount:
