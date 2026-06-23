@@ -26,7 +26,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync } from 'fs';
 import { randomBytes } from 'crypto';
-import { execSync, spawnSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import { tmpdir } from 'os';
 import qrcode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -773,12 +773,11 @@ let onMessagesUpsert = async ({ messages, type }) => {
           "conn.commit()",
           "conn.close()",
         ].join('\n');
-        const res = spawnSync('python3', ['-c', _pyScript, _dbPath, chatId, _ownerSid, 'André Alencar', _msgId, 'text', body, String(_ts)], { timeout: 3000, encoding: 'utf8' });
-        if (res.status === 0) {
-          console.log(`[bridge-owner-msg] Gravado: chat=${chatId} body="${body.slice(0, 60)}"`);
-        } else {
-          console.log(`[bridge-owner-msg] Erro: ${(res.stderr || '').slice(0, 100)}`);
-        }
+        const proc = spawn('python3', ['-c', _pyScript, _dbPath, chatId, _ownerSid, 'André Alencar', _msgId, 'text', body, String(_ts)], { stdio: 'pipe' });
+        proc.on('close', (code) => {
+          if (code === 0) console.log(`[bridge-owner-msg] Gravado: chat=${chatId} body="${body.slice(0, 60)}"`);
+          else proc.stderr.on('data', (d) => console.log(`[bridge-owner-msg] Erro: ${d.toString().slice(0, 100)}`));
+        });
       } catch (e) {
         console.log(`[bridge-owner-msg] Exceção: ${e.message?.slice(0, 100)}`);
       }
