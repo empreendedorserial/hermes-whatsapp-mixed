@@ -235,18 +235,23 @@ def main():
             contact_msgs = cur.fetchall()
 
             msgs = []
+            used_contact_ts = set()
             for body, ts in andre_msgs:
                 body_clean = sanitize(body)
                 if not body_clean:
                     log(f"  ⚠️  filtrado (sensível): {body[:50]}")
                     continue
-                # Encontrar a mensagem do contato mais próxima (dentro de 24h)
-                nearest = min(
-                    ((abs(cts - ts), cb) for cb, cts in contact_msgs if abs(cts - ts) <= 86400),
+                # Mensagem do contato mais próxima dentro de 24h (cada uma usada uma vez)
+                candidates = sorted(
+                    ((abs(cts - ts), cts, cb) for cb, cts in contact_msgs
+                     if abs(cts - ts) <= 86400 and cts not in used_contact_ts),
                     key=lambda x: x[0],
-                    default=(None, None),
                 )
-                contact_msg = nearest[1] if nearest[0] is not None else None
+                contact_msg = None
+                if candidates:
+                    _, nearest_cts, nearest_cb = candidates[0]
+                    contact_msg = " ".join(nearest_cb.split())  # normaliza espaços/quebras
+                    used_contact_ts.add(nearest_cts)
                 msgs.append({"contact": contact_msg, "andre": body_clean})
 
             if not msgs:
