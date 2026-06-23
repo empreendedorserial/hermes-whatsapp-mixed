@@ -1186,7 +1186,11 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
             bridge_conn = sqlite3.connect(str(db_path))
             bridge_cursor = bridge_conn.cursor()
             bridge_cursor.execute("""
-                SELECT chat_id, MAX(sender_name) as name, COUNT(*) as msg_count, MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
+                SELECT chat_id,
+                       MAX(CASE WHEN from_me=0 THEN sender_name ELSE NULL END) as name,
+                       COUNT(*) as msg_count,
+                       MIN(timestamp) as min_ts,
+                       MAX(timestamp) as max_ts
                 FROM messages
                 WHERE chat_id NOT LIKE '%@g.us%' AND chat_id IS NOT NULL
                 GROUP BY chat_id
