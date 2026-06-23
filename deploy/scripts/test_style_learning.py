@@ -103,25 +103,42 @@ def build_lookups(personal_contacts: dict):
     return raw_to_rel, raw_to_name, phone_to_rel, phone_to_name
 
 
+SESSION_DIR = Path("/opt/data/.hermes/platforms/whatsapp/session")
+
+
 def build_lid_phone_map(conn) -> dict[str, str]:
     """
-    Constrói mapa lid_prefix → phone_prefix usando sender_id das mensagens recebidas.
-    Em chats @lid, o sender_id costuma ser o telefone real do contato.
+    Constrói mapa lid_prefix → phone_prefix.
+    Tenta: 1) arquivos lid-mapping-{phone}.json da sessão  2) sender_id das msgs recebidas.
     """
+    mapping = {}
+    # Fonte 1: arquivos de sessão (mais confiável)
+    if SESSION_DIR.exists():
+        import re as _re
+        for f in SESSION_DIR.iterdir():
+            m = _re.match(r'^lid-mapping-(\d+)\.json$', f.name)
+            if not m:
+                continue
+            phone = m.group(1)
+            try:
+                lid = json.loads(f.read_text()).strip().strip('"')
+                if lid:
+                    mapping[lid] = phone
+            except Exception:
+                pass
+    # Fonte 2: sender_id das mensagens recebidas em chats @lid
     cur = conn.cursor()
     cur.execute("""
         SELECT DISTINCT chat_id, sender_id FROM messages
-        WHERE from_me=0
-        AND chat_id LIKE '%@lid%'
+        WHERE from_me=0 AND chat_id LIKE '%@lid%'
         AND sender_id IS NOT NULL
         AND sender_id NOT LIKE '%@lid%'
         AND sender_id NOT LIKE '%@g.us%'
     """)
-    mapping = {}
     for chat_id, sender_id in cur.fetchall():
         lid = chat_id.split("@")[0]
         phone = sender_id.split("@")[0].split(":")[0]
-        if phone and phone.isdigit():
+        if phone and phone.isdigit() and lid not in mapping:
             mapping[lid] = phone
     return mapping
 

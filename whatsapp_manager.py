@@ -1704,7 +1704,24 @@ def _collect_andre_messages_by_relationship(
             with sqlite3.connect(str(bridge_db)) as conn:
                 cur = conn.cursor()
 
-                # Cross-reference @lid → telefone real via sender_id das mensagens recebidas
+                # Cross-reference @lid → telefone via arquivos lid-mapping-{phone}.json da sessão
+                lid_phone_map: dict[str, str] = {}
+                import re as _re
+                _session_dir = Path("/opt/data/.hermes/platforms/whatsapp/session")
+                if _session_dir.exists():
+                    for _f in _session_dir.iterdir():
+                        _m = _re.match(r'^lid-mapping-(\d+)\.json$', _f.name)
+                        if not _m:
+                            continue
+                        _phone = _m.group(1)
+                        try:
+                            import json as _json
+                            _lid = _json.loads(_f.read_text()).strip().strip('"')
+                            if _lid:
+                                lid_phone_map[_lid] = _phone
+                        except Exception:
+                            pass
+                # Fallback: sender_id das mensagens recebidas em chats @lid
                 cur.execute("""
                     SELECT DISTINCT chat_id, sender_id FROM messages
                     WHERE from_me=0 AND chat_id LIKE '%@lid%'
@@ -1712,11 +1729,10 @@ def _collect_andre_messages_by_relationship(
                     AND sender_id NOT LIKE '%@lid%'
                     AND sender_id NOT LIKE '%@g.us%'
                 """)
-                lid_phone_map: dict[str, str] = {}
                 for _cid, _sid in cur.fetchall():
                     _lid = _cid.split("@")[0]
                     _phone = _sid.split("@")[0].split(":")[0]
-                    if _phone and _phone.isdigit():
+                    if _phone and _phone.isdigit() and _lid not in lid_phone_map:
                         lid_phone_map[_lid] = _phone
 
                 cur.execute(
