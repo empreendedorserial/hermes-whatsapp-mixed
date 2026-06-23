@@ -935,6 +935,40 @@ let onMessagesUpsert = async ({ messages, type }) => {
   }
 };
 
+// Grava lid-mapping-{phone}.json se ainda não existe, sem sobrescrever mapeamentos existentes.
+// phone deve ser apenas dígitos (ex: "558698412942").
+function _persistLidMapping(lid, phone) {
+  if (!lid || !phone || !/^\d+$/.test(phone)) return;
+  const filePath = path.join(SESSION_DIR, `lid-mapping-${phone}.json`);
+  try {
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, JSON.stringify(lid), 'utf8');
+      lidToPhone[lid] = phone;
+    }
+  } catch {}
+}
+
+// Tenta extrair o phone de um contato @lid usando o batch atual e sock.contacts.
+// Retorna apenas dígitos ou null.
+function _phoneFromLidContact(lid, batchContacts) {
+  // 1. Mesmo cleanJid no batch com sufixo @s.whatsapp.net
+  for (const c of (batchContacts || [])) {
+    if (!c.id) continue;
+    const cClean = String(c.id).split(':')[0].split('@')[0];
+    if (cClean === lid && c.id.endsWith('@s.whatsapp.net')) {
+      return cClean.replace(/\D/g, '');
+    }
+  }
+  // 2. sock.contacts já tem entrada @s.whatsapp.net para esse cleanJid
+  const existing = sock?.contacts?.[lid + '@s.whatsapp.net'];
+  if (existing?.id) {
+    const phone = String(existing.id).split(':')[0].split('@')[0].replace(/\D/g, '');
+    if (phone) return phone;
+  }
+  // 3. campo phoneNumber no próprio contato (Baileys expõe em alguns builds)
+  return null;
+}
+
 function handleContactsSet({ contacts }) {
   if (contacts) {
     for (const contact of contacts) {
@@ -942,6 +976,10 @@ function handleContactsSet({ contacts }) {
       const cleanJid = String(contact.id).split(':')[0].split('@')[0];
       sock.contacts[contact.id] = contact;
       sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
     }
     _contactsCacheDirty = true;
   }
@@ -954,6 +992,10 @@ function handleContactsUpsert(contacts) {
       const cleanJid = String(contact.id).split(':')[0].split('@')[0];
       sock.contacts[contact.id] = contact;
       sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
     }
     _contactsCacheDirty = true;
   }
@@ -968,6 +1010,10 @@ function handleContactsUpdate(updates) {
       const merged = { ...current, ...update };
       sock.contacts[update.id] = merged;
       sock.contacts[cleanJid + '@s.whatsapp.net'] = merged;
+      if (update.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, updates);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
     }
     _contactsCacheDirty = true;
   }
@@ -980,6 +1026,10 @@ function handleMessagingHistorySet({ contacts }) {
       const cleanJid = String(contact.id).split(':')[0].split('@')[0];
       sock.contacts[contact.id] = contact;
       sock.contacts[cleanJid + '@s.whatsapp.net'] = contact;
+      if (contact.id.endsWith('@lid')) {
+        const phone = _phoneFromLidContact(cleanJid, contacts);
+        if (phone) _persistLidMapping(cleanJid, phone);
+      }
     }
   }
 }

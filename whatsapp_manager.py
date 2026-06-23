@@ -1065,8 +1065,13 @@ def _classify_contact_via_llm(name: str, chat_history: str, stats_info: str) -> 
     }
 
 
-def _build_lid_phone_map(db_path: "Path | None" = None) -> dict[str, str]:
-    """Constrói mapa {lid → phone_digits} a partir dos arquivos de sessão e do banco."""
+def _build_lid_phone_map(db_path: "Path | None" = None,
+                         personal_contacts: "dict | None" = None) -> dict[str, str]:
+    """Constrói mapa {lid → phone_digits} a partir de três fontes, em ordem de prioridade:
+    1. Arquivos de sessão lid-mapping-{phone}.json (escritos pelo bridge)
+    2. Banco SQLite (mensagens recebidas em chats @lid)
+    3. Campo 'lid' nas entradas @s.whatsapp.net do personal_contacts (persistido por dedup anterior)
+    """
     import re as _re
     lid_phone_map: dict[str, str] = {}
     session_dir = Path("/opt/data/.hermes/platforms/whatsapp/session")
@@ -1104,6 +1109,19 @@ def _build_lid_phone_map(db_path: "Path | None" = None) -> dict[str, str]:
                         lid_phone_map[lid] = phone
         except Exception:
             pass
+    # Fonte adicional: campo 'lid' gravado em execuções anteriores do dedup
+    if personal_contacts:
+        for key, entry in personal_contacts.items():
+            if not isinstance(entry, dict) or "@s.whatsapp.net" not in key:
+                continue
+            lid_ref = entry.get("lid", "")
+            if not lid_ref:
+                continue
+            lid_raw = lid_ref.split("@")[0]
+            phone_raw = key.split("@")[0].split(":")[0]
+            phone_digits = "".join(c for c in phone_raw if c.isdigit())
+            if lid_raw and phone_digits and lid_raw not in lid_phone_map:
+                lid_phone_map[lid_raw] = phone_digits
     return lid_phone_map
 
 
@@ -1313,7 +1331,7 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
             logger.info(f"[sync] Removida entrada do owner: {k}")
 
     # 1d. Deduplicar: mesclar entradas @lid com @s.whatsapp.net do mesmo contato
-    _lid_phone_map_sync = _build_lid_phone_map(db_path if db_path.exists() else None)
+    _lid_phone_map_sync = _build_lid_phone_map(db_path if db_path.exists() else None, personal_contacts)
     _deduped = _dedup_personal_contacts(personal_contacts, _lid_phone_map_sync)
     if _deduped:
         logger.info(f"[sync] {_deduped} entrada(s) @lid mescladas e removidas (campo 'lid' adicionado)")
