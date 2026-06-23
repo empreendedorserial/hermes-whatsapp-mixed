@@ -513,6 +513,19 @@ def _fetch_chat_history(chat_id: str, limit: int = 50) -> str:
         return ""
 
 
+def _fetch_all_bridge_contact_names() -> dict[str, str]:
+    """Busca todos os nomes de contatos do bridge via /contacts/all. Retorna dict jid→name."""
+    try:
+        url = f"{BRIDGE_URL}/contacts/all"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {c["jid"]: c["name"] for c in data.get("contacts", []) if c.get("jid") and c.get("name")}
+    except Exception as e:
+        logger.info(f"[sync] bridge /contacts/all falhou: {e}")
+        return {}
+
+
 def _resolve_contact_name_from_bridge(jid: str) -> str | None:
     """Consulta o Baileys via bridge para obter o pushName/contact name de um JID.
 
@@ -1082,7 +1095,31 @@ def _sync_contacts_from_db_internal(force: bool = True) -> str:
         except Exception as e:
             logger.error(f"Erro ao ler {pc_path}: {e}")
 
-    # 1b. Remover entradas do owner do arquivo (não devem estar no personal_contacts)
+    # 1b. Atualizar nomes placeholder com nomes reais do bridge (agenda do WhatsApp)
+    _bridge_names = _fetch_all_bridge_contact_names()
+    if _bridge_names:
+        _names_updated = 0
+        for _jid, _bname in _bridge_names.items():
+            if _jid not in personal_contacts:
+                continue
+            _entry = personal_contacts[_jid]
+            if not isinstance(_entry, dict):
+                continue
+            _cur_name = _entry.get("name") or ""
+            # Substituir apenas nomes placeholder (Contato XXXX, vazios, etc.)
+            _is_placeholder = (
+                not _cur_name
+                or _normalize_text(_cur_name).startswith("contato ")
+                or _normalize_text(_cur_name).startswith("usuario ")
+            )
+            if _is_placeholder and _bname:
+                _entry["name"] = _bname
+                _names_updated += 1
+                metadata_updated = True
+        if _names_updated:
+            logger.info(f"[sync] {_names_updated} nome(s) atualizado(s) via bridge /contacts/all")
+
+    # 1c. Remover entradas do owner do arquivo (não devem estar no personal_contacts)
     owner_phone_norm = _normalize_brazilian_phone(
         "".join(c for c in (config.whatsapp_owner_number or "").split("@")[0] if c.isdigit())
     )

@@ -1667,6 +1667,21 @@ adminRouter.get('/contacts/search', (req, res) => {
   res.json({ results });
 });
 
+adminRouter.get('/contacts/all', (req, res) => {
+  if (!sock || !sock.contacts) return res.json({ contacts: [] });
+  const contacts = [];
+  const seen = new Set();
+  for (const [jid, contact] of Object.entries(sock.contacts)) {
+    if (jid.endsWith('@g.us') || jid.endsWith('@broadcast')) continue;
+    const cleanJid = jid.split(':')[0] + (jid.includes('@') ? '@' + jid.split('@')[1] : '');
+    if (seen.has(cleanJid)) continue;
+    seen.add(cleanJid);
+    const name = contact.name || contact.verifiedName || contact.notify || contact.pushName || '';
+    if (name) contacts.push({ jid: cleanJid, name });
+  }
+  res.json({ contacts });
+});
+
 adminRouter.get('/contact/:jid', async (req, res) => {
   const jid = req.params.jid;
   if (!jid) {
