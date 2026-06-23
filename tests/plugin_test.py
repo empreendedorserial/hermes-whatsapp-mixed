@@ -3514,5 +3514,176 @@ class TestDedupPersonalContacts(unittest.TestCase):
         self.assertEqual(len(pc), 2)
 
 
+class TestSanitizeSensitive(unittest.TestCase):
+    """Testa _sanitize_sensitive — segurança dos exemplos de diálogo."""
+
+    def setUp(self):
+        from whatsapp_manager import _sanitize_sensitive
+        self.sanitize = _sanitize_sensitive
+
+    def test_text_normal_retorna_intacto(self):
+        self.assertEqual(self.sanitize("oi tudo bem"), "oi tudo bem")
+
+    def test_vazio_retorna_none(self):
+        self.assertIsNone(self.sanitize(""))
+        self.assertIsNone(self.sanitize(None))
+
+    def test_cpf_descartado(self):
+        self.assertIsNone(self.sanitize("meu cpf é 123.456.789-00"))
+
+    def test_cnpj_descartado(self):
+        self.assertIsNone(self.sanitize("cnpj: 12.345.678/0001-99"))
+
+    def test_senha_descartada(self):
+        self.assertIsNone(self.sanitize("a senha é 1234"))
+        self.assertIsNone(self.sanitize("password: abc123"))
+
+    def test_numero_cartao_descartado(self):
+        self.assertIsNone(self.sanitize("cartão: 4111 1111 1111 1111"))
+        self.assertIsNone(self.sanitize("1234567890123456"))
+
+    def test_cvv_descartado(self):
+        self.assertIsNone(self.sanitize("cvv 123"))
+
+    def test_saldo_descartado(self):
+        self.assertIsNone(self.sanitize("saldo R$ 5.000,00"))
+
+    def test_token_descartado(self):
+        self.assertIsNone(self.sanitize("seu token de acesso expirou"))
+
+    def test_agencia_descartada(self):
+        self.assertIsNone(self.sanitize("agência: 1234"))
+
+    def test_conta_descartada(self):
+        self.assertIsNone(self.sanitize("conta: 123456"))
+
+    def test_mensagem_futebol_permitida(self):
+        self.assertEqual(self.sanitize("o Messi fez 5 gols"), "o Messi fez 5 gols")
+
+    def test_preco_pequeno_permitido(self):
+        """Valores pequenos como R$ 50 não devem ser bloqueados."""
+        self.assertIsNotNone(self.sanitize("custa R$ 50"))
+
+
+class TestSanitizeClassificationResult(unittest.TestCase):
+    """Testa _sanitize_classification_result — evita apelidos possessivos do André."""
+
+    def setUp(self):
+        from whatsapp_manager import _sanitize_classification_result
+        self.sanitize = _sanitize_classification_result
+
+    def test_pet_name_pai_removido(self):
+        res = {"pet_name": "pai", "relationship": "Filho"}
+        result = self.sanitize(res)
+        self.assertIsNone(result["pet_name"])
+
+    def test_nickname_mae_removido(self):
+        res = {"nickname": "mãe", "relationship": "Filho"}
+        result = self.sanitize(res)
+        self.assertIsNone(result["nickname"])
+
+    def test_nickname_normal_mantido(self):
+        res = {"nickname": "Pedrinho", "relationship": "Filho"}
+        result = self.sanitize(res)
+        self.assertEqual(result["nickname"], "Pedrinho")
+
+    def test_nao_dict_retorna_intacto(self):
+        self.assertEqual(self.sanitize("string"), "string")
+        self.assertIsNone(self.sanitize(None))
+
+    def test_campos_ausentes_sem_erro(self):
+        res = {"relationship": "Cliente"}
+        result = self.sanitize(res)
+        self.assertEqual(result["relationship"], "Cliente")
+
+
+class TestExtractJsonFromText(unittest.TestCase):
+    """Testa _extract_json_from_text — parser robusto de JSON embutido em texto."""
+
+    def setUp(self):
+        from whatsapp_manager import _extract_json_from_text
+        self.extract = _extract_json_from_text
+
+    def test_json_puro(self):
+        result = self.extract('{"key": "value"}')
+        self.assertEqual(result["key"], "value")
+
+    def test_json_com_texto_ao_redor(self):
+        result = self.extract('Aqui está o resultado: {"name": "João", "age": 30} fim.')
+        self.assertEqual(result["name"], "João")
+
+    def test_json_com_string_contendo_chave(self):
+        result = self.extract('{"msg": "olá {mundo}"}')
+        self.assertEqual(result["msg"], "olá {mundo}")
+
+    def test_json_invalido_levanta_erro(self):
+        with self.assertRaises((ValueError, Exception)):
+            self.extract("sem json aqui")
+
+    def test_json_aninhado(self):
+        result = self.extract('texto {"a": {"b": 1}} mais texto')
+        self.assertEqual(result["a"]["b"], 1)
+
+
+class TestNormalizeBrazilianPhone(unittest.TestCase):
+    """Testa _normalize_brazilian_phone — normalização do 9º dígito."""
+
+    def setUp(self):
+        from whatsapp_manager import _normalize_brazilian_phone
+        self.norm = _normalize_brazilian_phone
+
+    def test_com_nono_digito_normaliza(self):
+        # 55 + 86 + 9 + 8 dígitos = 13 → remove o 9
+        self.assertEqual(self.norm("5586999970003"), "558699970003")
+
+    def test_sem_nono_digito_intacto(self):
+        self.assertEqual(self.norm("558699970003"), "558699970003")
+
+    def test_numero_curto_intacto(self):
+        self.assertEqual(self.norm("11987654321"), "11987654321")
+
+    def test_com_caracteres_nao_numericos(self):
+        # +55 (86) 99997-0003 → 5586999970003 (13 dígitos) → normaliza para 558699970003
+        self.assertEqual(self.norm("+55 (86) 99997-0003"), "558699970003")
+
+    def test_sem_prefixo_55_intacto(self):
+        self.assertEqual(self.norm("86999970003"), "86999970003")
+
+
+class TestBuildLidPhoneMap(unittest.TestCase):
+    """Testa _build_lid_phone_map — construção do mapa LID→telefone."""
+
+    def setUp(self):
+        from whatsapp_manager import _build_lid_phone_map
+        self.build = _build_lid_phone_map
+
+    def test_sem_arquivos_retorna_vazio(self):
+        with patch("whatsapp_manager.Path") as mock_path:
+            mock_path.return_value.exists.return_value = False
+            result = self.build(None)
+            self.assertEqual(result, {})
+
+    def test_com_db_retorna_mapeamentos(self):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = lambda s: mock_conn
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value = mock_cur
+        mock_cur.fetchall.return_value = [
+            ("265231477510271@lid", "558695903469@s.whatsapp.net"),
+        ]
+        import whatsapp_manager
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("whatsapp_manager.sqlite3.connect", return_value=mock_conn):
+            session_mock = MagicMock()
+            session_mock.exists.return_value = False
+            db_mock = MagicMock()
+            db_mock.exists.return_value = True
+            mock_path.side_effect = lambda p: session_mock if "session" in str(p) else db_mock
+            result = self.build("/fake/db.sqlite")
+        self.assertIn("265231477510271", result)
+        self.assertEqual(result["265231477510271"], "558695903469")
+
+
 if __name__ == "__main__":
     unittest.main()
