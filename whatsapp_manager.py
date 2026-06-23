@@ -2719,6 +2719,27 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
 
     personal_contacts[matched_key] = contact
 
+    # Atualizar entrada espelhada (@lid ↔ @s.whatsapp.net) com os mesmos campos
+    mirror_key = None
+    if "@lid" in matched_key:
+        # Procurar @s.whatsapp.net que aponte para este @lid (via campo 'lid')
+        lid_val = matched_key
+        for k, v in personal_contacts.items():
+            if "@s.whatsapp.net" in k and isinstance(v, dict) and v.get("lid") == lid_val:
+                mirror_key = k
+                break
+    elif "@s.whatsapp.net" in matched_key:
+        # Usar campo 'lid' para encontrar a entrada @lid correspondente
+        lid_val = contact.get("lid")
+        if lid_val and lid_val in personal_contacts:
+            mirror_key = lid_val
+    if mirror_key:
+        mirror = personal_contacts[mirror_key]
+        for field, value in fields.items():
+            if field not in protected:
+                mirror[field] = value
+        personal_contacts[mirror_key] = mirror
+
     try:
         with open(str(pc_path), "w", encoding="utf-8") as f:
             json.dump(personal_contacts, f, indent=2, ensure_ascii=False)
