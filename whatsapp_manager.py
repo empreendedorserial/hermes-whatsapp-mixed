@@ -3237,6 +3237,20 @@ def pre_gateway_dispatch(*args, **kwargs):
     if platform_val != "whatsapp":
         return None
 
+    # Log diagnóstico temporário para rastrear eventos from_me
+    try:
+        _diag_raw = None
+        for _a in ["raw", "raw_event", "payload", "data"]:
+            _v = getattr(event, _a, None)
+            if isinstance(_v, dict):
+                _diag_raw = _v
+                break
+        _diag_from_me = bool((_diag_raw or {}).get("fromMe") or (_diag_raw or {}).get("from_me"))
+        _diag_chat = getattr(event.source, "chat_id", "?")
+        logger.info(f"[owner-msg-diag] fromMe={_diag_from_me} chat={_diag_chat} raw_keys={list((_diag_raw or {}).keys())[:8]}")
+    except Exception:
+        pass
+
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
     if media_info["has_media"] and media_info["media_urls"]:
