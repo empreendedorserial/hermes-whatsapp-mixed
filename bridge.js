@@ -637,35 +637,7 @@ let onMessagesUpsert = async ({ messages, type }) => {
         if (isBotReply) {
           continue;
         }
-        // Manual message sent by owner: persist directly to SQLite for style learning.
-        // Python plugin may not receive fromMe events for @lid chats.
-        if (body && body.trim()) {
-          try {
-            const _dbPath = '/opt/data/.hermes/whatsapp_messages.db';
-            const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
-            const _msgId = msg.key.id || `owner_${chatId}_${_ts}`;
-            const _ownerSid = process.env.WHATSAPP_OWNER_NUMBER || chatId;
-            const _pyScript = [
-              'import sqlite3, sys',
-              "args = sys.argv[1:]",
-              "conn = sqlite3.connect(args[0])",
-              "conn.execute('INSERT OR IGNORE INTO messages (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,from_me) VALUES (?,?,?,?,?,?,?,1)', args[1:])",
-              "conn.commit()",
-              "conn.close()",
-            ].join('\n');
-            const res = spawnSync('python3', [
-              '-c', _pyScript,
-              _dbPath, chatId, _ownerSid, 'André Alencar', _msgId, 'text', body, String(_ts),
-            ], { timeout: 3000, encoding: 'utf8' });
-            if (res.status === 0) {
-              console.log(`[bridge-owner-msg] Gravado: chat=${chatId} body="${body.slice(0, 60)}"`);
-            } else {
-              console.log(`[bridge-owner-msg] Erro: ${(res.stderr || '').slice(0, 100)}`);
-            }
-          } catch (e) {
-            console.log(`[bridge-owner-msg] Exceção: ${e.message?.slice(0, 100)}`);
-          }
-        }
+        // _ownerPersist flag: persist to SQLite after body is extracted below
       }
     }
 
@@ -784,6 +756,32 @@ let onMessagesUpsert = async ({ messages, type }) => {
     // For media without caption, use a placeholder so the API message is never empty
     if (hasMedia && !body) {
       body = `[${mediaType} received]`;
+    }
+
+    // Persist owner's manual messages to SQLite for style learning (works for @lid and @s.whatsapp.net)
+    if (msg.key.fromMe && !isGroup && !isSelfChat && body && body.trim() && !recentlySentIds.has(msg.key.id)) {
+      try {
+        const _dbPath = '/opt/data/.hermes/whatsapp_messages.db';
+        const _ts = Math.floor((msg.messageTimestamp?.toNumber ? msg.messageTimestamp.toNumber() : Number(msg.messageTimestamp)) || Date.now() / 1000);
+        const _msgId = msg.key.id || `owner_${chatId}_${_ts}`;
+        const _ownerSid = process.env.WHATSAPP_OWNER_NUMBER || chatId;
+        const _pyScript = [
+          'import sqlite3, sys',
+          'args = sys.argv[1:]',
+          "conn = sqlite3.connect(args[0])",
+          "conn.execute('INSERT OR IGNORE INTO messages (chat_id,sender_id,sender_name,message_id,message_type,body,timestamp,from_me) VALUES (?,?,?,?,?,?,?,1)', [args[1],args[2],args[3],args[4],args[5],args[6],int(args[7])])",
+          "conn.commit()",
+          "conn.close()",
+        ].join('\n');
+        const res = spawnSync('python3', ['-c', _pyScript, _dbPath, chatId, _ownerSid, 'André Alencar', _msgId, 'text', body, String(_ts)], { timeout: 3000, encoding: 'utf8' });
+        if (res.status === 0) {
+          console.log(`[bridge-owner-msg] Gravado: chat=${chatId} body="${body.slice(0, 60)}"`);
+        } else {
+          console.log(`[bridge-owner-msg] Erro: ${(res.stderr || '').slice(0, 100)}`);
+        }
+      } catch (e) {
+        console.log(`[bridge-owner-msg] Exceção: ${e.message?.slice(0, 100)}`);
+      }
     }
 
     // Ignore Hermes' own reply messages in self-chat mode to avoid loops.
