@@ -3237,15 +3237,6 @@ def pre_gateway_dispatch(*args, **kwargs):
     if platform_val != "whatsapp":
         return None
 
-    # Log diagnóstico temporário para rastrear estrutura do evento
-    try:
-        _diag_chat = getattr(event.source, "chat_id", "?")
-        _diag_attrs = {a: str(getattr(event, a, None))[:60] for a in dir(event) if not a.startswith("__")}
-        _diag_src_attrs = {a: str(getattr(event.source, a, None))[:60] for a in dir(event.source) if not a.startswith("__")}
-        logger.info(f"[owner-msg-diag] chat={_diag_chat} event_attrs={list(_diag_attrs.keys())} src_attrs={list(_diag_src_attrs.keys())}")
-        logger.info(f"[owner-msg-diag] event_vals={_diag_attrs}")
-    except Exception as _de:
-        logger.info(f"[owner-msg-diag] erro={_de}")
 
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
@@ -3299,14 +3290,15 @@ def pre_gateway_dispatch(*args, **kwargs):
     clean_chat = "".join(c for c in resolved_chat.split("@")[0].split(":")[0] if c.isdigit())
     is_self_chat = (clean_sender == clean_chat)
 
-    # Detectar from_me via evento bruto (para from_me=1, sender_id é o contato, não o André)
-    _raw_event = None
-    for _attr in ["raw", "raw_event", "payload", "data"]:
-        _val = getattr(event, _attr, None)
-        if isinstance(_val, dict):
-            _raw_event = _val
-            break
-    _is_from_me = bool((_raw_event or {}).get("fromMe") or (_raw_event or {}).get("from_me"))
+    # Detectar from_me via raw_message do evento (campo correto no Hermes)
+    _raw_msg = getattr(event, "raw_message", None) or {}
+    if isinstance(_raw_msg, str):
+        try:
+            import ast as _ast
+            _raw_msg = _ast.literal_eval(_raw_msg)
+        except Exception:
+            _raw_msg = {}
+    _is_from_me = bool(_raw_msg.get("fromMe") or _raw_msg.get("from_me"))
 
     # Persistir mensagens manuais do André no SQLite (Hermes não grava from_me=1 automaticamente)
     # Nota: para from_me=1, sender_id==chat_id, então is_self_chat seria True erroneamente.
