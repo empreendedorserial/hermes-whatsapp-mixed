@@ -4229,7 +4229,7 @@ class TestPostLlmCall(BaseWhatsAppManagerTest):
         mock_urlopen.return_value.__enter__ = lambda s: s
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
         result = self._call("5511888888888@s.whatsapp.net", "nothing to save.")
-        self.assertEqual(result["assistant_response"], " ")
+        self.assertEqual(result["assistant_response"], "")
 
     @patch("urllib.request.urlopen")
     @patch("time.sleep")
@@ -4237,7 +4237,7 @@ class TestPostLlmCall(BaseWhatsAppManagerTest):
         mock_urlopen.return_value.__enter__ = lambda s: s
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
         result = self._call("5511888888888@s.whatsapp.net", "ok.")
-        self.assertEqual(result["assistant_response"], " ")
+        self.assertEqual(result["assistant_response"], "")
 
     @patch("urllib.request.urlopen")
     @patch("time.sleep")
@@ -4273,7 +4273,7 @@ class TestPostLlmCall(BaseWhatsAppManagerTest):
         self.assertEqual(r1["assistant_response"], "primeira resposta")
 
         r2 = self._call(session, "segunda resposta duplicada")
-        self.assertEqual(r2["assistant_response"], " ")
+        self.assertEqual(r2["assistant_response"], "")
 
     @patch("urllib.request.urlopen")
     @patch("time.sleep")

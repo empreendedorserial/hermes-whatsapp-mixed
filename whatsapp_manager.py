@@ -5428,16 +5428,30 @@ def post_llm_call(*args, **kwargs):
         ]
         if any(re.match(p, clean_text, re.IGNORECASE) for p in _tool_result_patterns):
             logger.warning(f"[post_llm_call] Tool result filtrado: {clean_text!r}")
-            return {"assistant_response": " "}
+            return {"assistant_response": ""}  # string vazia → bridge rejeita silenciosamente
 
-        # Dedup por turno: só o primeiro post_llm_call com conteúdo passa
-        chat_id = _sender_to_chat.get(session_id) or session_id
+        # Resolver chat_id — normalizar session_id removendo device suffix antes do lookup
+        # (ex: "5940090822813:0@s.whatsapp.net" → "5940090822813@s.whatsapp.net")
+        session_clean = session_id
+        if "@" in session_id:
+            local, domain = session_id.split("@", 1)
+            session_clean = f"{local.split(':')[0]}@{domain}"
+        chat_id = (
+            _sender_to_chat.get(session_id)
+            or _sender_to_chat.get(session_clean)
+            or session_id
+        )
+
+        # Dedup por turno: só o primeiro post_llm_call com conteúdo real passa.
+        # Só aplica dedup quando há um turn key registrado (tk != "").
         with _turn_lock:
-            tk = _turn_key.get(chat_id, "")
-            if tk in _turn_sent:
-                logger.warning(f"[post_llm_call] Turno já respondido — suprimindo")
-                return {"assistant_response": " "}
-            _turn_sent.add(tk)
+            tk = _turn_key.get(chat_id, "") or _turn_key.get(session_clean, "")
+            logger.info(f"[post_llm_call] dedup: session={session_id!r} chat_id={chat_id!r} tk={tk!r} sent={tk in _turn_sent}")
+            if tk and tk in _turn_sent:
+                logger.warning(f"[post_llm_call] Turno já respondido — suprimindo (chat={chat_id})")
+                return {"assistant_response": ""}  # string vazia → bridge rejeita silenciosamente
+            if tk:
+                _turn_sent.add(tk)
 
         # Bloquear afirmações de ação no sistema
         _action_patterns = [
@@ -5470,8 +5484,11 @@ def post_llm_call(*args, **kwargs):
         except Exception:
             pass
 
+        if not clean_text:
+            logger.warning(f"[post_llm_call] clean_text vazio após filtros — suprimindo")
+            return {"assistant_response": ""}
         logger.info(f"[post_llm_call] Retornando para Hermes enviar ({len(clean_text)} chars)")
-        return {"assistant_response": clean_text or " "}
+        return {"assistant_response": clean_text}
 
     # ── Sessão do OWNER → processar EXECs ───────────────────────────────────
     matches = _EXEC_PATTERN.findall(response_text)
