@@ -5337,6 +5337,7 @@ def post_llm_call(*args, **kwargs):
 
     # ── Sessão de CONTATO → enviar com comportamento humano ──────────────────
     if not is_owner_session:
+        logger.info(f"[post_llm_call] session_id={session_id!r} _sender_to_chat keys={list(_sender_to_chat.keys())[:10]}")
         chat_id = _sender_to_chat.get(session_id) or session_id
         if chat_id:
             try:
