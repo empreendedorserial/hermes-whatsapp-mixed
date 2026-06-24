@@ -172,6 +172,10 @@ _turn_key: dict[str, str] = {}       # chat_id → chave do turno atual
 _turn_sent: set[str] = set()         # chaves de turnos que já foram enviados
 _turn_lock = threading.Lock()
 
+# Dedup de mensagens recebidas: evita processar a mesma mensagem do WhatsApp duas vezes
+_seen_message_ids: set[str] = set()
+_seen_message_ids_lock = threading.Lock()
+
 # Contatos já notificados do status ativo: { chat_id -> status_description }
 # Evita reenviar o proativo a cada mensagem enquanto o status está ativo.
 # Limpo automaticamente quando o status muda ou expira.
@@ -4430,6 +4434,21 @@ def pre_gateway_dispatch(*args, **kwargs):
     if platform_val != "whatsapp":
         return None
 
+
+    # Dedup de mensagens recebidas — bridge pode entregar a mesma mensagem duas vezes
+    _raw_dedup = getattr(event, "raw", {}) or {}
+    _msg_id_dedup = (
+        _raw_dedup.get("messageId") or _raw_dedup.get("message_id") or _raw_dedup.get("id")
+        or getattr(event, "message_id", None) or getattr(event, "messageId", None)
+    )
+    if _msg_id_dedup:
+        with _seen_message_ids_lock:
+            if _msg_id_dedup in _seen_message_ids:
+                logger.warning(f"[pre_gateway_dispatch] Mensagem duplicada {_msg_id_dedup!r} — ignorando")
+                return {"action": "skip", "reason": "duplicate-message-id"}
+            _seen_message_ids.add(_msg_id_dedup)
+            if len(_seen_message_ids) > 500:  # evitar crescimento ilimitado
+                _seen_message_ids.clear()
 
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
