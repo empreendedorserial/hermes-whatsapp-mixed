@@ -3092,11 +3092,17 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
                 if e.get("jid") and not _is_owner_key(e.get("jid", ""))
             ]
 
-            # Passar 1: tentar match em personal_contacts existente
+            # Passar 1: tentar match em personal_contacts existente — só aceita se nome do bridge
+            # bate minimamente com o identifier buscado (evita mapear "Suporte" → "Rosemery")
             for entry in valid_results:
                 jid = entry.get("jid", "")
-                real_name = entry.get("name", "")
+                real_name = (entry.get("name") or "").lower()
                 phone_row = jid.split("@")[0]
+                # Nome do resultado deve conter o identifier ou vice-versa
+                if id_lower not in real_name and real_name not in id_lower:
+                    common_words = set(id_lower.split()) & set(real_name.split())
+                    if not common_words:
+                        continue
                 for key in personal_contacts:
                     if _is_owner_key(key):
                         continue
