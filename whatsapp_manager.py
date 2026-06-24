@@ -166,9 +166,11 @@ config = PluginConfig()
 # Mapeamento temporário sender_id -> chat_id (usado entre pre_gateway_dispatch e pre_llm_call)
 _sender_to_chat: dict[str, str] = {}
 
-# Debounce de envio: { chat_id -> threading.Timer } — só o último post_llm_call por turno dispara
-_pending_send: dict[str, "threading.Timer"] = {}
-_pending_send_lock = threading.Lock()
+# Controle de resposta por turno: { chat_id -> session_key } do turno atual
+# pre_llm_call registra o turno; post_llm_call só envia se ainda não enviou neste turno.
+_turn_key: dict[str, str] = {}       # chat_id → chave do turno atual
+_turn_sent: set[str] = set()         # chaves de turnos que já foram enviados
+_turn_lock = threading.Lock()
 
 # Contatos já notificados do status ativo: { chat_id -> status_description }
 # Evita reenviar o proativo a cada mensagem enquanto o status está ativo.
@@ -5082,6 +5084,15 @@ def pre_llm_call(*args, **kwargs):
         if chat_id and session_id_kwarg not in _sender_to_chat:
             _sender_to_chat[session_id_kwarg] = chat_id
             logger.info(f"[pre_llm_call] mapeado session_id={session_id_kwarg!r} → {chat_id}")
+        # Registrar novo turno: reseta o controle de envio para este chat
+        user_msg = kwargs.get("user_message") or (context or {}).get("user_message") or ""
+        if chat_id and user_msg:
+            import hashlib as _hl
+            tk = chat_id + ":" + _hl.md5((session_id_kwarg + user_msg).encode()).hexdigest()
+            with _turn_lock:
+                _turn_key[chat_id] = tk
+                _turn_sent.discard(tk)
+            logger.info(f"[pre_llm_call] Novo turno registrado para {chat_id}")
 
     if platform != "whatsapp":
         return None
@@ -5405,23 +5416,16 @@ def post_llm_call(*args, **kwargs):
                     clean_text
                 )
                 if clean_text:
-                    # Debounce com lock: evita race condition quando Hermes chama
-                    # post_llm_call em threads paralelas para o mesmo chat.
-                    # Só o último texto agendado (resposta final) é enviado.
-                    def _do_send(cid=chat_id, txt=clean_text):
-                        with _pending_send_lock:
-                            _pending_send.pop(cid, None)
-                        logger.info(f"[post_llm_call] Enviando ao contato {cid} via _human_send")
-                        _human_send(cid, txt)
-
-                    with _pending_send_lock:
-                        existing = _pending_send.pop(chat_id, None)
-                        if existing:
-                            existing.cancel()
-                            logger.info(f"[post_llm_call] Debounce: envio anterior cancelado para {chat_id}")
-                        timer = threading.Timer(2.0, _do_send)
-                        _pending_send[chat_id] = timer
-                        timer.start()
+                    # Envio único por turno: só o primeiro post_llm_call com conteúdo envia.
+                    # pre_llm_call registrou a chave do turno atual; aqui marcamos como enviado.
+                    with _turn_lock:
+                        tk = _turn_key.get(chat_id, "")
+                        if tk in _turn_sent:
+                            logger.warning(f"[post_llm_call] Turno {tk!r} já respondido — ignorando")
+                            return {"assistant_response": ""}
+                        _turn_sent.add(tk)
+                    logger.info(f"[post_llm_call] Enviando ao contato {chat_id} via _human_send")
+                    _human_send(chat_id, clean_text)
                     return {"assistant_response": ""}
             except Exception as e:
                 logger.error(f"[post_llm_call] Erro no _human_send: {e}")
