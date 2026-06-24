@@ -252,14 +252,16 @@ def _get_mime_type(file_path: str) -> str:
 
 
 def _process_media_message(event) -> str | None:
-    """Processa mensagem de mídia (áudio ou imagem) usando a API do Gemini.
-    
+    """Processa mensagem de mídia (áudio ou imagem) usando Gemini, OpenAI ou OpenRouter.
+
     Retorna a transcrição ou descrição, ou None se falhar/não for mídia.
     """
     google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
     media_model = config.whatsapp_client_media_model
-    if not google_key:
-        logger.info("Google API Key não configurada para processamento de mídia.")
+    if not google_key and not openai_key and not openrouter_key:
+        logger.info("Nenhuma API Key configurada para processamento de mídia.")
         return None
         
     media_info = _get_media_info(event)
@@ -308,28 +310,64 @@ def _process_media_message(event) -> str | None:
 
     if not parts:
         return None
-        
-    parts.append({
-        "text": prompt
-    })
 
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [{
-                "parts": parts
-            }]
-        }
-        
-        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            text_content = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return text_content
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.error(f"Erro ao processar mídia via Gemini: {e}")
-        return None
+    # --- Gemini ---
+    if google_key:
+        parts_with_prompt = parts + [{"text": prompt}]
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
+            req = urllib.request.Request(url, data=json.dumps({"contents": [{"parts": parts_with_prompt}]}).encode(), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                result = json.loads(resp.read().decode())
+                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            logger.warning(f"[media] Gemini falhou: {e}")
+
+    # --- OpenAI gpt-4o (suporta áudio base64 via chat completions) ---
+    if openai_key and media_type in ["ptt", "audio"] and parts:
+        try:
+            audio_part = parts[0]
+            b64 = audio_part["inlineData"]["data"]
+            mime = audio_part["inlineData"]["mimeType"]
+            oai_model = "gpt-4o-audio-preview" if "audio" in (media_model or "") else "gpt-4o-audio-preview"
+            payload = {
+                "model": oai_model,
+                "modalities": ["text"],
+                "messages": [{"role": "user", "content": [
+                    {"type": "input_audio", "input_audio": {"data": b64, "format": "wav" if "wav" in mime else "mp3" if "mp3" in mime else "mp4" if "mp4" in mime else "wav"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            }
+            req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"}, method="POST")
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                result = json.loads(resp.read().decode())
+                return result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.warning(f"[media] OpenAI falhou: {e}")
+
+    # --- OpenRouter (Gemini via OR) ---
+    if openrouter_key and media_type in ["ptt", "audio"] and parts:
+        try:
+            audio_part = parts[0]
+            b64 = audio_part["inlineData"]["data"]
+            mime = audio_part["inlineData"]["mimeType"]
+            or_model = media_model or "google/gemini-flash-1.5-8b"
+            payload = {
+                "model": or_model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            }
+            req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"}, method="POST")
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                result = json.loads(resp.read().decode())
+                return result["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.warning(f"[media] OpenRouter falhou: {e}")
+
+    logger.error("[media] Todos os provedores falharam para transcrição de mídia.")
+    return None
 
 
 def _update_db_message(db_path: str, msg_id: str, new_body: str) -> int:
