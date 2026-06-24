@@ -4010,6 +4010,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             "- Escreva como WhatsApp real: 'kk', '..', 'né', minúsculas normais.\n"
             f"- NUNCA comece com saudação ('Olá', 'Oi!', 'Fala!', 'Boa tarde').\n"
             "- NUNCA use listas, tópicos, parágrafos ou texto estruturado.\n"
+            "- NUNCA use quebra de linha (\\n) na resposta. Tudo em uma única linha contínua.\n"
             f"- Status ativo → 1 frase casual. Ex: '{owner_name} capotou aqui, só umas 11h'\n"
             "- Perguntaram quem você é → resposta ultra curta. Ex: 'assistente dele'\n"
             f"- Se houver apelido do contato, use-o naturalmente na resposta.\n"
@@ -5420,6 +5421,9 @@ def post_llm_call(*args, **kwargs):
     # O Hermes envia uma única vez via gateway.platforms.base.
     if not is_owner_session:
         clean_text = _EXEC_PATTERN.sub("", response_text).strip()
+
+        # Colapsar múltiplas quebras de linha em espaço (evita resposta robótica com parágrafos)
+        clean_text = re.sub(r'\n{2,}', ' ', clean_text).strip()
 
         # Filtrar tool results intermediários
         _tool_result_patterns = [
