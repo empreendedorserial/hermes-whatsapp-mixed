@@ -5363,6 +5363,20 @@ def post_llm_call(*args, **kwargs):
             try:
                 # Limpar EXECs antes de enviar ao contato
                 clean_text = _EXEC_PATTERN.sub("", response_text).strip()
+                # Detectar se o LLM afirmou ter executado uma ferramenta/ação no sistema
+                _action_patterns = [
+                    r"pronto[,.]?\s*(inclu|adicion|edit|atualiz|salv|modific|coloc|registr)",
+                    r"(inclu|adicion|edit|atualiz|salv|modific)i\b",
+                    r"(fiz|feit[oa]|execut|realiz)\b.*\b(isso|alteraç|ediç|inclusão)",
+                    r"já (adicion|inclu|registr|atualiz|salv)",
+                ]
+                _claimed_action = any(
+                    re.search(p, clean_text, re.IGNORECASE) for p in _action_patterns
+                )
+                if _claimed_action:
+                    logger.warning(f"[post_llm_call] LLM afirmou ter executado ação — substituindo resposta")
+                    owner_name = config.whatsapp_owner_name or "dono"
+                    clean_text = f"isso é com o {owner_name} mesmo, não tenho como fazer por aqui"
                 # Redactar números de telefone antes de enviar a contatos
                 clean_text = re.sub(
                     r'\(?\+?[\d][\d\s\-\.\(\)]{6,18}[\d]',
