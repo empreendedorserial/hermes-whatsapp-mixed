@@ -867,6 +867,27 @@ def _classify_owner_intent(message: str) -> dict:
 
 
 _OWNER_STATUS_PATH = Path("/opt/data/.hermes/owner_status.json")
+_STATUS_NOTIFIED_PATH = Path("/opt/data/.hermes/owner_status_notified.json")
+
+
+def _load_status_notified() -> None:
+    """Carrega o cache de notificações do disco (chamado na inicialização)."""
+    try:
+        if _STATUS_NOTIFIED_PATH.exists():
+            data = json.loads(_STATUS_NOTIFIED_PATH.read_text(encoding="utf-8"))
+            _status_notified.update(data)
+    except Exception:
+        pass
+
+
+def _persist_status_notified() -> None:
+    """Persiste o cache de notificações no disco."""
+    try:
+        _STATUS_NOTIFIED_PATH.write_text(
+            json.dumps(_status_notified, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 def _save_owner_status(description: str, until_iso: str | None, raw: str) -> None:
@@ -879,7 +900,8 @@ def _save_owner_status(description: str, until_iso: str | None, raw: str) -> Non
         "set_at": _dt.now().isoformat(),
     }
     _OWNER_STATUS_PATH.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
-    _status_notified.clear()  # novo status → renotificar todos os contatos
+    _status_notified.clear()
+    _persist_status_notified()
     logger.info(f"[owner-status] Status salvo: '{description}' até {until_iso or 'indefinido'}")
 
 
@@ -888,7 +910,8 @@ def _clear_owner_status() -> None:
         data = json.loads(_OWNER_STATUS_PATH.read_text(encoding="utf-8"))
         data["active"] = False
         _OWNER_STATUS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    _status_notified.clear()  # status encerrado → limpar cache
+    _status_notified.clear()
+    _persist_status_notified()
     logger.info("[owner-status] Status limpo pelo dono")
 
 
@@ -4970,6 +4993,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                         status_response = _generate_status_response(contact_name, relationship, manual_rel, owner_status)
                         _human_send(chat_id, status_response)
                         _status_notified[chat_id] = current_desc
+                        _persist_status_notified()
                         logger.info(f"[owner-status] Resposta de status enviada para {chat_id}")
                         return {"action": "skip", "reason": "owner-status-proativo"}
                     else:
@@ -5574,6 +5598,10 @@ def register(ctx):
     ctx.register_hook("pre_gateway_dispatch", pre_gateway_dispatch)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("post_llm_call", post_llm_call)
+
+    # Restaurar cache de notificações de status (sobrevive a reinicializações)
+    _load_status_notified()
+    logger.info(f"[owner-status] Cache de notificações carregado: {len(_status_notified)} contato(s)")
 
     # Auto-Update e Pull de Configurações no Boot
     try:
