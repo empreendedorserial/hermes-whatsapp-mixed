@@ -482,12 +482,12 @@ def _resolve_phone_from_jid(jid: str) -> str:
     """Traduz JID do WhatsApp (seja LID ou formato padrão) para JID com telefone clássico usando cache de LIDs."""
     if not jid:
         return jid
-    # Remover device suffix se houver
-    clean_jid = jid.split(":")[0]
-    if "@" in clean_jid:
-        jid_part, domain_part = clean_jid.split("@", 1)
+    # Separar domínio antes de remover device suffix (ex: "164291240063173:0@lid")
+    if "@" in jid:
+        local, domain_part = jid.split("@", 1)
     else:
-        jid_part, domain_part = clean_jid, "s.whatsapp.net"
+        local, domain_part = jid, "s.whatsapp.net"
+    jid_part = local.split(":")[0]  # strip device suffix
 
     # Só fazer lookup de LID quando o domínio for @lid — nunca para @s.whatsapp.net
     # (evita tratar números de telefone como LIDs quando aparecem como chaves no mapa)

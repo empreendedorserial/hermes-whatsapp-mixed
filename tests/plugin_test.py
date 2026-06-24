@@ -502,9 +502,9 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
             res = pre_llm("pre_llm_call", context)
 
         self.assertIsNotNone(res)
-        self.assertIn("Nome: Filho do André", res["context"])
+        self.assertIn("Nome do contato: Filho do André", res["context"])
         # Ensure 'pai' is not included in the context as nickname or pet_name
-        self.assertNotIn("Apelido: pai", res["context"])
+        self.assertNotIn("Apelido do contato: pai", res["context"])
         self.assertNotIn("Nome carinhoso: pai", res["context"])
 
     def test_build_owner_context_with_history(self):
@@ -531,12 +531,11 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         }
         res = whatsapp_manager._build_personal_prompt(contact_info, "namorada", "History content")
         ctx = res["context"]
-        self.assertIn("RESPONDENDO COMO ANDRÉ ALENCAR", ctx)
+        self.assertIn("PERSONA — ALGUÉM RESPONDENDO PELO ANDRÉ", ctx)
         self.assertIn("Nome do contato: Bruna", ctx)
         self.assertIn("Relação com o André: namorada", ctx)
-        self.assertIn("Tom de voz recomendado: carinhoso", ctx)
+        self.assertIn("Tom de voz: carinhoso", ctx)
         self.assertIn("Apelido do contato: Bru", ctx)
-        self.assertIn("Nome carinhoso/Apelido afetivo: amor", ctx)
         self.assertIn("Saudação frequente: Oi linda", ctx)
         self.assertIn("Resumo das conversas anteriores: Resumo teste", ctx)
         self.assertIn("Intenção das últimas conversas: Intenção teste", ctx)
@@ -776,10 +775,9 @@ class TestContactManagementAndSync(BaseWhatsAppManagerTest):
         # O LLM de classificação foi chamado on-the-fly
         mock_classify.assert_called_once()
         self.assertIsNotNone(res)
-        self.assertIn("PERSONA E DIRETRIZES DO SUPORTE WHATSAPP", res["context"])
-        self.assertIn("CONTEXTO DO CONTATO", res["context"])
-        self.assertIn("Nome: Live Test Contact", res["context"])
-        self.assertIn("Relacionamento: AmigoProximo", res["context"])
+        self.assertIn("PERSONA — ALGUÉM RESPONDENDO PELO ANDRÉ", res["context"])
+        self.assertIn("Nome do contato: Live Test Contact", res["context"])
+        self.assertIn("Relação com o André: AmigoProximo", res["context"])
 
     def test_resolve_phone_from_jid_with_lid(self):
         """LID presente no cache deve ser convertido para JID de telefone clássico."""
@@ -1594,9 +1592,13 @@ class TestPendingContactUpdate(BaseWhatsAppManagerTest):
         "name": "Maria", "nickname": None, "pet_name": None,
         "notes": None, "product": None, "frequent_greeting": None,
     })
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "update_contact", "is_update": True,
+        "contact_identifier": "Maria", "intent": "atualizar contato Maria",
+    })
     @patch("urllib.request.urlopen")
     def test_not_found_stores_pending_and_asks_phone(
-        self, mock_urlopen, mock_classify, mock_extract, mock_update
+        self, mock_urlopen, mock_owner_intent, mock_classify, mock_extract, mock_update
     ):
         """Quando contato não é encontrado, armazena pendência e pergunta o número."""
         import whatsapp_manager
@@ -2028,7 +2030,7 @@ class TestFetchCrossSessionHistory(BaseWhatsAppManagerTest):
         result = _fetch_cross_session_history("5511777777777")
 
         self.assertIn("Isabel: oi André, tudo bem?", result)
-        self.assertIn("André: tudo sim!", result)
+        self.assertIn("dono: tudo sim!", result)
 
     @patch("pathlib.Path.exists", return_value=False)
     def test_returns_empty_when_no_db(self, mock_exists):
@@ -2076,7 +2078,7 @@ class TestFetchCrossSessionHistory(BaseWhatsAppManagerTest):
 
         from whatsapp_manager import _fetch_cross_session_history
         result = _fetch_cross_session_history("5511777777777")
-        self.assertIn("André: resposta do bot", result)
+        self.assertIn("dono: resposta do bot", result)
         self.assertIn("Contato: mensagem do contato", result)
 
 
