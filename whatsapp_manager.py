@@ -5338,7 +5338,19 @@ def post_llm_call(*args, **kwargs):
     # ── Sessão de CONTATO → enviar com comportamento humano ──────────────────
     if not is_owner_session:
         logger.info(f"[post_llm_call] session_id={session_id!r} _sender_to_chat keys={list(_sender_to_chat.keys())[:10]}")
-        chat_id = _sender_to_chat.get(session_id) or session_id
+        chat_id = _sender_to_chat.get(session_id)
+        if not chat_id:
+            # Fallback: extrair dígitos do session_id e procurar no mapa
+            sid_digits = re.sub(r"\D", "", session_id)
+            for k, v in _sender_to_chat.items():
+                k_digits = re.sub(r"\D", "", k.split("@")[0])
+                if sid_digits and k_digits and (sid_digits in k_digits or k_digits in sid_digits):
+                    chat_id = v
+                    logger.info(f"[post_llm_call] chat_id resolvido por dígitos: {chat_id}")
+                    break
+        if not chat_id:
+            logger.warning(f"[post_llm_call] Não foi possível resolver chat_id para session_id={session_id!r} — abortando envio")
+            return None
         if chat_id:
             try:
                 # Limpar EXECs antes de enviar ao contato
