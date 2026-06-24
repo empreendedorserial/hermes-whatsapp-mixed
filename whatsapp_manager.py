@@ -778,8 +778,8 @@ def _extract_update_fields_via_llm(contact_name: str, message: str) -> dict:
     if not text_content:
         return {}
     try:
-        raw = _extract_json_from_text(text_content)
-        return json.loads(raw) if raw else {}
+        result = _extract_json_from_text(text_content)
+        return result if isinstance(result, dict) else {}
     except Exception:
         return {}
 
