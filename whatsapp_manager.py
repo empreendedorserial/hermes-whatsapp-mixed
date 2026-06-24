@@ -3662,6 +3662,7 @@ def _build_owner_context(history_section: str, cross_context: str = "") -> dict:
         )
     return {
         "context": (
+            f"{_datetime_context_block()}"
             "### DIRETRIZ CRÍTICA DE COMPORTAMENTO ###\n"
             "Você está conversando com André Alencar, seu criador e dono. "
             "Para o André, você age como seu ASSISTENTE PESSOAL de alta performance. "
@@ -3730,6 +3731,24 @@ def _load_personal_contacts() -> dict:
     except (OSError, json.JSONDecodeError) as pc_load_err:
         logger.error(f"Erro ao carregar personal_contacts.json: {pc_load_err}")
     return {}
+
+
+def _datetime_context_block() -> str:
+    """Retorna bloco com data/hora atual, dia da semana e tipo de dia para injetar no contexto do LLM."""
+    from datetime import datetime as _dt
+    now = _dt.now()
+    weekday_names = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
+    weekday = weekday_names[now.weekday()]
+    is_weekend = now.weekday() >= 5
+    _feriados_fixos = {"01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"}
+    today_mmdd = now.strftime("%m-%d")
+    is_holiday = today_mmdd in _feriados_fixos
+    day_type = "feriado" if is_holiday else ("fim de semana" if is_weekend else "dia útil")
+    return (
+        f"### DATA E HORA ATUAL ###\n"
+        f"{weekday}, {now.strftime('%d/%m/%Y')} — {now.strftime('%H:%M')} ({day_type})\n"
+        f"### FIM DATA E HORA ###\n\n"
+    )
 
 
 def _owner_status_context_block(reveal_status: bool = True) -> str:
@@ -3811,6 +3830,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
 
     return {
         "context": (
+            f"{_datetime_context_block()}"
             "### PERSONA E DIRETRIZES PESSOAIS (RESPONDENDO COMO ANDRÉ ALENCAR) ###\n"
             "Você está respondendo em nome de André Alencar (o dono deste WhatsApp) para um contato pessoal.\n"
             "Você DEVE agir como se fosse o próprio André conversando diretamente com a pessoa.\n\n"
@@ -3899,6 +3919,7 @@ def _build_support_prompt(
 
     return {
         "context": (
+            f"{_datetime_context_block()}"
             "### PERSONA E DIRETRIZES DO SUPORTE WHATSAPP ###\n"
             f"{whatsapp_soul}\n\n"
             "### IDIOMA: APENAS PORTUGUÊS BRASILEIRO ###\n"
