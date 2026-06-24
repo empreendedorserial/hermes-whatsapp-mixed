@@ -865,7 +865,7 @@ def _generate_status_response(contact_name: str, relationship: str, manual_rel: 
     google_key = config.google_api_key
     openai_key = config.openai_api_key
     openrouter_key = config.openrouter_api_key
-    owner_name = config.whatsapp_owner_name or "André"
+    owner_name = getattr(config, "whatsapp_owner_name", None) or "André"
     classify_model = config.whatsapp_contact_classifier_model or "gemini-3.1-flash-lite"
 
     from datetime import datetime as _dt
@@ -3815,7 +3815,7 @@ def _owner_status_context_block(reveal_status: bool = True) -> str:
         return ""
 
     from datetime import datetime as _dt
-    owner_name = config.whatsapp_owner_name or "André"
+    owner_name = getattr(config, "whatsapp_owner_name", None) or "André"
     description = status.get("description", "ocupado")
     until_iso = status.get("until_iso")
     until_str = ""
