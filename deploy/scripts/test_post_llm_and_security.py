@@ -207,9 +207,15 @@ class TestPostLlmCallRoteamento(unittest.TestCase):
         def fake_human_send(chat_id, message):
             sent.append((chat_id, message))
 
-        with patch.object(wm, "_human_send", fake_human_send):
+        # post_llm_call.__globals__ é o namespace do exec — patchear lá diretamente
+        globs = wm.post_llm_call.__globals__
+        orig = globs["_human_send"]
+        globs["_human_send"] = fake_human_send
+        try:
             with patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511000000000"}):
                 result = self._call("contato_session", "ele capotou aqui kk")
+        finally:
+            globs["_human_send"] = orig
 
         self.assertEqual(result, {"assistant_response": ""})
         self.assertEqual(len(sent), 1)
@@ -223,9 +229,14 @@ class TestPostLlmCallRoteamento(unittest.TestCase):
         def fake_human_send(chat_id, message):
             sent.append(message)
 
-        with patch.object(wm, "_human_send", fake_human_send):
+        globs = wm.post_llm_call.__globals__
+        orig = globs["_human_send"]
+        globs["_human_send"] = fake_human_send
+        try:
             with patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511000000000"}):
                 self._call("contato_session2", "O número dela é 558698036699")
+        finally:
+            globs["_human_send"] = orig
 
         self.assertTrue(len(sent) > 0)
         self.assertNotIn("558698036699", sent[0])
