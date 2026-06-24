@@ -12,6 +12,7 @@ Uso:
 
 import sys
 import os
+import re
 import json
 import types
 import unittest
@@ -90,13 +91,34 @@ class TestBuscaContatos(unittest.TestCase):
     def setUp(self):
         self.contacts = json.loads(PC_PATH.read_text(encoding="utf-8"))
 
-    def test_rosemery_por_numero(self):
-        result = wm._update_contact_fields("5511996472188", {})
-        # Não deve retornar "não encontrado"
+    def test_busca_por_numero_existente(self):
+        """Busca por número de contato que está em personal_contacts.json."""
+        # Pega o primeiro contato não-owner com número válido
+        contacts = self.contacts
+        owner_digits = re.sub(r"\D", "", wm.config.whatsapp_owner_number or "")
+        candidate_key = None
+        for key, data in contacts.items():
+            phone = key.split("@")[0].split(":")[0]
+            if owner_digits and phone == owner_digits:
+                continue
+            if len(phone) >= 10 and data.get("name"):
+                candidate_key = key
+                break
+        if not candidate_key:
+            self.skipTest("Nenhum contato com número válido encontrado")
+        phone = candidate_key.split("@")[0].split(":")[0]
+        result = wm._update_contact_fields(phone, {})
         self.assertNotIn("não encontrado", result.lower(),
-            f"Rosemery não encontrada por número: {result}")
+            f"Contato {phone} não encontrado por número: {result}")
 
     def test_rosemery_por_nome(self):
+        """Busca por nome Rosemery — pula se não estiver nos contatos."""
+        rosemery_exists = any(
+            (v.get("name") or "").lower() == "rosemery"
+            for v in self.contacts.values()
+        )
+        if not rosemery_exists:
+            self.skipTest("Rosemery não está em personal_contacts.json neste ambiente")
         result = wm._update_contact_fields("Rosemery", {})
         self.assertNotIn("não encontrado", result.lower(),
             f"Rosemery não encontrada por nome: {result}")
