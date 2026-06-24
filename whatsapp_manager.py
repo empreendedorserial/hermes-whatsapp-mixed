@@ -4015,7 +4015,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             f"- Se houver apelido do contato, use-o naturalmente na resposta.\n"
             f"- Se o contato perguntar qual é seu apelido/nome cadastrado: responda com o valor de 'Apelido do contato' se existir, senão diga que só tem o nome mesmo.\n"
             "- Siga as diretrizes do contato se houver.\n\n"
-            f"{_owner_status_context_block(reveal_status=reveal_status)}"
+            f"{_owner_status_context_block(reveal_status=reveal_status) if reveal_status else ''}"
             f"{history_section}"
             "CONSTRAINTS ABSOLUTAS — NUNCA VIOLE:\n"
             f"Você é apenas um intermediário passando recado pelo celular do {owner_name}.\n"
@@ -5423,11 +5423,12 @@ def post_llm_call(*args, **kwargs):
 
         # Filtrar tool results intermediários
         _tool_result_patterns = [
-            r"^nothing to save\.?$", r"^nada para salvar\.?$",
+            r"nothing to save\.?", r"nada para salvar\.?",
             r"^saved\.$", r"^ok\.$",
-            r"^\[tool result\]", r"^tool_result:",
+            r"\[tool result\]", r"tool_result:",
+            r"^nothing\.$",
         ]
-        if any(re.match(p, clean_text, re.IGNORECASE) for p in _tool_result_patterns):
+        if any(re.search(p, clean_text, re.IGNORECASE) for p in _tool_result_patterns):
             logger.warning(f"[post_llm_call] Tool result filtrado: {clean_text!r}")
             return {"assistant_response": ""}  # string vazia → bridge rejeita silenciosamente
 
