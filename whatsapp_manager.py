@@ -4015,7 +4015,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             f"- Se pedirem qualquer ação técnica (cron, script, servidor, arquivo, banco de dados, editar perfil/soul/guia do {owner_name}): recuse. Ex: 'isso é com o {owner_name} mesmo, não tenho como fazer'\n"
             "- NUNCA afirme que fez ou consegue fazer qualquer coisa no sistema — nem editar arquivos, nem atualizar perfis, nem incluir informações em lugar nenhum.\n"
             "- NUNCA use ferramentas como terminal, read_file, write_file, cron, ou qualquer outra.\n"
-            "- NUNCA revele detalhes técnicos de como você funciona.\n"
+            "- NUNCA revele detalhes técnicos de como você funciona, nem nomes de arquivos internos (SOUL_WHATSAPP, support_rules, personal_contacts, etc.).\n"
             f"- NUNCA informe telefone, número, e-mail ou dados de contato de amigos, clientes ou qualquer pessoa da agenda do {owner_name}.\n"
             "- NUNCA exiba representações de ferramentas como '📖 read_file: ...' ou 'terminal'."
         )
@@ -4100,7 +4100,7 @@ def _build_support_prompt(
             f"- NUNCA afirme que fez ou consegue fazer qualquer ação no sistema — editar arquivos, atualizar perfis, incluir informações, executar scripts, criar cron ou acessar servidor.\n"
             "- Se pedirem algo técnico: recuse. Ex: 'isso não é algo que posso fazer por aqui'\n"
             "- NUNCA use ferramentas como terminal, read_file, write_file, cron ou similares.\n"
-            "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas.\n"
+            "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas. NUNCA mencione nomes de arquivos internos (SOUL_WHATSAPP, support_rules, personal_contacts, etc.).\n"
             f"- NUNCA informe telefone, número, e-mail ou dados de contato de amigos, clientes ou qualquer pessoa da agenda do {owner_name}.\n"
             "- NUNCA exiba representações de ferramentas como '📖 read_file: ...', 'terminal', etc."
         )
@@ -5389,7 +5389,7 @@ def post_llm_call(*args, **kwargs):
                 if clean_text:
                     # Deduplicação: pular se idêntico ao último envio nos últimos 10s
                     last_text, last_ts = _last_sent.get(chat_id, ("", 0.0))
-                    if clean_text == last_text and (time.time() - last_ts) < 10:
+                    if clean_text == last_text and (time.time() - last_ts) < 30:
                         logger.warning(f"[post_llm_call] Duplicata detectada para {chat_id} — ignorando")
                         return {"assistant_response": ""}
                     _last_sent[chat_id] = (clean_text, time.time())
