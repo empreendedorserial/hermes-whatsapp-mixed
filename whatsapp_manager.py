@@ -3121,22 +3121,26 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
                     break
 
             # Passar 2: nenhum match existente — escolher o resultado com nome mais próximo
+            best = None
             if not matched_key and valid_results:
-                id_lower = identifier.lower()
-
                 def _name_score(e):
                     n = (e.get("name") or "").lower()
-                    if not n:
+                    if not n or len(n) < 3:
                         return 0
                     if n == id_lower:
                         return 3
                     if id_lower in n or n in id_lower:
                         return 2
-                    # Quantidade de palavras em comum
-                    common = set(id_lower.split()) & set(n.split())
-                    return len(common)
+                    id_words = set(w for w in id_lower.split() if len(w) >= 3)
+                    n_words = set(w for w in n.split() if len(w) >= 3)
+                    return len(id_words & n_words)
 
                 best = max(valid_results, key=_name_score)
+                if _name_score(best) == 0:
+                    logger.info(f"[update-contact] Passo 6: nenhum resultado com nome compatível com '{identifier}' — abortando")
+                    best = None
+
+            if not matched_key and valid_results and best is not None:
                 best_jid = best.get("jid", "")
                 best_name = best.get("name", "")
                 best_phone = best_jid.split("@")[0]
@@ -4662,7 +4666,11 @@ def pre_gateway_dispatch(*args, **kwargs):
                             response_msg = result
                             card = None
                         else:
-                            result = None
+                            # Número explícito não encontrado — criar entrada nova, não buscar por nome
+                            fields_to_update.setdefault("name", nl_contact_name)
+                            result = _update_contact_fields(_phone_in_msg, fields_to_update)
+                            response_msg = result
+                            card = None
                     elif card and card.get("phone") and "name" in fields_to_update:
                         # Atualiza pelo número do cartão e aplica nome da mensagem
                         result = _update_contact_fields(card["phone"], fields_to_update)
