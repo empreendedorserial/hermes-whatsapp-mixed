@@ -5404,15 +5404,23 @@ def post_llm_call(*args, **kwargs):
                     clean_text
                 )
                 if clean_text:
-                    # Deduplicação por (chat_id + hash da mensagem do usuário) — imune a session_id variável
-                    user_msg = kwargs.get("user_message") or ""
                     import hashlib as _hashlib
+                    now = time.time()
+                    # Camada 1: dedup por (chat_id + hash da mensagem do usuário) — 90s
+                    user_msg = kwargs.get("user_message") or ""
                     dedup_key = chat_id + ":" + _hashlib.md5(user_msg.encode()).hexdigest()
                     last_ts = _session_responded.get(dedup_key, 0.0)
-                    if (time.time() - last_ts) < 90:
-                        logger.warning(f"[post_llm_call] Dedup: {chat_id!r} já respondeu a esta mensagem — ignorando")
+                    if user_msg and (now - last_ts) < 90:
+                        logger.warning(f"[post_llm_call] Dedup L1: {chat_id!r} já respondeu a esta msg — ignorando")
                         return {"assistant_response": ""}
-                    _session_responded[dedup_key] = time.time()
+                    # Camada 2: dedup por conteúdo da resposta — 10s (captura tool results com user_msg diferente)
+                    content_key = chat_id + ":content:" + _hashlib.md5(clean_text.encode()).hexdigest()
+                    last_content_ts = _session_responded.get(content_key, 0.0)
+                    if (now - last_content_ts) < 10:
+                        logger.warning(f"[post_llm_call] Dedup L2: mesmo conteúdo enviado há {now - last_content_ts:.1f}s — ignorando")
+                        return {"assistant_response": ""}
+                    _session_responded[dedup_key] = now
+                    _session_responded[content_key] = now
                     logger.info(f"[post_llm_call] Enviando ao contato {chat_id} via _human_send")
                     _human_send(chat_id, clean_text)
                     return {"assistant_response": ""}
