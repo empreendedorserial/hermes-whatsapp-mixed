@@ -4666,9 +4666,23 @@ def pre_gateway_dispatch(*args, **kwargs):
                             response_msg = result
                             card = None
                         else:
-                            # Número explícito não encontrado — criar entrada nova, não buscar por nome
-                            fields_to_update.setdefault("name", nl_contact_name)
-                            result = _update_contact_fields(_phone_in_msg, fields_to_update)
+                            # Número explícito não encontrado — criar nova entrada diretamente
+                            _new_phone = _normalize_brazilian_phone(_phone_in_msg)
+                            _new_key = f"{_new_phone}@s.whatsapp.net"
+                            _new_entry = dict(fields_to_update)
+                            _new_entry.setdefault("name", nl_contact_name)
+                            _new_entry.setdefault("relationship", "Desconhecido")
+                            try:
+                                _pc_path = _Path("/opt/data/personal_contacts.json")
+                                _pc = _json.loads(_pc_path.read_text(encoding="utf-8")) if _pc_path.exists() else {}
+                                _pc[_new_key] = _new_entry
+                                _pc_path.write_text(_json.dumps(_pc, indent=2, ensure_ascii=False), encoding="utf-8")
+                                _threading.Thread(target=_push_personal_contacts_to_github, daemon=True).start()
+                                logger.info(f"[update-nl] Nova entrada criada: {_new_key} → {_new_entry}")
+                                result = f"✅ Novo contato *{_new_entry['name']}* ({_new_phone}) criado com sucesso."
+                            except Exception as _create_err:
+                                logger.error(f"[update-nl] Erro ao criar nova entrada: {_create_err}")
+                                result = f"❌ Não consegui criar entrada para {_phone_in_msg}: {_create_err}"
                             response_msg = result
                             card = None
                     elif card and card.get("phone") and "name" in fields_to_update:
