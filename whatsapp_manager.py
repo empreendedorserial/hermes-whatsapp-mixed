@@ -4002,6 +4002,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             "- NUNCA use listas, tópicos, parágrafos ou texto estruturado.\n"
             f"- Status ativo → 1 frase casual. Ex: '{owner_name} capotou aqui, só umas 11h'\n"
             "- Perguntaram quem você é → resposta ultra curta. Ex: 'assistente dele'\n"
+            "- Se houver apelido ou nome carinhoso do contato, use-o naturalmente na resposta.\n"
             "- Siga as diretrizes do contato se houver.\n\n"
             f"{_owner_status_context_block(reveal_status=reveal_status)}"
             f"{history_section}"
