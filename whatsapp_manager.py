@@ -43,7 +43,18 @@ if not logger.handlers:
 class PluginConfig:
     @property
     def google_api_key(self) -> str:
-        return os.getenv("GOOGLE_API_KEY", "").strip()
+        key = os.getenv("GOOGLE_API_KEY", "").strip()
+        if not key:
+            # Fallback: ler do credential_pool.gemini no auth.json do Hermes
+            try:
+                hermes_home = os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
+                auth_path = Path(hermes_home) / "auth.json"
+                if auth_path.exists():
+                    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+                    key = (auth.get("credential_pool", {}).get("gemini", "") or "").strip()
+            except Exception:
+                pass
+        return key
 
     @property
     def whatsapp_client_media_model(self) -> str:
