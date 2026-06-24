@@ -4102,10 +4102,15 @@ def pre_gateway_dispatch(*args, **kwargs):
                 "- NÃO inclua 'name' — o nome do contato não deve ser alterado por este comando.\n"
                 "- nickname = apelido da pessoa (ex: Bebel, Zé)\n"
                 "- pet_name = nome do animal de estimação (só inclua se mencionado)\n"
-                "- relationship/manual_relationship válidos: Amigo, AmigoProximo, Parente, Filho, Cliente, Vendedor\n"
+                "- notes = observação/anotação sobre o contato (texto livre)\n"
+                "- relationship enum válidos: Amigo, AmigoProximo, Parente, Filho, Cliente, Vendedor\n"
+                "- manual_relationship: valor livre que descreve o relacionamento real (ex: Namorada, Filho, Esposa, Cliente VIP)\n"
+                "  Se o usuário disser 'coloque como namorada': relationship=AmigoProximo, manual_relationship=Namorada\n"
+                "  Se o usuário disser 'coloque como filho': relationship=Filho, manual_relationship=Filho\n"
+                "  Se o usuário disser 'coloque como cliente': relationship=Cliente, manual_relationship=Cliente\n"
                 "NÃO invente campos não mencionados. NÃO inclua tone, guidelines, summary, intent, frequency.\n"
                 "Retorne APENAS o JSON. Exemplo: "
-                "{\"relationship\": \"Filho\", \"manual_relationship\": \"Filho\", \"nickname\": \"Bebel\"}"
+                "{\"relationship\": \"Filho\", \"manual_relationship\": \"Filho\", \"notes\": \"mora em SP\"}"
             )
             try:
                 extracted = _classify_contact_via_llm(
@@ -4133,11 +4138,12 @@ def pre_gateway_dispatch(*args, **kwargs):
                     "namorado": ("AmigoProximo", "Namorado"), "esposa": ("Parente", "Esposa"),
                     "marido": ("Parente", "Marido"), "esposo": ("Parente", "Esposo"),
                 }
-                for kw, (rel, man_rel) in rel_keywords.items():
-                    if kw in msg_text.lower():
-                        fields_to_update["relationship"] = rel
-                        fields_to_update["manual_relationship"] = man_rel
-                        break
+                if "relationship" not in fields_to_update:
+                    for kw, (rel, man_rel) in rel_keywords.items():
+                        if kw in msg_text.lower():
+                            fields_to_update["relationship"] = rel
+                            fields_to_update["manual_relationship"] = man_rel
+                            break
 
                 if fields_to_update:
                     # Se há cartão pendente, tentar pelo número do cartão diretamente (evita busca por nome que pode falhar)
