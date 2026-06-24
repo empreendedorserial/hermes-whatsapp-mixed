@@ -3684,6 +3684,338 @@ class TestBuildLidPhoneMap(unittest.TestCase):
         self.assertEqual(result["265231477510271"], "558695903469")
 
 
+class TestUpdateContactFieldsSteps(BaseWhatsAppManagerTest):
+    """Testes para os passos 1–6 de _update_contact_fields."""
+
+    BASE_CONTACTS = {
+        "5511777777777@s.whatsapp.net": {
+            "name": "Isabel Costa", "relationship": "Cliente",
+            "nickname": "Bela", "pet_name": None,
+        },
+        "5511888888888@s.whatsapp.net": {
+            "name": "Carlos Silva", "relationship": "Amigo",
+            "nickname": None, "pet_name": None,
+        },
+    }
+
+    def _call(self, identifier, fields, contacts=None, pc_exists=True, db_exists=False, db_rows=None, bridge_results=None):
+        import whatsapp_manager
+        contacts = contacts if contacts is not None else dict(self.BASE_CONTACTS)
+
+        def fake_open(path, *a, **kw):
+            import io
+            return io.StringIO(json.dumps(contacts))
+
+        def fake_write_open(path, mode="r", *a, **kw):
+            import io
+            if "w" in mode:
+                return io.StringIO()
+            return io.StringIO(json.dumps(contacts))
+
+        mock_pc = MagicMock()
+        mock_pc.exists.return_value = pc_exists
+        mock_bridge_db = MagicMock()
+        mock_bridge_db.exists.return_value = db_exists
+
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", side_effect=lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts)) if "w" not in str(a) else __import__("io").StringIO()), \
+             patch("whatsapp_manager.sqlite3.connect") as mock_connect, \
+             patch("urllib.request.urlopen") as mock_urlopen:
+
+            def path_factory(p):
+                m = MagicMock()
+                if "personal_contacts" in str(p):
+                    m.exists.return_value = pc_exists
+                elif "whatsapp_messages" in str(p):
+                    m.exists.return_value = db_exists
+                else:
+                    m.exists.return_value = False
+                return m
+
+            mock_path.side_effect = path_factory
+
+            # DB mock
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_conn.__enter__ = lambda s: mock_conn
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = db_rows or []
+            mock_connect.return_value = mock_conn
+
+            # Bridge mock
+            if bridge_results is not None:
+                mock_resp = MagicMock()
+                mock_resp.read.return_value = json.dumps({"results": bridge_results}).encode()
+                mock_urlopen.return_value.__enter__.return_value = mock_resp
+            else:
+                mock_urlopen.side_effect = Exception("bridge offline")
+
+            with patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))):
+                result = whatsapp_manager._update_contact_fields(identifier, fields)
+
+        return result
+
+    def test_pc_not_found(self):
+        from whatsapp_manager import _update_contact_fields
+        with patch("whatsapp_manager.Path") as mock_path:
+            m = MagicMock()
+            m.exists.return_value = False
+            mock_path.return_value = m
+            result = _update_contact_fields("Isabel", {"relationship": "Filha"})
+        self.assertIn("não encontrado", result)
+
+    def test_step1_match_by_phone_number(self):
+        """Passo 1: match exato por número de telefone."""
+        import whatsapp_manager
+        contacts = {"5511777777777@s.whatsapp.net": {"name": "Isabel", "relationship": "Cliente", "nickname": None, "pet_name": None}}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))):
+            mock_path.return_value.exists.return_value = True
+            result = whatsapp_manager._update_contact_fields("5511777777777", {"relationship": "Amiga"})
+        self.assertIn("Isabel", result)
+
+    def test_step2_exact_name_match(self):
+        """Passo 2: match exato de name."""
+        import whatsapp_manager
+        contacts = {"5511777777777@s.whatsapp.net": {"name": "Isabel Costa", "relationship": "Cliente", "nickname": None, "pet_name": None}}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))):
+            mock_path.return_value.exists.return_value = True
+            result = whatsapp_manager._update_contact_fields("Isabel Costa", {"relationship": "Filha"})
+        self.assertIn("Isabel", result)
+
+    def test_step3_nickname_match(self):
+        """Passo 3: match por nickname."""
+        import whatsapp_manager
+        contacts = {"5511777777777@s.whatsapp.net": {"name": "Isabel Costa", "relationship": "Cliente", "nickname": "Bela", "pet_name": None}}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))):
+            mock_path.return_value.exists.return_value = True
+            result = whatsapp_manager._update_contact_fields("Bela", {"notes": "minha amiga"})
+        self.assertIn("Isabel", result)
+
+    def test_step4_partial_name_match(self):
+        """Passo 4: match parcial de substring em name."""
+        import whatsapp_manager
+        contacts = {"5511777777777@s.whatsapp.net": {"name": "Carlos Alberto Silva", "relationship": "Cliente", "nickname": None, "pet_name": None}}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))):
+            mock_path.return_value.exists.return_value = True
+            result = whatsapp_manager._update_contact_fields("Carlos", {"relationship": "Amigo"})
+        self.assertIn("Carlos", result)
+
+    def test_step5_db_lookup(self):
+        """Passo 5: match por sender_name no whatsapp_messages.db."""
+        import whatsapp_manager
+        contacts = {"5511777777777@s.whatsapp.net": {"name": "Contato 7777", "relationship": "Cliente", "nickname": None, "pet_name": None}}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))), \
+             patch("whatsapp_manager.sqlite3.connect") as mock_connect, \
+             patch("urllib.request.urlopen", side_effect=Exception("bridge offline")):
+            def path_side(p):
+                m = MagicMock()
+                m.exists.return_value = True
+                return m
+            mock_path.side_effect = path_side
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_conn.__enter__ = lambda s: mock_conn
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = [("5511777777777@s.whatsapp.net", "Roberto Alves")]
+            mock_connect.return_value = mock_conn
+            result = whatsapp_manager._update_contact_fields("Roberto", {"relationship": "Amigo"})
+        self.assertNotIn("não encontrado", result)
+
+    def test_step6_bridge_lookup(self):
+        """Passo 6: match via bridge /contacts/search."""
+        import whatsapp_manager
+        contacts = {}
+        bridge_results = [{"jid": "5511333333333@s.whatsapp.net", "name": "Fernanda Melo"}]
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))), \
+             patch("whatsapp_manager.sqlite3.connect") as mock_connect, \
+             patch("urllib.request.urlopen") as mock_urlopen:
+            def path_side(p):
+                m = MagicMock()
+                m.exists.return_value = True if "personal" in str(p) else False
+                return m
+            mock_path.side_effect = path_side
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_conn.__enter__ = lambda s: mock_conn
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = []
+            mock_connect.return_value = mock_conn
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({"results": bridge_results}).encode()
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+            result = whatsapp_manager._update_contact_fields("Fernanda", {"relationship": "Amiga"})
+        self.assertNotIn("não encontrado", result)
+
+    def test_not_found_returns_error(self):
+        """Sem match em nenhum passo: retorna mensagem de não encontrado."""
+        import whatsapp_manager
+        contacts = {}
+        with patch("whatsapp_manager.Path") as mock_path, \
+             patch("builtins.open", lambda p, *a, **kw: __import__("io").StringIO(json.dumps(contacts))), \
+             patch("whatsapp_manager.sqlite3.connect") as mock_connect, \
+             patch("urllib.request.urlopen", side_effect=Exception("bridge offline")):
+            def path_side(p):
+                m = MagicMock()
+                m.exists.return_value = True if "personal" in str(p) else False
+                return m
+            mock_path.side_effect = path_side
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_conn.__enter__ = lambda s: mock_conn
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_cursor.fetchall.return_value = []
+            mock_connect.return_value = mock_conn
+            result = whatsapp_manager._update_contact_fields("Ninguem Aqui", {"relationship": "Amigo"})
+        self.assertIn("não encontrado", result)
+
+
+class TestProcessMediaMessage(BaseWhatsAppManagerTest):
+    """Testes para _process_media_message — transcrição de áudio e imagem."""
+
+    def _make_event(self, media_type, file_path):
+        event = MagicMock()
+        event.has_media = True
+        event.media_type = media_type
+        event.media_urls = [file_path]
+        event.message_id = "msg_test_123"
+        return event
+
+    def _config_patch(self, google="", openai="", openrouter="", media_model="gemini-1.5-flash"):
+        """Patch das propriedades de config via __get__ no tipo."""
+        import whatsapp_manager
+        cfg_type = type(whatsapp_manager.config)
+        return [
+            patch.object(cfg_type, "google_api_key", new_callable=lambda: property(lambda self: google)),
+            patch.object(cfg_type, "openai_api_key", new_callable=lambda: property(lambda self: openai)),
+            patch.object(cfg_type, "openrouter_api_key", new_callable=lambda: property(lambda self: openrouter)),
+            patch.object(cfg_type, "whatsapp_client_media_model", new_callable=lambda: property(lambda self: media_model)),
+        ]
+
+    def test_no_api_key_returns_none(self):
+        """Sem API key: retorna None."""
+        import whatsapp_manager
+        event = self._make_event("ptt", "/tmp/audio.ogg")
+        patches = self._config_patch()
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(result)
+
+    def test_file_not_found_returns_none(self):
+        """Arquivo de mídia inexistente: retorna None."""
+        import whatsapp_manager
+        event = self._make_event("ptt", "/tmp/nonexistent_audio_xyz.ogg")
+        patches = self._config_patch(google="fake-key")
+        with patches[0], patches[1], patches[2], patches[3], \
+             patch("os.path.exists", return_value=False):
+            result = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(result)
+
+    def test_unsupported_media_type_returns_none(self):
+        """Tipo de mídia não suportado (vídeo, documento): retorna None."""
+        import whatsapp_manager
+        event = self._make_event("video", "/tmp/video.mp4")
+        patches = self._config_patch(google="fake-key")
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
+    @patch("os.remove")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_gemini_audio_transcription(self, mock_open, mock_exists, mock_remove, mock_urlopen):
+        """Gemini transcreve áudio com sucesso."""
+        import whatsapp_manager
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read.return_value = b"fake audio data"
+
+        gemini_response = {"candidates": [{"content": {"parts": [{"text": "olá tudo bem"}]}}]}
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(gemini_response).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_event("ptt", "/tmp/audio.ogg")
+        patches = self._config_patch(google="fake-key")
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = whatsapp_manager._process_media_message(event)
+        self.assertEqual(result, "olá tudo bem")
+
+    @patch("urllib.request.urlopen")
+    @patch("os.remove")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_gemini_image_description(self, mock_open, mock_exists, mock_remove, mock_urlopen):
+        """Gemini descreve imagem com sucesso."""
+        import whatsapp_manager
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read.return_value = b"fake image data"
+
+        gemini_response = {"candidates": [{"content": {"parts": [{"text": "uma foto de um gato"}]}}]}
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(gemini_response).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_event("image", "/tmp/photo.jpg")
+        patches = self._config_patch(google="fake-key")
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = whatsapp_manager._process_media_message(event)
+        self.assertEqual(result, "uma foto de um gato")
+
+    @patch("urllib.request.urlopen")
+    @patch("os.remove")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", new_callable=MagicMock)
+    def test_gemini_fails_returns_none(self, mock_open, mock_exists, mock_remove, mock_urlopen):
+        """Gemini falha e sem outros providers: retorna None."""
+        import whatsapp_manager
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read.return_value = b"fake audio data"
+        mock_urlopen.side_effect = Exception("Gemini offline")
+
+        event = self._make_event("ptt", "/tmp/audio.ogg")
+        patches = self._config_patch(google="fake-key")
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = whatsapp_manager._process_media_message(event)
+        self.assertIsNone(result)
+
+
+class TestGetMimeType(unittest.TestCase):
+    """Testes para _get_mime_type."""
+
+    def test_ogg(self):
+        from whatsapp_manager import _get_mime_type
+        self.assertEqual(_get_mime_type("/tmp/audio.ogg"), "audio/ogg")
+
+    def test_mp3(self):
+        from whatsapp_manager import _get_mime_type
+        self.assertEqual(_get_mime_type("/tmp/sound.mp3"), "audio/mpeg")
+
+    def test_jpg(self):
+        from whatsapp_manager import _get_mime_type
+        self.assertEqual(_get_mime_type("/tmp/photo.jpg"), "image/jpeg")
+
+    def test_png(self):
+        from whatsapp_manager import _get_mime_type
+        self.assertEqual(_get_mime_type("/tmp/image.PNG"), "image/png")
+
+    def test_unknown_extension(self):
+        from whatsapp_manager import _get_mime_type
+        self.assertEqual(_get_mime_type("/tmp/file.xyz"), "application/octet-stream")
+
+
 class TestOwnerCommands(BaseWhatsAppManagerTest):
     """Testes para comandos do owner em pre_gateway_dispatch."""
 
