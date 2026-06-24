@@ -157,7 +157,8 @@ class TestRoteamento(unittest.TestCase):
 
     PESSOAIS_REL = ["Amigo", "AmigoProximo", "Parente", "Filho"]
     PESSOAIS_MANUAL = ["namorada", "namorado", "esposa", "marido",
-                       "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô"]
+                       "mãe", "mae", "pai", "filho", "filha",
+                       "irmão", "irmao", "irmã", "irma", "avó", "avo", "avô"]
     SUPORTE_REL  = ["Cliente", "Vendedor", "Desconhecido", "", None]
 
     def _deve_usar_pessoal(self, rel, manual_rel=""):
@@ -165,7 +166,8 @@ class TestRoteamento(unittest.TestCase):
         _man = (manual_rel or "").lower()
         pessoal_manual = _man in (
             "namorada", "namorado", "esposa", "marido",
-            "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô",
+            "mãe", "mae", "pai", "filho", "filha",
+            "irmão", "irmao", "irmã", "irma", "avó", "avo", "avô",
         )
         return _rel in ("Amigo", "AmigoProximo", "Parente", "Filho") or pessoal_manual
 

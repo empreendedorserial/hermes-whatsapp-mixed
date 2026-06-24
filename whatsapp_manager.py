@@ -5081,7 +5081,8 @@ def pre_llm_call(*args, **kwargs):
     _man_rel = ((contact_info or {}).get("manual_relationship") or "").lower()
     _pessoal_manual = _man_rel in (
         "namorada", "namorado", "esposa", "marido",
-        "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô",
+        "mãe", "mae", "pai", "filho", "filha",
+        "irmão", "irmao", "irmã", "irma", "avó", "avo", "avô",
     )
     if _rel in ("Amigo", "AmigoProximo", "Parente", "Filho") or _pessoal_manual:
         logger.info(f"[prompt] Usando prompt pessoal para {phone_number} (relationship={_rel}, manual={_man_rel})")
