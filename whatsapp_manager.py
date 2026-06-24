@@ -5273,9 +5273,11 @@ _EXEC_PATTERN = re.compile(
 
 
 def post_llm_call(*args, **kwargs):
-    """Intercepta resposta do LLM e executa linhas EXEC: update contact <nome> campo=valor."""
+    """Intercepta resposta do LLM:
+    - Para contatos: envia via _human_send (typing + delay + split em bolhas) e retorna vazio.
+    - Para owner: processa EXECs e retorna resposta limpa.
+    """
     logger.info(f"[post_llm_call] chamado — kwargs keys: {list(kwargs.keys())} args count: {len(args)}")
-    # Hermes pode não passar 'platform' no post_llm_call — assumir whatsapp (este é o plugin whatsapp)
     platform = kwargs.get("platform")
     if not platform:
         ctx = next((a for a in args if isinstance(a, dict)), None)
@@ -5284,21 +5286,36 @@ def post_llm_call(*args, **kwargs):
     if platform != "whatsapp":
         return None
 
-    # Verificar se é sessão do owner via session_id (contém o JID do sender)
     session_id = kwargs.get("session_id", "")
     owner_number = config.whatsapp_owner_number
+    is_owner_session = False
     if owner_number and session_id:
         clean_session = "".join(c for c in session_id.split("@")[0].split(":")[0] if c.isdigit())
         clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
-        if clean_session and clean_owner and _normalize_brazilian_phone(clean_session) != _normalize_brazilian_phone(clean_owner):
-            logger.debug(f"[post_llm_call] sessão {session_id!r} não é do owner, pulando")
-            return None
+        if clean_session and clean_owner and _normalize_brazilian_phone(clean_session) == _normalize_brazilian_phone(clean_owner):
+            is_owner_session = True
 
     response_text = kwargs.get("assistant_response") or ""
     if not response_text:
-        logger.debug(f"[post_llm_call] assistant_response vazio. kwargs keys: {list(kwargs.keys())}")
+        logger.debug(f"[post_llm_call] assistant_response vazio.")
         return None
 
+    # ── Sessão de CONTATO → enviar com comportamento humano ──────────────────
+    if not is_owner_session:
+        chat_id = _sender_to_chat.get(session_id) or session_id
+        if chat_id:
+            try:
+                # Limpar EXECs antes de enviar ao contato
+                clean_text = _EXEC_PATTERN.sub("", response_text).strip()
+                if clean_text:
+                    logger.info(f"[post_llm_call] Enviando ao contato {chat_id} via _human_send")
+                    _human_send(chat_id, clean_text)
+                    return {"assistant_response": ""}
+            except Exception as e:
+                logger.error(f"[post_llm_call] Erro no _human_send: {e}")
+        return None
+
+    # ── Sessão do OWNER → processar EXECs ───────────────────────────────────
     matches = _EXEC_PATTERN.findall(response_text)
     logger.info(f"[post_llm_call] response_text len={len(response_text)}, EXEC matches={len(matches)}, session={session_id!r}")
     if not matches:
@@ -5331,7 +5348,6 @@ def post_llm_call(*args, **kwargs):
         return None
 
     cleaned = _EXEC_PATTERN.sub("", response_text).strip()
-    # Hermes espera dict com a chave correta da resposta
     return {"assistant_response": cleaned}
 
 
