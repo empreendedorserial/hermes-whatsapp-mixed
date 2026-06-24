@@ -3092,6 +3092,8 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
                 if e.get("jid") and not _is_owner_key(e.get("jid", ""))
             ]
 
+            id_lower = identifier.lower()
+
             # Passar 1: tentar match em personal_contacts existente — só aceita se nome do bridge
             # bate minimamente com o identifier buscado (evita mapear "Suporte" → "Rosemery")
             for entry in valid_results:
