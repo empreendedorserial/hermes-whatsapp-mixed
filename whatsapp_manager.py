@@ -469,19 +469,18 @@ def _resolve_phone_from_jid(jid: str) -> str:
     else:
         jid_part, domain_part = clean_jid, "s.whatsapp.net"
 
-    # Se for LID e não estiver no cache, forçar atualização chamando _check_bot_paused
-    if domain_part == "lid" and jid_part not in _lid_to_phone:
-        try:
-            _check_bot_paused()
-        except Exception:
-            pass
-
-    # Se for LID, tentar mapear
-    if domain_part == "lid" or jid_part in _lid_to_phone:
+    # Só fazer lookup de LID quando o domínio for @lid — nunca para @s.whatsapp.net
+    # (evita tratar números de telefone como LIDs quando aparecem como chaves no mapa)
+    if domain_part == "lid":
+        if jid_part not in _lid_to_phone:
+            try:
+                _check_bot_paused()
+            except Exception:
+                pass
         phone = _lid_to_phone.get(jid_part)
         if phone:
             return f"{phone}@s.whatsapp.net"
-    
+
     return f"{jid_part}@{domain_part}"
 
 # URL do servidor de mensagens
