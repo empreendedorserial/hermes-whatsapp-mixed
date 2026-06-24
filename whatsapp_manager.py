@@ -721,6 +721,75 @@ def _call_llm_api(url: str, headers: dict, payload: dict, extract_fn, timeout: i
         return None
 
 
+def _classify_owner_intent(message: str) -> dict:
+    """Classifica a intenção do owner e extrai o nome do contato alvo.
+
+    Retorna:
+        {"is_update": True, "contact_name": "Nome"} — comando de atualização de contato
+        {"is_update": False, "intent": "descrição curta"} — outra intenção
+    """
+    google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    classify_model = config.whatsapp_contact_classifier_model
+
+    # Strip audio wrapper if present
+    clean_msg = message
+    m = re.match(r'\[Áudio:\s*"(.+?)"\]', message, re.IGNORECASE | re.DOTALL)
+    if m:
+        clean_msg = m.group(1)
+
+    prompt = (
+        "Você é um classificador de intenções para um assistente de WhatsApp.\n"
+        "Analise a mensagem do usuário e determine se é um COMANDO DE ATUALIZAÇÃO DE CONTATO.\n\n"
+        "É um comando de atualização quando o usuário quer:\n"
+        "- Mudar/definir o relacionamento, apelido, observação, nome ou produto de um contato\n"
+        "- Exemplos: 'coloque a Mayra como namorada', 'cadastre um apelido para Pedro como Pedrinho',\n"
+        "  'coloque uma observação no Juan', 'atualize o nome da Viviane', 'defina o Pedro como filho'\n\n"
+        "NÃO é atualização quando o usuário:\n"
+        "- Faz perguntas, pedidos ao bot, ou comandos gerais sem mencionar um contato específico\n\n"
+        f"Mensagem: \"{clean_msg}\"\n\n"
+        "Retorne APENAS JSON:\n"
+        "Se for atualização: {\"is_update\": true, \"contact_name\": \"nome do contato mencionado\", \"intent\": \"descrição em 5 palavras\"}\n"
+        "Se não for: {\"is_update\": false, \"intent\": \"descrição em 5 palavras\"}\n"
+    )
+
+    model_name = classify_model or "gemini-3.1-flash-lite"
+    text_content = None
+    for key, url, headers, make_payload, extract_fn in [
+        (google_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_key}",
+         {"Content-Type": "application/json"},
+         lambda p: {"contents": [{"parts": [{"text": p}]}], "generationConfig": {"maxOutputTokens": 128}},
+         lambda r: r["candidates"][0]["content"]["parts"][0]["text"]),
+        (openai_key,
+         "https://api.openai.com/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
+         lambda p: {"model": model_name, "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+        (openrouter_key,
+         "https://openrouter.ai/api/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"},
+         lambda p: {"model": model_name, "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+    ]:
+        if not key:
+            continue
+        text_content = _call_llm_api(url, headers, make_payload(prompt), extract_fn, timeout=10)
+        if text_content:
+            break
+
+    if not text_content:
+        return {"is_update": False, "intent": "falha na classificação"}
+    try:
+        result = _extract_json_from_text(text_content)
+        if isinstance(result, dict) and "is_update" in result:
+            return result
+        return {"is_update": False, "intent": "resposta inválida"}
+    except Exception:
+        return {"is_update": False, "intent": "erro ao parsear"}
+
+
 def _extract_update_fields_via_llm(contact_name: str, message: str) -> dict:
     """Extrai campos de atualização de contato de uma mensagem em linguagem natural.
 
@@ -4117,11 +4186,6 @@ def pre_gateway_dispatch(*args, **kwargs):
 
         return {"action": "skip", "reason": "update-contact-command"}
 
-    # Pedido de atualização de contato em linguagem natural (owner em qualquer chat)
-    _UPDATE_NL_TRIGGERS = re.compile(
-        r"\b(atuali[zs]|mud[ae]|coloc[ae]|coloqu|registr[ae]|cadastr[ae]|salv[ae]|marc[ae]|configur[ae]|defin[ae]|inform[ae]|adicion[ae]|acrescent[ae]|anot[ae]|coloc[ae])\w*\b",
-        re.IGNORECASE,
-    )
     if is_owner:
         # Verificar se há pendência aguardando número e a mensagem atual é um número
         pending = _pending_contact_update.get(sender_id)
@@ -4148,13 +4212,11 @@ def pre_gateway_dispatch(*args, **kwargs):
                     logger.error(f"[update-nl] Erro ao enviar resposta de pendência: {e}")
             return {"action": "skip", "reason": "update-contact-pending"}
 
-        nl_contact_name = None
-        if _UPDATE_NL_TRIGGERS.search(msg_text):
-            nl_contact_name = _extract_contact_name_via_llm(msg_text)
-            if nl_contact_name:
-                logger.info(f"[update-nl] Nome extraído pela LLM: '{nl_contact_name}'")
-            else:
-                logger.warning(f"[update-nl] LLM não identificou nome de contato em: '{msg_text}'")
+        # Classificar intenção via LLM — substitui regex de triggers
+        intent_result = _classify_owner_intent(msg_text)
+        intent_label = intent_result.get("intent", "")
+        logger.info(f"[update-nl] Intenção detectada: is_update={intent_result.get('is_update')} intent='{intent_label}'")
+        nl_contact_name = intent_result.get("contact_name") if intent_result.get("is_update") else None
 
         if nl_contact_name:
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
