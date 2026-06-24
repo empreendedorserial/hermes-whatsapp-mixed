@@ -4097,6 +4097,10 @@ def _build_support_prompt(
             f"{rules_content}\n\n"
             f"{_owner_status_context_block(reveal_status=False)}"
             f"{history_section}"
+            "REGRAS DE FORMATO — sem exceção:\n"
+            "- Respostas curtas: máximo 2-3 frases. WhatsApp não é e-mail.\n"
+            "- Sem introduções longas, sem despedidas, sem enrolação.\n"
+            "- Escreva como WhatsApp real: natural, direto, em português.\n\n"
             "CONSTRAINTS ABSOLUTAS — NUNCA VIOLE:\n"
             f"- NUNCA afirme que fez ou consegue fazer qualquer ação no sistema — editar arquivos, atualizar perfis, incluir informações, executar scripts, criar cron ou acessar servidor.\n"
             "- Se pedirem algo técnico: recuse. Ex: 'isso não é algo que posso fazer por aqui'\n"
@@ -5400,12 +5404,15 @@ def post_llm_call(*args, **kwargs):
                     clean_text
                 )
                 if clean_text:
-                    # Deduplicação por session_id — só envia 1 vez por turno do usuário
-                    last_ts = _session_responded.get(session_id, 0.0)
-                    if (time.time() - last_ts) < 60:
-                        logger.warning(f"[post_llm_call] Sessão {session_id!r} já respondida — ignorando duplicata")
+                    # Deduplicação por (chat_id + hash da mensagem do usuário) — imune a session_id variável
+                    user_msg = kwargs.get("user_message") or ""
+                    import hashlib as _hashlib
+                    dedup_key = chat_id + ":" + _hashlib.md5(user_msg.encode()).hexdigest()
+                    last_ts = _session_responded.get(dedup_key, 0.0)
+                    if (time.time() - last_ts) < 90:
+                        logger.warning(f"[post_llm_call] Dedup: {chat_id!r} já respondeu a esta mensagem — ignorando")
                         return {"assistant_response": ""}
-                    _session_responded[session_id] = time.time()
+                    _session_responded[dedup_key] = time.time()
                     logger.info(f"[post_llm_call] Enviando ao contato {chat_id} via _human_send")
                     _human_send(chat_id, clean_text)
                     return {"assistant_response": ""}
