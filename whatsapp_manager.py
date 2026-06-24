@@ -166,6 +166,9 @@ config = PluginConfig()
 # Mapeamento temporário sender_id -> chat_id (usado entre pre_gateway_dispatch e pre_llm_call)
 _sender_to_chat: dict[str, str] = {}
 
+# Deduplicação: { chat_id -> (texto, timestamp) } — evita envio duplicado
+_last_sent: dict[str, tuple[str, float]] = {}
+
 # Contatos já notificados do status ativo: { chat_id -> status_description }
 # Evita reenviar o proativo a cada mensagem enquanto o status está ativo.
 # Limpo automaticamente quando o status muda ou expira.
@@ -5384,6 +5387,12 @@ def post_llm_call(*args, **kwargs):
                     clean_text
                 )
                 if clean_text:
+                    # Deduplicação: pular se idêntico ao último envio nos últimos 10s
+                    last_text, last_ts = _last_sent.get(chat_id, ("", 0.0))
+                    if clean_text == last_text and (time.time() - last_ts) < 10:
+                        logger.warning(f"[post_llm_call] Duplicata detectada para {chat_id} — ignorando")
+                        return {"assistant_response": ""}
+                    _last_sent[chat_id] = (clean_text, time.time())
                     logger.info(f"[post_llm_call] Enviando ao contato {chat_id} via _human_send")
                     _human_send(chat_id, clean_text)
                     return {"assistant_response": ""}
