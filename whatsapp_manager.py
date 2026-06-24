@@ -739,19 +739,30 @@ def _classify_owner_intent(message: str) -> dict:
     if m:
         clean_msg = m.group(1)
 
+    from datetime import datetime as _dt
+    now_str = _dt.now().strftime("%Y-%m-%d %H:%M")
+
     prompt = (
         "Você é um classificador de intenções para um assistente de WhatsApp.\n"
-        "Analise a mensagem do usuário e determine se é um COMANDO DE ATUALIZAÇÃO DE CONTATO.\n\n"
-        "É um comando de atualização quando o usuário quer:\n"
-        "- Mudar/definir o relacionamento, apelido, observação, nome ou produto de um contato\n"
-        "- Exemplos: 'coloque a Mayra como namorada', 'cadastre um apelido para Pedro como Pedrinho',\n"
-        "  'coloque uma observação no Juan', 'atualize o nome da Viviane', 'defina o Pedro como filho'\n\n"
-        "NÃO é atualização quando o usuário:\n"
-        "- Faz perguntas, pedidos ao bot, ou comandos gerais sem mencionar um contato específico\n\n"
+        "Analise a mensagem e classifique em UMA das três categorias:\n\n"
+        "1. ATUALIZAÇÃO DE CONTATO — usuário quer mudar dados de um contato:\n"
+        "   Ex: 'coloque a Mayra como namorada', 'cadastre apelido Pedro como Pedrinho'\n\n"
+        "2. STATUS DO DONO — usuário informa onde está ou o que vai fazer, com ou sem horário:\n"
+        "   Ex: 'vou estar no futebol até as 21h', 'entrei em call agora', 'estou dirigindo',\n"
+        "       'já voltei', 'cancelar status', 'to livre agora'\n\n"
+        "3. OUTRO — qualquer outra coisa\n\n"
+        f"Data/hora atual: {now_str}\n"
         f"Mensagem: \"{clean_msg}\"\n\n"
         "Retorne APENAS JSON:\n"
-        "Se for atualização: {\"is_update\": true, \"contact_name\": \"nome do contato mencionado\", \"intent\": \"descrição em 5 palavras\"}\n"
-        "Se não for: {\"is_update\": false, \"intent\": \"descrição em 5 palavras\"}\n"
+        "Se for atualização de contato:\n"
+        "  {\"intent_type\": \"update_contact\", \"contact_name\": \"nome\", \"intent\": \"resumo 5 palavras\"}\n"
+        "Se for status do dono:\n"
+        "  {\"intent_type\": \"set_status\", \"description\": \"o que está fazendo\", "
+        "\"until_iso\": \"YYYY-MM-DDTHH:MM:SS ou null se não informado\", "
+        "\"is_clear\": false, \"intent\": \"resumo 5 palavras\"}\n"
+        "  (se for 'já voltei'/'cancelar status'/'to livre': {\"intent_type\": \"set_status\", \"is_clear\": true, \"intent\": \"limpando status\"})\n"
+        "Se for outro:\n"
+        "  {\"intent_type\": \"other\", \"intent\": \"resumo 5 palavras\"}\n"
     )
 
     model_name = classify_model or "gemini-3.1-flash-lite"
@@ -780,14 +791,140 @@ def _classify_owner_intent(message: str) -> dict:
             break
 
     if not text_content:
-        return {"is_update": False, "intent": "falha na classificação"}
+        return {"intent_type": "other", "is_update": False, "intent": "falha na classificação"}
     try:
         result = _extract_json_from_text(text_content)
-        if isinstance(result, dict) and "is_update" in result:
-            return result
-        return {"is_update": False, "intent": "resposta inválida"}
+        if not isinstance(result, dict):
+            return {"intent_type": "other", "is_update": False, "intent": "resposta inválida"}
+        # Compatibilidade: mapear intent_type para is_update
+        intent_type = result.get("intent_type", "other")
+        result["is_update"] = (intent_type == "update_contact")
+        result["is_status"] = (intent_type == "set_status")
+        return result
     except Exception:
-        return {"is_update": False, "intent": "erro ao parsear"}
+        return {"intent_type": "other", "is_update": False, "intent": "erro ao parsear"}
+
+
+_OWNER_STATUS_PATH = Path("/opt/data/.hermes/owner_status.json")
+
+
+def _save_owner_status(description: str, until_iso: str | None, raw: str) -> None:
+    from datetime import datetime as _dt
+    status = {
+        "active": True,
+        "description": description,
+        "until_iso": until_iso,
+        "raw": raw,
+        "set_at": _dt.now().isoformat(),
+    }
+    _OWNER_STATUS_PATH.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"[owner-status] Status salvo: '{description}' até {until_iso or 'indefinido'}")
+
+
+def _clear_owner_status() -> None:
+    if _OWNER_STATUS_PATH.exists():
+        data = json.loads(_OWNER_STATUS_PATH.read_text(encoding="utf-8"))
+        data["active"] = False
+        _OWNER_STATUS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("[owner-status] Status limpo pelo dono")
+
+
+def _get_active_owner_status() -> dict | None:
+    """Retorna o status ativo do dono, ou None se inativo/expirado."""
+    if not _OWNER_STATUS_PATH.exists():
+        return None
+    try:
+        from datetime import datetime as _dt
+        data = json.loads(_OWNER_STATUS_PATH.read_text(encoding="utf-8"))
+        if not data.get("active"):
+            return None
+        until = data.get("until_iso")
+        if until:
+            try:
+                if _dt.now() > _dt.fromisoformat(until):
+                    # Expirado — desativar automaticamente
+                    data["active"] = False
+                    _OWNER_STATUS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                    logger.info(f"[owner-status] Status expirado automaticamente: '{data.get('description')}'")
+                    return None
+            except Exception:
+                pass
+        return data
+    except Exception:
+        return None
+
+
+def _generate_status_response(contact_name: str, relationship: str, manual_rel: str | None, status: dict) -> str:
+    """Gera resposta casual como Assistente do André baseada no status e relacionamento."""
+    google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    owner_name = config.whatsapp_owner_name or "André"
+    classify_model = config.whatsapp_contact_classifier_model or "gemini-3.1-flash-lite"
+
+    description = status.get("description", "ocupado")
+    until_iso = status.get("until_iso")
+
+    until_str = ""
+    if until_iso:
+        try:
+            from datetime import datetime as _dt
+            until_dt = _dt.fromisoformat(until_iso)
+            until_str = f" até as {until_dt.strftime('%H:%M')}"
+        except Exception:
+            pass
+
+    rel_label = manual_rel or relationship or "desconhecido"
+    rel_type = relationship or ""
+
+    if rel_type in ("AmigoProximo", "Parente", "Filho") or rel_label.lower() in ("namorada", "namorado", "esposa", "marido", "mãe", "pai", "filho", "filha", "irmão", "irmã"):
+        tone_instruction = "Tom casual e caloroso, como se fosse um assistente pessoal próximo da família."
+    elif rel_type in ("Amigo",):
+        tone_instruction = "Tom descontraído e amigável."
+    elif rel_type in ("Cliente", "Vendedor"):
+        tone_instruction = "Tom profissional mas leve e simpático."
+    else:
+        tone_instruction = "Tom neutro e prestativo. Tente entender brevemente o que a pessoa precisa para informar ao André depois."
+
+    prompt = (
+        f"Você é o Assistente pessoal de {owner_name}.\n"
+        f"{owner_name} está {description}{until_str} e não pode responder agora.\n\n"
+        f"A pessoa que mandou mensagem é: {contact_name or 'alguém'} (relacionamento: {rel_label}).\n"
+        f"{tone_instruction}\n\n"
+        f"Escreva UMA mensagem curta (2-3 linhas) informando que {owner_name} está {description}{until_str} "
+        f"e vai retornar assim que puder. Seja natural, não robótico. Não use emojis em excesso.\n"
+        f"NÃO diga que é uma IA nem use termos como 'inteligência artificial'. "
+        f"Se perguntarem se é um bot, diga que é o assistente de {owner_name} e confirme o status.\n"
+    )
+
+    model_name = classify_model
+    text_content = None
+    for key, url, headers, make_payload, extract_fn in [
+        (google_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_key}",
+         {"Content-Type": "application/json"},
+         lambda p: {"contents": [{"parts": [{"text": p}]}], "generationConfig": {"maxOutputTokens": 200}},
+         lambda r: r["candidates"][0]["content"]["parts"][0]["text"]),
+        (openai_key,
+         "https://api.openai.com/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
+         lambda p: {"model": model_name, "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+        (openrouter_key,
+         "https://openrouter.ai/api/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"},
+         lambda p: {"model": model_name, "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+    ]:
+        if not key:
+            continue
+        text_content = _call_llm_api(url, headers, make_payload(prompt), extract_fn, timeout=15)
+        if text_content:
+            break
+
+    if not text_content:
+        return f"Oi! {owner_name} está {description}{until_str} e vai retornar em breve. 👋"
+    return text_content.strip()
 
 
 def _extract_update_fields_via_llm(contact_name: str, message: str) -> dict:
@@ -4313,7 +4450,47 @@ def pre_gateway_dispatch(*args, **kwargs):
         # Classificar intenção via LLM — substitui regex de triggers
         intent_result = _classify_owner_intent(msg_text)
         intent_label = intent_result.get("intent", "")
-        logger.info(f"[update-nl] Intenção detectada: is_update={intent_result.get('is_update')} intent='{intent_label}'")
+        intent_type = intent_result.get("intent_type", "other")
+        logger.info(f"[update-nl] Intenção detectada: type={intent_type} intent='{intent_label}'")
+
+        # Processar comando de status do dono
+        if intent_result.get("is_status"):
+            if intent_result.get("is_clear"):
+                _clear_owner_status()
+                chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+                if chat_id:
+                    try:
+                        payload = json.dumps({"chatId": chat_id, "message": "✅ Status limpo. Voltando ao modo normal."}).encode("utf-8")
+                        req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+                        req.add_header("Content-Type", "application/json")
+                        with urllib.request.urlopen(req, timeout=10):
+                            pass
+                    except Exception as e:
+                        logger.error(f"[owner-status] Erro ao confirmar limpeza: {e}")
+            else:
+                description = intent_result.get("description", "ocupado")
+                until_iso = intent_result.get("until_iso")
+                _save_owner_status(description, until_iso, msg_text)
+                chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+                until_str = ""
+                if until_iso:
+                    try:
+                        from datetime import datetime as _dt
+                        until_str = f" até as {_dt.fromisoformat(until_iso).strftime('%H:%M')}"
+                    except Exception:
+                        pass
+                confirm = f"✅ Status definido: *{description}*{until_str}. Vou avisar seus contatos enquanto isso."
+                if chat_id:
+                    try:
+                        payload = json.dumps({"chatId": chat_id, "message": confirm}).encode("utf-8")
+                        req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+                        req.add_header("Content-Type", "application/json")
+                        with urllib.request.urlopen(req, timeout=10):
+                            pass
+                    except Exception as e:
+                        logger.error(f"[owner-status] Erro ao confirmar status: {e}")
+            return {"action": "skip", "reason": "owner-status-set"}
+
         nl_contact_name = intent_result.get("contact_name") if intent_result.get("is_update") else None
 
         if nl_contact_name:
@@ -4517,6 +4694,30 @@ def pre_gateway_dispatch(*args, **kwargs):
 
         if chat_id and sender_id:
             _sender_to_chat[sender_id] = chat_id
+
+        # Verificar status ativo do dono e responder como Assistente
+        owner_status = _get_active_owner_status()
+        if owner_status and chat_id:
+            try:
+                pc_path = Path("/opt/data/personal_contacts.json")
+                contact_data = {}
+                if pc_path.exists():
+                    pc = json.loads(pc_path.read_text(encoding="utf-8"))
+                    contact_data = pc.get(sender_id, pc.get(chat_id, {}))
+                contact_name = contact_data.get("name") or contact_data.get("nickname") or ""
+                relationship = contact_data.get("relationship") or ""
+                manual_rel = contact_data.get("manual_relationship")
+                logger.info(f"[owner-status] Status ativo '{owner_status['description']}' — respondendo para {contact_name or sender_id} (rel={relationship})")
+                status_response = _generate_status_response(contact_name, relationship, manual_rel, owner_status)
+                payload = json.dumps({"chatId": chat_id, "message": status_response}).encode("utf-8")
+                req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+                req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(req, timeout=10):
+                    pass
+                logger.info(f"[owner-status] Resposta de status enviada para {chat_id}")
+            except Exception as e:
+                logger.error(f"[owner-status] Erro ao enviar resposta de status: {e}")
+            # Mensagem segue para processamento normal (salva no histórico, André vê depois)
     else:
         # Para o dono, salvar chat_id e texto da mensagem atual
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
