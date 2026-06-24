@@ -3860,7 +3860,7 @@ def _owner_status_context_block(reveal_status: bool = True) -> str:
     )
 
 
-def _build_personal_prompt(contact_info: dict, relationship: str, history_section: str, whatsapp_soul: str = "") -> dict:
+def _build_personal_prompt(contact_info: dict, relationship: str, history_section: str, whatsapp_soul: str = "", reveal_status: bool = True) -> dict:
     """Constrói o payload de contexto para contatos pessoais (Amigo, Parente, etc.).
 
     Inclui nome, relacionamento, tom, apelidos, saudação frequente e diretrizes.
@@ -3917,7 +3917,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             "4. Se perguntarem 'é uma IA?' / 'é um bot?' / 'quem tá aqui?': confirme de forma simples. Ex: 'Sou o assistente dele 😄 Pode falar!'\n"
             "5. Se houver apelido ou saudação frequente, use naturalmente.\n"
             "6. Se houver observação importante sobre o contato, siga à risca.\n\n"
-            f"{_owner_status_context_block(reveal_status=True)}"
+            f"{_owner_status_context_block(reveal_status=reveal_status)}"
             f"{history_section}"
             "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
             "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"
@@ -5105,7 +5105,9 @@ def pre_llm_call(*args, **kwargs):
     )
     if _rel in ("Amigo", "AmigoProximo", "Parente", "Filho") or _pessoal_manual:
         logger.info(f"[prompt] Usando prompt pessoal para {phone_number} (relationship={_rel}, manual={_man_rel})")
-        return _build_personal_prompt(contact_info or {}, _rel or _man_rel, history_section, whatsapp_soul)
+        _chat_id_for_status = _resolve_chat_id(sender_id) or sender_id
+        _already_notified = _chat_id_for_status in _status_notified
+        return _build_personal_prompt(contact_info or {}, _rel or _man_rel, history_section, whatsapp_soul, reveal_status=not _already_notified)
 
     return _build_support_prompt(whatsapp_soul, rules_content, history_section, contact_info=contact_info)
 
