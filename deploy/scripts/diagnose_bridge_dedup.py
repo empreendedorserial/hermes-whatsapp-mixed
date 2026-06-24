@@ -147,14 +147,19 @@ def monitor_log(log_path: str):
 
 if __name__ == "__main__":
     check_plugin()
-    log_path = find_log()
-    if not log_path:
-        print("[ERRO] Log não encontrado. Passe o caminho como argumento:")
-        print(f"  python3 {sys.argv[0]} /caminho/para/hermes.log")
-        if len(sys.argv) > 1:
-            log_path = sys.argv[1]
-        else:
-            sys.exit(1)
-    if len(sys.argv) > 1:
+
+    # Modo stdin: lê linhas coladas/redirecionadas de stdin
+    # Uso: python3 diagnose... < /tmp/log.txt
+    # Ou:  cat /proc/7/fd/2 2>/dev/null | python3 diagnose...
+    # Ou pipar a saída do hermes para o script enquanto ele roda
+
+    if len(sys.argv) > 1 and sys.argv[1] != "-":
         log_path = sys.argv[1]
-    monitor_log(log_path)
+        monitor_log(log_path)
+    else:
+        print("=== Lendo do stdin (cole linhas de log ou redirecione) ===")
+        print("Ctrl+C ou Ctrl+D para parar.\n")
+        # Reutiliza o mesmo parser mas lendo de sys.stdin linha a linha
+        import io
+        monitor_log.__globals__['open'] = lambda path, *a, **kw: sys.stdin
+        monitor_log("-")  # o path é ignorado pois open foi patchado
