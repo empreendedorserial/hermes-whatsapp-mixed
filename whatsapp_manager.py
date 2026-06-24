@@ -5078,9 +5078,14 @@ def pre_llm_call(*args, **kwargs):
 
     # Roteamento: Amigo/Parente → prompt pessoal; demais → suporte/cliente
     _rel = (contact_info or {}).get("relationship") or ""
-    if _rel in ("Amigo", "AmigoProximo", "Parente", "Filho"):
-        logger.info(f"[prompt] Usando prompt pessoal para {phone_number} (relationship={_rel})")
-        return _build_personal_prompt(contact_info or {}, _rel, history_section)
+    _man_rel = ((contact_info or {}).get("manual_relationship") or "").lower()
+    _pessoal_manual = _man_rel in (
+        "namorada", "namorado", "esposa", "marido",
+        "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô",
+    )
+    if _rel in ("Amigo", "AmigoProximo", "Parente", "Filho") or _pessoal_manual:
+        logger.info(f"[prompt] Usando prompt pessoal para {phone_number} (relationship={_rel}, manual={_man_rel})")
+        return _build_personal_prompt(contact_info or {}, _rel or _man_rel, history_section)
 
     return _build_support_prompt(whatsapp_soul, rules_content, history_section, contact_info=contact_info)
 
