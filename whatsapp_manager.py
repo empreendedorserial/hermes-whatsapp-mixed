@@ -168,6 +168,7 @@ _sender_to_chat: dict[str, str] = {}
 
 # Debounce de envio: { chat_id -> threading.Timer } — só o último post_llm_call por turno dispara
 _pending_send: dict[str, "threading.Timer"] = {}
+_pending_send_lock = threading.Lock()
 
 # Contatos já notificados do status ativo: { chat_id -> status_description }
 # Evita reenviar o proativo a cada mensagem enquanto o status está ativo.
@@ -5404,22 +5405,23 @@ def post_llm_call(*args, **kwargs):
                     clean_text
                 )
                 if clean_text:
-                    # Debounce: cancela envio anterior para este chat e agenda novo.
-                    # Quando Hermes chama post_llm_call múltiplas vezes por turno,
-                    # só o último texto (resposta final do LLM) é enviado.
-                    existing = _pending_send.pop(chat_id, None)
-                    if existing:
-                        existing.cancel()
-                        logger.info(f"[post_llm_call] Debounce: envio anterior cancelado para {chat_id}")
-
+                    # Debounce com lock: evita race condition quando Hermes chama
+                    # post_llm_call em threads paralelas para o mesmo chat.
+                    # Só o último texto agendado (resposta final) é enviado.
                     def _do_send(cid=chat_id, txt=clean_text):
-                        _pending_send.pop(cid, None)
+                        with _pending_send_lock:
+                            _pending_send.pop(cid, None)
                         logger.info(f"[post_llm_call] Enviando ao contato {cid} via _human_send")
                         _human_send(cid, txt)
 
-                    timer = threading.Timer(2.0, _do_send)
-                    _pending_send[chat_id] = timer
-                    timer.start()
+                    with _pending_send_lock:
+                        existing = _pending_send.pop(chat_id, None)
+                        if existing:
+                            existing.cancel()
+                            logger.info(f"[post_llm_call] Debounce: envio anterior cancelado para {chat_id}")
+                        timer = threading.Timer(2.0, _do_send)
+                        _pending_send[chat_id] = timer
+                        timer.start()
                     return {"assistant_response": ""}
             except Exception as e:
                 logger.error(f"[post_llm_call] Erro no _human_send: {e}")
