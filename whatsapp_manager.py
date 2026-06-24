@@ -5066,6 +5066,14 @@ def pre_llm_call(*args, **kwargs):
     if not sender_id:
         sender_id = kwargs.get("sender_id")
 
+    # Mapear session_id → chat_id para o post_llm_call resolver corretamente
+    session_id_kwarg = kwargs.get("session_id") or (context or {}).get("session_id")
+    if session_id_kwarg and sender_id and platform == "whatsapp":
+        chat_id = _sender_to_chat.get(sender_id) or sender_id
+        if chat_id and session_id_kwarg not in _sender_to_chat:
+            _sender_to_chat[session_id_kwarg] = chat_id
+            logger.info(f"[pre_llm_call] mapeado session_id={session_id_kwarg!r} → {chat_id}")
+
     if platform != "whatsapp":
         return None
 
