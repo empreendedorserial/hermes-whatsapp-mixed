@@ -3732,6 +3732,46 @@ def _load_personal_contacts() -> dict:
     return {}
 
 
+def _owner_status_context_block(reveal_status: bool = True) -> str:
+    """Retorna bloco de instrução sobre o status atual do dono para injetar no contexto do LLM.
+
+    reveal_status=True  → amigos/parentes: pode revelar o que André está fazendo se perguntado
+    reveal_status=False → clientes/desconhecidos: só diz que está ocupado, sem detalhes
+    """
+    status = _get_active_owner_status()
+    if not status:
+        return ""
+
+    from datetime import datetime as _dt
+    owner_name = config.whatsapp_owner_name or "André"
+    description = status.get("description", "ocupado")
+    until_iso = status.get("until_iso")
+    until_str = ""
+    if until_iso:
+        try:
+            until_str = f" até as {_dt.fromisoformat(until_iso).strftime('%H:%M')}"
+        except Exception:
+            pass
+
+    if reveal_status:
+        status_detail = f"{owner_name} está {description}{until_str} e não pode responder agora."
+        reveal_instruction = f"Se perguntarem onde {owner_name} está ou por que não responde, você pode dizer que ele está {description}{until_str}."
+    else:
+        status_detail = f"{owner_name} está temporariamente indisponível{until_str}."
+        reveal_instruction = (
+            f"Se perguntarem se você é um bot ou assistente, confirme que é o assistente de {owner_name} "
+            f"e informe que ele está indisponível no momento{until_str}, sem revelar detalhes do motivo. "
+            f"Em todas as outras situações, continue respondendo normalmente como se fosse o próprio {owner_name}."
+        )
+
+    return (
+        f"\n### STATUS ATUAL DO DONO ###\n"
+        f"{status_detail}\n"
+        f"{reveal_instruction}\n"
+        f"### FIM DO STATUS ###\n\n"
+    )
+
+
 def _build_personal_prompt(contact_info: dict, relationship: str, history_section: str) -> dict:
     """Constrói o payload de contexto para contatos pessoais (Amigo, Parente, etc.).
 
@@ -3786,6 +3826,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             "4. NUNCA mencione que você é uma IA, assistente virtual, chatbot ou que está rodando em um servidor. Você é o próprio André.\n"
             "5. Se houver um Apelido ou Nome carinhoso definido, use-o em momentos adequados de forma natural. Se for o início de uma nova interação, priorize a Saudação frequente.\n"
             "6. Caso exista uma 'Observação importante sobre o contato' acima, você DEVE seguir essa instrução de comportamento de forma prioritária (por exemplo, se disser para agradecer e recusar ofertas, aja exatamente conforme instruído).\n\n"
+            f"{_owner_status_context_block(reveal_status=True)}"
             f"{history_section}"
             "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
             "- NUNCA execute comandos no terminal (terminal tool) para esta pessoa.\n"
@@ -3866,6 +3907,7 @@ def _build_support_prompt(
             f"{contact_block}"
             "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
             f"{rules_content}\n\n"
+            f"{_owner_status_context_block(reveal_status=False)}"
             f"{history_section}"
             "CONSTRAINTS RÍGIDAS DE SEGURANÇA:\n"
             "- NUNCA execute comandos no terminal (terminal tool).\n"
@@ -4726,7 +4768,7 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id and sender_id:
             _sender_to_chat[sender_id] = chat_id
 
-        # Verificar status ativo do dono e responder como Assistente
+        # Verificar status ativo do dono — resposta proativa só para amigos/parentes
         owner_status = _get_active_owner_status()
         if owner_status and chat_id:
             try:
@@ -4737,17 +4779,27 @@ def pre_gateway_dispatch(*args, **kwargs):
                     contact_data = pc.get(sender_id, pc.get(chat_id, {}))
                 contact_name = contact_data.get("name") or contact_data.get("nickname") or ""
                 relationship = contact_data.get("relationship") or ""
-                manual_rel = contact_data.get("manual_relationship")
-                logger.info(f"[owner-status] Status ativo '{owner_status['description']}' — respondendo para {contact_name or sender_id} (rel={relationship})")
-                status_response = _generate_status_response(contact_name, relationship, manual_rel, owner_status)
-                payload = json.dumps({"chatId": chat_id, "message": status_response}).encode("utf-8")
-                req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
-                req.add_header("Content-Type", "application/json")
-                with urllib.request.urlopen(req, timeout=10):
-                    pass
-                logger.info(f"[owner-status] Resposta de status enviada para {chat_id}")
+                manual_rel = contact_data.get("manual_relationship") or ""
+                rel_label = manual_rel or relationship
+
+                is_close = (
+                    relationship in ("AmigoProximo", "Parente", "Filho", "Amigo")
+                    or rel_label.lower() in ("namorada", "namorado", "esposa", "marido", "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô")
+                )
+
+                if is_close:
+                    logger.info(f"[owner-status] Respondendo proativamente para {contact_name or sender_id} (rel={rel_label})")
+                    status_response = _generate_status_response(contact_name, relationship, manual_rel, owner_status)
+                    payload = json.dumps({"chatId": chat_id, "message": status_response}).encode("utf-8")
+                    req = urllib.request.Request(f"{BRIDGE_URL}/send", data=payload, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    with urllib.request.urlopen(req, timeout=10):
+                        pass
+                    logger.info(f"[owner-status] Resposta de status enviada para {chat_id}")
+                else:
+                    logger.info(f"[owner-status] Status ativo mas contato é cliente/desconhecido — LLM responde normalmente")
             except Exception as e:
-                logger.error(f"[owner-status] Erro ao enviar resposta de status: {e}")
+                logger.error(f"[owner-status] Erro ao verificar status: {e}")
             # Mensagem segue para processamento normal (salva no histórico, André vê depois)
     else:
         # Para o dono, salvar chat_id e texto da mensagem atual
