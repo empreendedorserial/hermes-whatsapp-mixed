@@ -115,9 +115,8 @@ class TestResolveChatId(unittest.TestCase):
         self.assertEqual(result, "558699997003@s.whatsapp.net")
 
     def test_strip_device_suffix_quando_sem_mapeamento(self):
-        # JID com device suffix: 5511999@s.whatsapp.net:5
-        result = wm._resolve_chat_id("5511999@s.whatsapp.net:5")
-        # Deve remover o :5
+        # JID com device suffix real: 5511999:5@s.whatsapp.net
+        result = wm._resolve_chat_id("5511999:5@s.whatsapp.net")
         self.assertIn("5511999@s.whatsapp.net", result)
         self.assertNotIn(":5", result)
 
@@ -209,8 +208,7 @@ class TestPostLlmCallRoteamento(unittest.TestCase):
             sent.append((chat_id, message))
 
         with patch.object(wm, "_human_send", fake_human_send):
-            with patch.object(wm.config.__class__, "whatsapp_owner_number",
-                              new_callable=lambda: property(lambda self: "5511000000000")):
+            with patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511000000000"}):
                 result = self._call("contato_session", "ele capotou aqui kk")
 
         self.assertEqual(result, {"assistant_response": ""})
@@ -226,8 +224,7 @@ class TestPostLlmCallRoteamento(unittest.TestCase):
             sent.append(message)
 
         with patch.object(wm, "_human_send", fake_human_send):
-            with patch.object(wm.config.__class__, "whatsapp_owner_number",
-                              new_callable=lambda: property(lambda self: "5511000000000")):
+            with patch.dict(os.environ, {"WHATSAPP_OWNER_NUMBER": "5511000000000"}):
                 self._call("contato_session2", "O número dela é 558698036699")
 
         self.assertTrue(len(sent) > 0)
