@@ -862,39 +862,70 @@ def _generate_status_response(contact_name: str, relationship: str, manual_rel: 
     owner_name = config.whatsapp_owner_name or "André"
     classify_model = config.whatsapp_contact_classifier_model or "gemini-3.1-flash-lite"
 
+    from datetime import datetime as _dt
+    import locale as _locale
+
     description = status.get("description", "ocupado")
     until_iso = status.get("until_iso")
 
     until_str = ""
     if until_iso:
         try:
-            from datetime import datetime as _dt
             until_dt = _dt.fromisoformat(until_iso)
             until_str = f" até as {until_dt.strftime('%H:%M')}"
         except Exception:
             pass
 
-    rel_label = manual_rel or relationship or "desconhecido"
-    rel_type = relationship or ""
+    # Contexto de data/hora e tipo de dia
+    now = _dt.now()
+    weekday_names = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
+    weekday = weekday_names[now.weekday()]
+    is_weekend = now.weekday() >= 5
 
-    if rel_type in ("AmigoProximo", "Parente", "Filho") or rel_label.lower() in ("namorada", "namorado", "esposa", "marido", "mãe", "pai", "filho", "filha", "irmão", "irmã"):
-        tone_instruction = "Tom casual e caloroso, como se fosse um assistente pessoal próximo da família."
-    elif rel_type in ("Amigo",):
+    # Feriados nacionais brasileiros fixos (MM-DD)
+    _feriados_fixos = {
+        "01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "11-20", "12-25"
+    }
+    today_mmdd = now.strftime("%m-%d")
+    is_holiday = today_mmdd in _feriados_fixos
+    day_type = "feriado" if is_holiday else ("fim de semana" if is_weekend else "dia útil")
+    date_context = f"{weekday}, {now.strftime('%d/%m/%Y %H:%M')} ({day_type})"
+
+    rel_label = manual_rel or relationship or ""
+    rel_type = relationship or ""
+    is_close = (
+        rel_type in ("AmigoProximo", "Parente", "Filho")
+        or rel_label.lower() in ("namorada", "namorado", "esposa", "marido", "mãe", "pai", "filho", "filha", "irmão", "irmã", "avó", "avô")
+    )
+    is_friend = rel_type == "Amigo"
+    is_business = rel_type in ("Cliente", "Vendedor")
+
+    if is_close:
+        tone_instruction = "Tom casual e caloroso, como um assistente próximo da família."
+        status_info = f"{owner_name} está {description}{until_str}"
+    elif is_friend:
         tone_instruction = "Tom descontraído e amigável."
-    elif rel_type in ("Cliente", "Vendedor"):
-        tone_instruction = "Tom profissional mas leve e simpático."
+        status_info = f"{owner_name} está {description}{until_str}"
+    elif is_business:
+        tone_instruction = "Tom profissional mas leve. NÃO revele o que André está fazendo — diga apenas que ele está indisponível no momento."
+        status_info = f"{owner_name} está indisponível no momento{until_str}"
     else:
-        tone_instruction = "Tom neutro e prestativo. Tente entender brevemente o que a pessoa precisa para informar ao André depois."
+        tone_instruction = (
+            "Tom neutro e prestativo. NÃO revele o que André está fazendo — diga apenas que ele está indisponível. "
+            "Pergunte brevemente como pode ajudar ou o que a pessoa precisa, para que André possa retornar já informado."
+        )
+        status_info = f"{owner_name} está indisponível no momento"
 
     prompt = (
         f"Você é o Assistente pessoal de {owner_name}.\n"
-        f"{owner_name} está {description}{until_str} e não pode responder agora.\n\n"
-        f"A pessoa que mandou mensagem é: {contact_name or 'alguém'} (relacionamento: {rel_label}).\n"
+        f"Data e hora atual: {date_context}.\n"
+        f"{status_info} e não pode responder agora.\n\n"
+        f"A pessoa que mandou mensagem é: {contact_name or 'alguém'}"
+        + (f" (relacionamento: {rel_label})" if rel_label else "") + ".\n"
         f"{tone_instruction}\n\n"
-        f"Escreva UMA mensagem curta (2-3 linhas) informando que {owner_name} está {description}{until_str} "
-        f"e vai retornar assim que puder. Seja natural, não robótico. Não use emojis em excesso.\n"
-        f"NÃO diga que é uma IA nem use termos como 'inteligência artificial'. "
-        f"Se perguntarem se é um bot, diga que é o assistente de {owner_name} e confirme o status.\n"
+        f"Escreva UMA mensagem curta (2-3 linhas). Seja natural, não robótico. Não use emojis em excesso.\n"
+        f"NÃO diga que é uma IA nem use termos como 'inteligência artificial'.\n"
+        f"Se perguntarem se é um bot, diga que é o assistente de {owner_name} e confirme que ele está indisponível.\n"
     )
 
     model_name = classify_model
