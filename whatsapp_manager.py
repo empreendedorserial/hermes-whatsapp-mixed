@@ -4659,6 +4659,48 @@ def pre_gateway_dispatch(*args, **kwargs):
         
         return {"action": "skip", "reason": "sync-contacts-command"}
 
+    # Comando: ajuda / como funciona — detectado por keywords sem LLM para baixa latência
+    _help_keywords = [
+        "quais comandos", "que comandos", "quais os comandos", "quais sao os comandos",
+        "quais são os comandos", "me explique como funciona", "como voce funciona",
+        "como você funciona", "como vc funciona", "o que voce faz", "o que você faz",
+        "o que vc faz", "me explica como funciona", "me explique o que voce faz",
+        "o que posso fazer", "o que consigo fazer", "quais funcionalidades",
+        "ajuda", "help", "comandos disponiveis", "comandos disponíveis",
+        "como usar", "como te usar", "como usar voce", "como usar você",
+        "me ensina a usar", "me ensine a usar",
+    ]
+    if is_owner and any(kw in normalized_msg for kw in _help_keywords):
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        owner_name = config.whatsapp_owner_name or "André"
+        help_text = (
+            f"Olá, {owner_name}! Aqui estão os comandos e funcionalidades disponíveis:\n\n"
+            "*📋 COMANDOS DE CONTROLE*\n"
+            "• `stop_bot` — pausa o atendimento a clientes (você continua usando normalmente)\n"
+            "• `start_bot` — reativa o atendimento a clientes\n"
+            "• `sincronizar contatos` — classifica novos contatos e sincroniza com o GitHub\n\n"
+            "*👤 ATUALIZAR CONTATO*\n"
+            "• Em linguagem natural: _\"a Isabel é minha filha, apelido Bebel\"_\n"
+            "• Comando direto: `update contact <nome> campo=valor`\n"
+            "  Campos: `relationship`, `nickname`, `notes`, `tone`, `guidelines`\n"
+            "  Relacionamentos: `Amigo`, `AmigoProximo`, `Parente`, `Filho`, `Cliente`, `Vendedor`\n\n"
+            "*🔍 CONSULTAR HISTÓRICO*\n"
+            "• _\"o que a Isabel falou?\"_ — busca histórico real da conversa\n"
+            "• _\"o que João me mandou ontem?\"_ — funciona com qualquer contato\n\n"
+            "*🤫 SILENCIAMENTO AUTOMÁTICO*\n"
+            "• Ao ler ou responder manualmente um chat de cliente, o bot silencia aquele chat por 10 minutos\n\n"
+            "*📱 MÍDIA*\n"
+            "• Áudios recebidos são transcritos automaticamente\n"
+            "• Imagens recebidas são descritas automaticamente\n\n"
+            "*ℹ️ SOBRE O BOT*\n"
+            "• Contatos classificados: `Cliente | Amigo | AmigoProximo | Parente | Filho | Vendedor`\n"
+            "• Campo `notes` de um contato é tratado como instrução obrigatória\n"
+            "• Sync automático a cada 24h com seu repositório GitHub\n"
+        )
+        if chat_id:
+            _human_send(chat_id, help_text)
+        return {"action": "skip", "reason": "help-command"}
+
     # Comando: update contact <nome> <campo>=<valor> [campo=valor ...]
     # Exemplo: "update contact Isabel relationship=Filha notes=minha filha mais velha"
     if is_owner and re.match(r"^update\s+contact\s+", normalized_msg, re.IGNORECASE):

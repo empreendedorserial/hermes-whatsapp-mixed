@@ -293,6 +293,36 @@ class TestMessageRoutingAndDispatch(BaseWhatsAppManagerTest):
                 self.assertEqual(gateway_client._session_model_overrides["session_client"]["model"], "my-client-model")
                 self.assertEqual(gateway_client._session_model_overrides["session_client"]["provider"], "openai")
 
+    @patch("whatsapp_manager._human_send")
+    def test_pre_gateway_dispatch_help_command(self, mock_send):
+        """Verifica que perguntas sobre comandos retornam a mensagem de ajuda."""
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        triggers = [
+            "quais comandos posso usar",
+            "me explique como você funciona",
+            "o que você faz",
+            "ajuda",
+            "help",
+            "como usar você",
+            "quais funcionalidades",
+        ]
+        for trigger in triggers:
+            mock_send.reset_mock()
+            event = MagicMock()
+            event.source.platform = "whatsapp"
+            event.source.user_id = "5511999999999@s.whatsapp.net"
+            event.text = trigger
+            event.source.chat_id = "5511999999999@s.whatsapp.net"
+            gateway = MagicMock()
+            gateway._session_key_for_source.return_value = f"session_help_{trigger[:8]}"
+            gateway._session_model_overrides = {}
+            res = pre_dispatch("pre_gateway_dispatch", {"event": event, "gateway": gateway})
+            self.assertEqual(res, {"action": "skip", "reason": "help-command"}, f"Falhou para: {trigger!r}")
+            mock_send.assert_called_once()
+            help_msg = mock_send.call_args[0][1]
+            self.assertIn("stop_bot", help_msg)
+            self.assertIn("sincronizar contatos", help_msg)
+
     @patch("whatsapp_manager._sync_contacts_from_db_internal", return_value="sync completed")
     @patch("urllib.request.urlopen")
     def test_pre_gateway_dispatch_sync_contacts_command(self, mock_urlopen, mock_sync):
