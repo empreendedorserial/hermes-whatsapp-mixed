@@ -4009,7 +4009,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
     if frequency:
         details += f"Frequência das conversas: {frequency}\n"
     if notes:
-        details += f"Observação importante sobre o contato: {notes}\n"
+        details += f"INSTRUÇÃO OBRIGATÓRIA — siga à risca: {notes}\n"
     if product:
         details += f"Produto/Serviço envolvido: {product}\n"
 
@@ -4103,7 +4103,7 @@ def _build_support_prompt(
         if frequency:
             lines.append(f"Frequência: {frequency}")
         if notes:
-            lines.append(f"Observação importante: {notes}")
+            lines.append(f"INSTRUÇÃO OBRIGATÓRIA — siga à risca: {notes}")
         if guidelines:
             lines.append(f"Diretrizes específicas: {guidelines}")
         if product:

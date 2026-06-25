@@ -439,7 +439,7 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         # manual_relationship deve prevalecer
         self.assertIn("Relacionamento: Vendedor", res["context"])
         # Notes e Product devem ser injetados
-        self.assertIn("Observação importante: Não tenho interesse no momento", res["context"])
+        self.assertIn("INSTRUÇÃO OBRIGATÓRIA — siga à risca: Não tenho interesse no momento", res["context"])
         self.assertIn("Produto/Serviço envolvido: Curso de Inglês", res["context"])
 
     def test_sanitize_classification_result_function(self):
@@ -540,7 +540,7 @@ class TestLLMContextAndPrompting(BaseWhatsAppManagerTest):
         self.assertIn("Resumo das conversas anteriores: Resumo teste", ctx)
         self.assertIn("Intenção das últimas conversas: Intenção teste", ctx)
         self.assertIn("Frequência das conversas: diária", ctx)
-        self.assertIn("Observação importante sobre o contato: Notas teste", ctx)
+        self.assertIn("INSTRUÇÃO OBRIGATÓRIA — siga à risca: Notas teste", ctx)
         self.assertIn("Produto/Serviço envolvido: Produto teste", ctx)
         self.assertIn("History content", ctx)
 
