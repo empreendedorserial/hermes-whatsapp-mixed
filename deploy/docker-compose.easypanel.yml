@@ -173,7 +173,7 @@ services:
       # Sincronização de contexto via GitHub
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-empreendedorserial}
       - CONFIG_REPO=${CONFIG_REPO:-hermes_agent_context_contatcs}
-      - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN:-}
+      - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN}
 
       # Limite de passos por resposta — evita loops e controla custo
       - MAX_TURNS=${MAX_TURNS:-8}
