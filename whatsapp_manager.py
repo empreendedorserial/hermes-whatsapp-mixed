@@ -186,6 +186,23 @@ _seen_message_ids_lock = threading.Lock()
 # Limpo automaticamente quando o status muda ou expira.
 _status_notified: dict[str, str] = {}
 
+# Log persistente de duplicatas suprimidas — sobrevive a reinicializações
+_DEDUP_LOG_PATH = Path("/opt/data/.hermes/dedup_suppressed.log")
+
+
+def _log_suppressed(reason: str, session_id: str, chat_id: str, response_preview: str) -> None:
+    """Registra em arquivo toda tentativa de envio duplicado suprimida."""
+    try:
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        preview = response_preview[:80].replace("\n", " ")
+        line = f"{ts} | {reason} | session={session_id!r} | chat={chat_id!r} | preview={preview!r}\n"
+        _DEDUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_DEDUP_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
 # Cache do último texto do owner (usado em pre_llm_call para detecção cross-session)
 _last_owner_text: dict[str, str] = {}
 
@@ -5463,6 +5480,7 @@ def post_llm_call(*args, **kwargs):
             with _responded_sessions_lock:
                 if session_id in _responded_sessions:
                     logger.warning(f"[post_llm_call] Sessão já respondida — suprimindo (session={session_id!r})")
+                    _log_suppressed("SESSION_DEDUP", session_id, chat_id, clean_text)
                     return {"assistant_response": ""}
                 _responded_sessions.add(session_id)
                 if len(_responded_sessions) > 2000:
@@ -5475,6 +5493,7 @@ def post_llm_call(*args, **kwargs):
             logger.info(f"[post_llm_call] dedup: session={session_id!r} chat_id={chat_id!r} tk={tk!r} sent={tk in _turn_sent}")
             if tk and tk in _turn_sent:
                 logger.warning(f"[post_llm_call] Turno já respondido — suprimindo (chat={chat_id})")
+                _log_suppressed("TURN_DEDUP", session_id, chat_id, clean_text)
                 return {"assistant_response": ""}  # string vazia → bridge rejeita silenciosamente
             if tk:
                 _turn_sent.add(tk)
