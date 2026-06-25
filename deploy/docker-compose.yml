@@ -38,6 +38,11 @@
 #   WHATSAPP_OWNER_NUMBER  Número do dono no formato internacional sem + (ex: 5511999999999)
 #   WHATSAPP_OWNER_NAME    Nome do dono usado nos prompts e respostas (ex: André)
 #
+# 📦 SINCRONIZAÇÃO DE CONTEXTO VIA GITHUB (obrigatória na prática)
+#   CONFIG_GITHUB_TOKEN    Token GitHub (PAT) com acesso de leitura ao CONFIG_REPO
+#                          → sem ele, personal_contacts.json e SOUL_WHATSAPP.md
+#                            não são sincronizados; o bot sobe mas opera sem contexto
+#
 # ██████████████████████████████████████████████████████████████████████████████
 # ▶ VARIÁVEIS OPCIONAIS
 # ██████████████████████████████████████████████████████████████████████████████
@@ -71,10 +76,7 @@
 #   GOOGLE_CLIENT_ID       Client ID para autenticação OAuth (Google Calendar, Drive, etc.)
 #   GOOGLE_CLIENT_SECRET   Client Secret correspondente
 #
-# 📦 SINCRONIZAÇÃO DE CONTEXTO VIA GITHUB (indispensável na prática)
-#   CONFIG_GITHUB_TOKEN       Token GitHub com acesso de leitura ao CONFIG_REPO
-#                             → sem ele, personal_contacts.json e SOUL_WHATSAPP.md
-#                               não são sincronizados; o bot sobe mas opera sem contexto
+# 📦 SINCRONIZAÇÃO DE CONTEXTO VIA GITHUB
 #   HERMES_SETUP_GITHUB_USER  Usuário GitHub dono do repositório de configuração
 #   CONFIG_REPO               Nome do repositório com contextos/contatos (padrão: hermes_agent_context_contatcs)
 #
@@ -159,7 +161,7 @@ services:
       # Sincronização de contexto via GitHub
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-empreendedorserial}
       - CONFIG_REPO=${CONFIG_REPO:-hermes_agent_context_contatcs}
-      - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN}
+      - CONFIG_GITHUB_TOKEN=${CONFIG_GITHUB_TOKEN:-}
 
       # Limite de passos por resposta — evita loops e controla custo
       - MAX_TURNS=${MAX_TURNS:-8}
