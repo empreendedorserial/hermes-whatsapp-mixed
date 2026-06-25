@@ -1,183 +1,350 @@
-# 🤖 Hermes Agent - WhatsApp Plugin
+# Hermes WhatsApp Plugin
 
-Plugin **`whatsapp-manager`** para o Hermes Agent. Gerencia o comportamento do WhatsApp com assistente pessoal para o dono, atendimento a clientes, classificação inteligente de contatos e histórico cross-session.
+Plugin **`whatsapp-manager`** para o [Hermes Agent](https://github.com/nousresearch/hermes). Transforma o WhatsApp em assistente pessoal inteligente para o dono e atendente autônomo para clientes — tudo no mesmo número, sem parecer robô.
+
+> **Licença:** [BUSL-1.1](LICENSE) — uso livre para desenvolvimento e testes. Converte para MIT em 2031-06-25.
 
 ---
 
-## 📂 Estrutura do Repositório
+## O que faz
 
-```text
-/
-├── plugin.yaml              # Manifesto do plugin
-├── __init__.py              # Entry point
-├── whatsapp_manager.py      # Lógica principal do plugin
-├── bridge.js                # Ponte WhatsApp (Baileys)
-├── package.json             # Dependências da ponte
-├── deploy/                  # Docker, configs, scripts
-│   ├── docker-compose.yml
-│   ├── docker-compose.easypanel.yml
-│   ├── setup.sh
-│   └── README.md
-└── tests/                   # Suite de testes
+### Para o dono (self-chat)
+- Assistente pessoal com acesso ao histórico completo de todas as conversas
+- Quando pergunta "o que a Isabel falou?", busca no banco real e injeta no contexto
+- Atualização de contatos em linguagem natural: *"a Isabel é minha filha, apelido Bebel"*
+- Comandos de controle do bot (pausar, retomar, sincronizar)
+
+### Para clientes e contatos
+- Atendimento guiado por `support_rules.md` (produtos, preços, FAQs)
+- Tom personalizado por contato via `personal_contacts.json`
+- Transcrição automática de áudios e descrição de imagens via Gemini
+- Silêncio automático de 10 minutos quando o dono lê ou responde manualmente
+
+### Inteligência de contatos
+- Classificação automática: `Cliente | Amigo | AmigoProximo | Parente | Filho | Vendedor`
+- Campo `notes` injetado como **instrução obrigatória** no prompt (o LLM obedece)
+- Resumo cumulativo por período (`full_summary`) comprimido a cada sync
+- Sync com repositório privado do GitHub — contatos e personas versionados
+
+---
+
+## Arquitetura
+
+```
+┌──────────────────────────────────────────┐
+│  Container: hermes                       │
+│  ├─ Hermes Gateway (LLM, hooks, API)     │
+│  ├─ Plugin whatsapp-manager (Python)     │
+│  └─ Micro-proxy TCP → whatsapp-bridge    │
+└──────────────────────────────────────────┘
+           ↕ rede Docker
+┌──────────────────────────────────────────┐
+│  Container: whatsapp-bridge              │
+│  └─ bridge.js (Node.js + Baileys)        │
+│     Porta 3000 — sessão WhatsApp         │
+└──────────────────────────────────────────┘
+
+Volume compartilhado: /opt/data
+  ├─ .hermes/plugins/whatsapp-manager/   → plugin ativo
+  ├─ .hermes/platforms/whatsapp/         → sessão e bridge.js
+  ├─ .hermes/whatsapp_messages.db        → histórico raw (bridge)
+  ├─ .hermes/state.db                    → sessões do Hermes
+  ├─ .hermes/dedup_suppressed.log        → log de duplicatas suprimidas
+  ├─ personal_contacts.json              → perfis dos contatos
+  ├─ support_rules.md                    → base de conhecimento (clientes)
+  └─ SOUL_WHATSAPP.md                    → persona e estilo de escrita
+```
+
+> **Easypanel:** container único — o Hermes gerencia a bridge internamente. Sem micro-proxy TCP.
+
+---
+
+## Estrutura do repositório
+
+```
+├── whatsapp_manager.py          # Plugin principal (hooks Python)
+├── bridge.js                    # Bridge WhatsApp (Node.js + Baileys)
+├── plugin.yaml                  # Manifesto do plugin
+├── deploy/
+│   ├── docker-compose.yml       # Swarm / Portainer (Traefik)
+│   ├── docker-compose.easypanel.yml  # Easypanel (proxy nativo)
+│   ├── setup.sh                 # Setup inicial de 1 clique
+│   ├── SOUL.md                  # Persona base
+│   ├── SOUL_WHATSAPP.md         # Persona WhatsApp
+│   ├── support_rules.md         # Regras de suporte (exemplo)
+│   └── personal_contacts.json.example
+├── tests/
+│   └── plugin_test.py           # 263 testes unitários
+└── validate_dedup.py            # Validação de dedup no container
 ```
 
 ---
 
-## ⚡ Instalação
+## Instalação
 
-1. Acesse o **Hermes Dashboard → Plugins**
-2. Cole a URL do repositório e clique em **Install/Enable**
+### Pré-requisitos
 
----
-
-## 🕹️ Comandos no WhatsApp (Self-Chat)
-
-| Comando | Ação |
-|---|---|
-| `stop_bot` / `!pausar` | Pausa o bot para todos os clientes |
-| `start_bot` / `!retomar` | Reativa o bot |
-| `sync contacts` / `sincronize os contatos` | Sincroniza contatos em background (não bloqueia o bot) |
-| `update contact <nome> campo=valor` | Atualiza campo específico de um contato |
-
-Silenciamento automático de 10 min quando o dono lê ou responde manualmente um chat de cliente.
+- Hermes Agent rodando (Portainer ou Easypanel)
+- Domínios com DNS apontado para o servidor
+- [Google AI Studio](https://aistudio.google.com) — chave da API Gemini
+- Repositório privado no GitHub com seus arquivos de configuração
 
 ---
 
-## ✨ Funcionalidades
+### Portainer (Swarm)
 
-### Assistente Pessoal (Self-Chat)
+**1. Criar a stack**
 
-O dono conversa com o bot no próprio número. O bot age como assistente pessoal com acesso a histórico completo.
+No Portainer → Stacks → Add stack, cole o conteúdo de [`deploy/docker-compose.yml`](deploy/docker-compose.yml) e configure as variáveis abaixo em *Environment variables*.
 
-**Cross-session history:** Quando o dono pergunta sobre uma conversa com outra pessoa ("o que a Isabel falou?"), o bot busca o histórico real no `whatsapp_messages.db` e `state.db` e injeta no contexto antes da chamada ao LLM.
-
-### Classificação de Contatos
-
-Cada contato é classificado automaticamente com perfil, tom, intenção e resumo usando Gemini/OpenAI/OpenRouter. Os dados são salvos em `/opt/data/personal_contacts.json` e sincronizados com o GitHub.
-
-**Campos por contato:**
-```json
-{
-  "name": "Nome completo",
-  "relationship": "Cliente|Amigo|AmigoProximo|Parente|Filho|Vendedor",
-  "manual_relationship": "definido pelo dono, nunca sobrescrito pelo sync",
-  "nickname": "apelido da pessoa",
-  "pet_name": "nome do animal de estimação",
-  "tone": "tom de atendimento",
-  "guidelines": "instruções específicas",
-  "notes": "notas livres",
-  "summary": "resumo comprimido (1-2 frases) para uso no contexto",
-  "full_summary": "histórico cumulativo por período (Jun/25: ..., Jul/25: ...)",
-  "last_summarized_at": "timestamp da última sessão processada",
-  "last_interaction": "timestamp da última mensagem"
-}
-```
-
-**Busca de nome:** 6 níveis em cascata:
-1. Número/JID exato
-2. `name` exato no JSON
-3. `nickname` exato no JSON
-4. Substring em `name`
-5. `sender_name` no `whatsapp_messages.db`
-6. `/contacts/search?name=X` no bridge (store do Baileys)
-
-Se não encontrado, o bot pergunta o número ao dono e aplica a atualização quando fornecido.
-
-### Atualização de Contatos em Linguagem Natural
-
-O dono pode dizer: *"atualize as informações da Isabel Alencar, ela é minha filha e o apelido é Bebel"*
-
-O sistema:
-1. Extrai o nome via LLM (`_extract_contact_name_via_llm`)
-2. Localiza o contato nos 6 níveis de busca
-3. Extrai os campos a atualizar via LLM (apenas campos explicitamente mencionados — não sobrescreve `tone`, `summary`, `guidelines`)
-4. Garante `manual_relationship = relationship` quando definido pelo dono
-5. Salva e sincroniza com GitHub
-
-### Resumo Cumulativo de Histórico (`full_summary`)
-
-A cada sync, sessões novas no `state.db` são processadas incrementalmente:
-- Apenas mensagens do **contato** (`role=user`) são incluídas
-- O LLM atualiza o `full_summary` adicionando o período novo ao final
-- Quando `full_summary` > 600 chars, é comprimido em `summary` de 1-2 frases
-- `last_summarized_at` garante que cada sessão é processada uma única vez
-
-### Sync de Contatos (Não-Bloqueante)
-
-```
-WHATSAPP_SYNC_INTERVAL_HOURS=24  # padrão, configurável via env
-```
-
-- **Não roda no boot** — bot disponível imediatamente após deploy
-- Sync via chat roda em thread daemon e notifica o dono quando terminar
-- `_sync_running` impede execuções simultâneas
-- Sync periódico automático no intervalo configurado
-
-### Transcrição e Descrição de Mídia
-
-- Áudio/voz → transcrição via Gemini
-- Imagens → descrição automática
-- Histórico atualizado com `[Áudio: "..."]` e `[Imagem: ...]`
-- Arquivos deletados do disco imediatamente após processamento
-
-### Resolução de Nome via Bridge
-
-Para contatos sem `sender_name` no DB, consulta:
-- `GET /contact/:jid` — nome de um JID específico
-- `GET /contacts/search?name=X` — busca no store do Baileys por nome
-
----
-
-## 🔧 Variáveis de Ambiente
+**2. Variáveis indispensáveis**
 
 | Variável | Descrição |
 |---|---|
-| `WHATSAPP_OWNER_NUMBER` | JID do dono (ex: `5511999998888@s.whatsapp.net`) |
-| `WHATSAPP_SYNC_INTERVAL_HOURS` | Intervalo do sync automático (padrão: `24`) |
-| `WHATSAPP_SILENCE_DURATION_MIN` | Minutos de silêncio após ação manual (padrão: `10`) |
-| `WHATSAPP_SYNC_MAX_CLASSIFICATIONS` | Máx de chamadas LLM por sync (padrão: `10`) |
-| `WHATSAPP_SYNC_MIN_MESSAGES` | Mín de mensagens para classificar (padrão: `3`) |
+| `HERMES_DASH_HOST` | Domínio do Dashboard (ex: `hermes.seu-dominio.com`) |
+| `HERMES_API_HOST` | Domínio da API REST (ex: `hermes-api.seu-dominio.com`) |
+| `API_SERVER_KEY` | Chave secreta da API — `openssl rand -hex 32` |
+| `GOOGLE_API_KEY` | Chave do Gemini — todos os modelos padrão usam Gemini |
+| `WHATSAPP_OWNER_NUMBER` | Seu número sem `+` (ex: `5511999999999`) |
+| `WHATSAPP_OWNER_NAME` | Seu nome (ex: `André`) |
+| `CONFIG_GITHUB_TOKEN` | PAT do GitHub com leitura do repositório de configuração |
+
+**3. Deploy**
+
+Clique em **Deploy the stack**. O Traefik cuida do SSL automaticamente.
 
 ---
 
-## 🗄️ Bancos de Dados
+### Easypanel
+
+**1. Criar serviço Compose**
+
+No Easypanel → New Service → Compose, cole [`deploy/docker-compose.easypanel.yml`](deploy/docker-compose.easypanel.yml).
+
+**2. Variáveis de ambiente**
+
+Mesmas variáveis acima, **exceto** `HERMES_DASH_HOST` e `HERMES_API_HOST` (gerenciados pelo Easypanel).
+
+**3. Domínios**
+
+Na aba *Domains & Proxy*:
+
+| Porta | Destino |
+|---|---|
+| `9119` | Dashboard + WebSocket (ex: `hermes.seu-dominio.com`) |
+| `8642` | API REST (ex: `hermes-api.seu-dominio.com`) |
+
+**4. Deploy**
+
+Clique em **Deploy** e aguarde ficar verde.
+
+---
+
+### Setup inicial (ambas as plataformas)
+
+Após o container subir, abra o console e execute:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/SEU_USUARIO/hermes-whatsapp-mixed/main/deploy/setup.sh | bash -s SEU_USUARIO
+```
+
+O script configura `SOUL.md`, `support_rules.md`, `config.yaml` e prepara o ambiente. O plugin `whatsapp-manager` deve ser instalado/atualizado pelo **Dashboard do Hermes → Plugins**.
+
+---
+
+## Conectar o WhatsApp (QR Code)
+
+Após o setup, acesse os endpoints da bridge no domínio do Dashboard:
+
+| URL | Formato |
+|---|---|
+| `https://hermes.seu-dominio.com/whatsapp/qr` | HTML interativo |
+| `https://hermes.seu-dominio.com/whatsapp/qr?format=png` | Imagem PNG |
+| `https://hermes.seu-dominio.com/whatsapp/qr?format=svg` | Imagem SVG |
+| `https://hermes.seu-dominio.com/whatsapp/status` | Status JSON da conexão |
+
+> Aguarde alguns segundos após o restart para a bridge terminar de subir antes de abrir a URL.
+
+No celular: **WhatsApp → Aparelhos Conectados → Conectar um aparelho** → escaneie o QR.
+
+Após parear, reinicie o container para carregar o estado limpo.
+
+---
+
+## Comandos no WhatsApp (self-chat)
+
+Envie para si mesmo no WhatsApp (conversa com seu próprio número):
+
+| Comando | Ação |
+|---|---|
+| `stop_bot` ou `!pausar` | Pausa o atendimento a clientes |
+| `start_bot` ou `!retomar` | Reativa o atendimento a clientes |
+| `sincronizar contatos` | Sync em background — classifica novos contatos e puxa dados do GitHub |
+| `sincronize os contatos` | Mesmo que acima |
+
+> O assistente pessoal continua funcionando normalmente durante a pausa.
+
+---
+
+## Variáveis de ambiente completas
+
+### Indispensáveis
+
+| Variável | Descrição |
+|---|---|
+| `API_SERVER_KEY` | Chave secreta da API (sem default — stack não sobe sem ela) |
+| `GOOGLE_API_KEY` | Todos os modelos padrão usam Gemini — sem ela o bot não responde |
+| `WHATSAPP_OWNER_NUMBER` | Número do dono (formato: `5511999999999`) |
+| `WHATSAPP_OWNER_NAME` | Nome do dono usado nos prompts |
+| `CONFIG_GITHUB_TOKEN` | Token GitHub — sem ele `personal_contacts.json` e `SOUL_WHATSAPP.md` não sincronizam |
+| `HERMES_DASH_HOST` | *(Portainer)* Domínio do Dashboard |
+| `HERMES_API_HOST` | *(Portainer)* Domínio da API |
+
+### Providers de IA alternativos
+
+| Variável | Descrição |
+|---|---|
+| `ANTHROPIC_API_KEY` | Claude (Anthropic) |
+| `OPENAI_API_KEY` | GPT-4 e família |
+| `OPENROUTER_API_KEY` | Acesso multi-provider |
+
+### Modelos por função (padrão: `gemini-3.1-flash-lite` / provider: `gemini`)
+
+| Variável | Função |
+|---|---|
+| `WHATSAPP_OWNER_MODEL` / `WHATSAPP_OWNER_PROVIDER` | Respostas ao dono |
+| `WHATSAPP_CLIENT_MODEL` / `WHATSAPP_CLIENT_PROVIDER` | Respostas a clientes |
+| `WHATSAPP_CLIENT_MEDIA_MODEL` | Transcrição e análise de mídia |
+| `WHATSAPP_CONTACT_CLASSIFIER_MODEL` | Classificação de novos contatos |
+
+### WhatsApp
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `WHATSAPP_ENABLED` | `true` | Habilitar WhatsApp (deixe `false` até parear) |
+| `WHATSAPP_MODE` | `bot` | Modo de operação |
+| `WHATSAPP_ALLOWED_USERS` | `*` | Números autorizados (`*` = todos) |
+| `WHATSAPP_CONNECTION_NAME` | `EmpreendedorSerial` | Nome da conexão no Dashboard |
+| `WHATSAPP_QR_PATH` | `/whatsapp` | Path do endpoint QR/status |
+
+### Sincronização GitHub
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `HERMES_SETUP_GITHUB_USER` | `empreendedorserial` | Usuário dono do repositório de configuração |
+| `CONFIG_REPO` | `hermes_agent_context_contatcs` | Nome do repositório privado |
+| `CONFIG_GITHUB_TOKEN` | — | PAT com acesso de leitura |
+
+### Outros
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `MAX_TURNS` | `8` | Máximo de iterações por resposta (controla custo) |
+| `TZ` | `America/Sao_Paulo` | Fuso horário |
+| `HERMES_API_TIMEOUT` | `1800` | Timeout da API em segundos |
+| `GATEWAY_ALLOW_ALL_USERS` | `false` | Permitir qualquer usuário interagir |
+
+---
+
+## Perfil de contato (`personal_contacts.json`)
+
+```json
+{
+  "5511999999999": {
+    "name": "Nome completo",
+    "relationship": "Cliente|Amigo|AmigoProximo|Parente|Filho|Vendedor",
+    "manual_relationship": "nunca sobrescrito pelo sync automático",
+    "nickname": "apelido",
+    "tone": "tom de atendimento",
+    "guidelines": "instruções gerais de comportamento",
+    "notes": "instrução pontual — injetada como diretiva obrigatória no prompt",
+    "summary": "resumo comprimido (1-2 frases) injetado no contexto",
+    "full_summary": "histórico cumulativo por período (Jun/25: ..., Jul/25: ...)",
+    "last_interaction": "2025-06-25T14:30:00"
+  }
+}
+```
+
+**Busca de contato — 6 níveis em cascata:**
+1. Número/JID exato
+2. Campo `name` exato no JSON
+3. Campo `nickname` exato no JSON
+4. Substring em `name`
+5. `sender_name` no `whatsapp_messages.db`
+6. `/contacts/search?name=X` na bridge (store do Baileys)
+
+---
+
+## Hooks do plugin
+
+| Hook | Função |
+|---|---|
+| `pre_gateway_dispatch` | Detecta comandos, processa mídia, cross-session history, silenciamento, sync |
+| `pre_llm_call` | Monta prompt personalizado por tipo de contato, injeta contexto e `support_rules.md` |
+| `post_llm_call` | Dedup de respostas (session + turn), filtra tool results, notificações de status |
+
+### Dedup de respostas duplicadas
+
+Duas camadas independentes previnem envio duplo (especialmente para números internacionais):
+
+- **Session-level:** mesma `session_id` só envia uma vez (protege contra race conditions)
+- **Turn-level:** mesmo chat + mensagem só é respondido uma vez por sessão de chat
+
+Eventos suprimidos são registrados em `/opt/data/.hermes/dedup_suppressed.log`.
+
+---
+
+## Arquivos de configuração (em `/opt/data/`)
+
+| Arquivo | Descrição |
+|---|---|
+| `personal_contacts.json` | Perfis, resumos e instruções por contato |
+| `support_rules.md` | Produtos, preços, FAQs e diretrizes de atendimento a clientes |
+| `SOUL_WHATSAPP.md` | Persona, estilo de escrita e exemplos práticos de conversa |
+| `SOUL.md` | Persona base do assistente pessoal |
+
+Estes arquivos são sincronizados do repositório privado do GitHub a cada sync. Edite diretamente no GitHub ou pelo gerenciador de arquivos do Dashboard do Hermes.
+
+---
+
+## Deploy de atualizações
+
+```bash
+# 1. Mac — commit e push
+git add whatsapp_manager.py
+git commit -m "..."
+git push
+
+# 2. Container hermes — console do Portainer
+cd /opt/data/workspace/hermes-whatsapp-mixed && git pull origin main
+cp whatsapp_manager.py /opt/data/.hermes/plugins/whatsapp-manager/whatsapp_manager.py
+
+# 3. Reiniciar container hermes no Portainer
+```
+
+---
+
+## Testes
+
+```bash
+# Suite principal (263 testes)
+python3 -m unittest tests.plugin_test -q
+
+# Validação de dedup no container
+python3 /opt/data/workspace/hermes-whatsapp-mixed/validate_dedup.py
+```
+
+---
+
+## Bancos de dados
 
 | Arquivo | Conteúdo |
 |---|---|
-| `/opt/data/personal_contacts.json` | Perfis e resumos dos contatos |
 | `/opt/data/.hermes/whatsapp_messages.db` | Histórico raw de mensagens (bridge) |
-| `/opt/data/.hermes/state.db` | Sessões e mensagens do Hermes |
+| `/opt/data/.hermes/state.db` | Sessões e contexto do Hermes |
+| `/opt/data/personal_contacts.json` | Perfis e resumos dos contatos |
+| `/opt/data/.hermes/dedup_suppressed.log` | Log de duplicatas suprimidas |
 
 ---
 
-## 🚀 Deploy
-
-```bash
-git add -A && git commit -m "..." && git push origin main
-```
-
-Depois: Hermes Dashboard → Plugins → Pull → Portainer → Restart container.
-
----
-
-## 🧪 Testes
-
-```bash
-npm install && npm test                              # testes da bridge (JS)
-GOOGLE_API_KEY=xxx python3 tests/test_gemini_classification.py  # teste Gemini
-python3 tests/plugin_test.py                        # testes do plugin (Python)
-```
-
----
-
-## 📋 Hooks do Plugin
-
-| Hook | Suporte | Função |
-|---|---|---|
-| `pre_gateway_dispatch` | ✅ | Intercepta mensagens antes do LLM — detecta comandos, sync, NL updates, cross-session |
-| `pre_llm_call` | ✅ | Injeta contexto do owner, histórico cross-session |
-| `post_llm_call` | ❌ não chamado pelo Hermes | — |
-
----
-
-*Desenvolvido e mantido por André Alencar / Empreendedor Serial.*
+*Desenvolvido e mantido por [André Alencar](https://aalencar.com.br) / Empreendedor Serial.*
