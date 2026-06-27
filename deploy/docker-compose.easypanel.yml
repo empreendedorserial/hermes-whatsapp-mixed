@@ -89,6 +89,10 @@
 #   Porta 8642 → API REST       (ex: hermes-api.seu-dominio.com)
 #   Porta 9119 → Dashboard + WebSocket (/api/ws, /api/events, /api/pty)
 #
+# ⚠️  ATENÇÃO — EASYPANEL: para as variáveis de ambiente funcionarem você DEVE
+#   marcar a opção "Criar arquivo .env" na aba "Ambiente" antes de implantar.
+#   Sem isso o container ignora as variáveis e falha ao iniciar.
+#
 # 🛠️ SETUP INICIAL (após o primeiro deploy):
 #   1. Acesse o Console do serviço no Easypanel
 #   2. Execute: curl -sSL https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main/deploy/setup.sh | bash
