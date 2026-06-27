@@ -123,7 +123,11 @@ No Easypanel → New Service → Compose, cole [`deploy/docker-compose.easypanel
 
 **2. Variáveis de ambiente**
 
-Mesmas variáveis acima, **exceto** `HERMES_DASH_HOST` e `HERMES_API_HOST` (gerenciados pelo Easypanel).
+Na aba *Ambiente*, cole as variáveis e marque a opção **"Criar arquivo .env"** antes de salvar.
+
+> ⚠️ Sem marcar "Criar arquivo .env" o container ignora todas as variáveis e falha ao iniciar.
+
+Mesmas variáveis da seção acima, **exceto** `HERMES_DASH_HOST` e `HERMES_API_HOST` (gerenciados pelo Easypanel).
 
 **3. Domínios**
 
