@@ -254,23 +254,23 @@ curl -sSL https://raw.githubusercontent.com/SEU_USUARIO_GITHUB/hermes-whatsapp-m
 
 ### Passo 6.5: Instalação do Provedor AISA (AISA CLI) 🤖
 
-Para utilizar o provedor de IA AISA (aisa.one), siga os passos abaixo para instalar e validar a AISA CLI dentro do container do Hermes:
+Para utilizar o provedor de IA AISA (aisa.one), você pode solicitar diretamente ao Hermes que instale a CLI. Envie o prompt abaixo no chat do Dashboard, Telegram ou WhatsApp (conversa privada com o dono):
 
-1. **Instale a AISA CLI** no container utilizando um prefixo persistente em `/opt/data/.local` (isso evita erros de permissão ao tentar instalar globalmente em `/usr/local`):
-   ```bash
+---
+
+```
+Hermes, preciso que você instale a AISA CLI no container.
+Siga os passos abaixo usando suas ferramentas de terminal:
+
+1. Instale a AISA CLI utilizando um prefixo persistente em `/opt/data/.local` para evitar erros de permissão ao tentar instalar globalmente:
    npm install -g @aisa-one/cli --prefix /opt/data/.local
-   ```
 
-2. **Configure o PATH** para incluir o diretório de binários local. Adicione ou garanta que o `/opt/data/.local/bin` está no `PATH` do container:
-   ```bash
-   export PATH="/opt/data/.local/bin:$PATH"
-   ```
+2. Configure o PATH para incluir o diretório de binários local (`/opt/data/.local/bin`) tanto na sessão atual quanto garantindo sua persistência no ambiente.
 
-3. **Valide a instalação** verificando a versão e autenticando com o seu usuário:
-   ```bash
+3. Valide se a instalação funcionou executando os seguintes comandos e me retorne o output:
    aisa --version
    aisa whoami
-   ```
+```
 
 ---
 
