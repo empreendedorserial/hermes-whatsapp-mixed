@@ -10,8 +10,8 @@ Esse modo permite que seu agente desempenhe duas funções ao mesmo tempo:
 ---
 
 ## 📂 O que está incluído neste repositório:
-* 🐋 **`docker-compose.yml`**: Arquivo de produção otimizado para Portainer Stack, pré-configurado com suporte completo ao **Traefik** e rotas WebSockets seguras.
-* 🟣 **`docker-compose.easypanel.yml`**: Arquivo adaptado para implantação no Easypanel (sem Swarm, sem Traefik externo — SSL e proxy gerenciados automaticamente).
+* 🐋 **`docker-compose.yml`**: Arquivo de produção otimizado para Portainer Stack (Single-Container `nousresearch/hermes-agent`), pré-configurado com suporte ao **Traefik** e rotas WebSockets seguras.
+* 🟣 **`docker-compose.easypanel.yml`**: Arquivo adaptado para implantação no Easypanel (Single-Container — SSL e proxy gerenciados automaticamente).
 * ⚡ **`setup.sh`**: Script de configuração e sincronização de 1 clique que vincula seu servidor ao seu repositório pessoal no GitHub.
 * 🐍 **`patch_whatsapp.py`**: Script de automação universal que reconfigura a ponte do WhatsApp (filtro de assinaturas inteligente e novos comandos).
 * 🔄 **Sincronização automática no deploy**: a stack executa o `setup.sh` ao subir o container principal, mantendo as personas, regras e configurações sincronizadas com o GitHub. Os plugins são gerenciados pelo dashboard do Hermes.
@@ -62,9 +62,9 @@ Toda a infraestrutura de rede, domínios SSL e chaves de API é gerenciada de fo
 
 Agora, vamos fazer com que o seu servidor baixe automaticamente os arquivos que você personalizou no seu repositório pessoal do GitHub:
 
-> **QR do WhatsApp sem Telegram:** a stack sobe um serviço separado `whatsapp-bridge` e o QR fica no próprio domínio do dashboard, em `https://SEU-DOMINIO/whatsapp/qr` e `https://SEU-DOMINIO/whatsapp/status`.
+> **QR do WhatsApp sem Telegram:** o container único do Hermes executa a ponte internamente (`127.0.0.1:3000`) e o QR fica acessível no próprio domínio do dashboard em `https://SEU-DOMINIO/whatsapp/qr` e `https://SEU-DOMINIO/whatsapp/status`.
 > O QR também pode ser retornado como `?format=png` ou `?format=svg`.
-> Depois de reiniciar a stack, aguarde alguns segundos para o serviço `whatsapp-bridge` terminar de subir antes de abrir a URL.
+> Após subir o container, aguarde alguns segundos para a ponte interna inicializar antes de abrir a URL.
 
 1. No Portainer, clique em **Containers** e clique no ícone de **Console** (`>_`) do container `hermes-agent`.
 2. Clique em **Connect** para abrir o terminal integrado.

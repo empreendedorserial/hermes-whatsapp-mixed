@@ -41,9 +41,9 @@ Todo o gerenciamento de chaves e domínios é feito de forma visual na interface
 
 Agora faremos seu servidor puxar as regras que você salvou no seu GitHub no Passo 1!
 
-> **QR do WhatsApp sem Telegram:** a stack sobe um serviço separado `whatsapp-bridge` e o QR fica no próprio domínio do dashboard, em `https://SEU-DOMINIO/whatsapp/qr` e `https://SEU-DOMINIO/whatsapp/status`.
+> **QR do WhatsApp sem Telegram:** o container único do Hermes executa a ponte internamente (`127.0.0.1:3000`) e o QR fica acessível no próprio domínio do dashboard em `https://SEU-DOMINIO/whatsapp/qr` e `https://SEU-DOMINIO/whatsapp/status`.
 > Você também pode pedir `?format=png` ou `?format=svg`.
-> Depois de reiniciar a stack, aguarde alguns segundos para o serviço `whatsapp-bridge` terminar de subir antes de abrir a URL.
+> Após subir o container, aguarde alguns segundos para a ponte interna inicializar antes de abrir a URL.
 
 1. No painel do Portainer, clique em **Containers** e encontre o container `hermes-agent`.
 2. Clique no ícone de **Console** (`>_`) correspondente a ele.
