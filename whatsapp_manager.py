@@ -5169,6 +5169,12 @@ def pre_gateway_dispatch(*args, **kwargs):
             client_model = config.whatsapp_client_model
             client_provider = config.whatsapp_client_provider
             
+            target_profile = "default" if (is_owner and is_self_chat) else "whatsapp"
+            if isinstance(context, dict):
+                context["profile"] = target_profile
+            if hasattr(event, "profile"):
+                event.profile = target_profile
+
             if is_owner:
                 gateway._session_model_overrides[session_key] = {
                     "model": owner_model,

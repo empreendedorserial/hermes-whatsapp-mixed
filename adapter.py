@@ -25,6 +25,7 @@ class WhatsAppPlatformAdapter(BasePlatformAdapter):
     """Platform Adapter connecting Hermes Gateway to WhatsApp Baileys sidecar bridge."""
 
     platform_name = "whatsapp"
+    default_profile = "whatsapp"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
