@@ -5174,11 +5174,15 @@ def pre_gateway_dispatch(*args, **kwargs):
                     "model": owner_model,
                     "provider": owner_provider
                 }
+                if hasattr(gateway, "_session_profile_overrides") and isinstance(gateway._session_profile_overrides, dict):
+                    gateway._session_profile_overrides[session_key] = "default"
             else:
                 gateway._session_model_overrides[session_key] = {
                     "model": client_model,
                     "provider": client_provider
                 }
+                if hasattr(gateway, "_session_profile_overrides") and isinstance(gateway._session_profile_overrides, dict):
+                    gateway._session_profile_overrides[session_key] = "whatsapp"
     except Exception as e:
         logger.error(f"Erro ao aplicar override de modelo: {e}")
 
