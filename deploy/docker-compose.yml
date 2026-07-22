@@ -107,7 +107,7 @@ services:
     # Micro-proxy TCP: escuta em 127.0.0.1:3000 e redireciona para whatsapp-bridge:3000
     # Isso expõe a bridge internamente como se fosse localhost, compatível com o plugin.
     # Em seguida executa o gateway principal do Hermes.
-    command: ["bash", "-c", "node -e \"process.on('uncaughtException', () => {}); const net = require('net'); net.createServer(s => { const c = net.connect(3000, 'whatsapp-bridge'); s.pipe(c).pipe(s); c.on('error', () => s.destroy()); s.on('error', () => c.destroy()); }).listen(3000, '127.0.0.1');\" & python3 -c \"import os, yaml; from plugins.dashboard_auth.basic import hash_password; usr=os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'; pwd=os.environ.get('HERMES_DASHBOARD_PASSWORD') or os.environ.get('API_SERVER_KEY') or 'admin123'; h=hash_password(pwd); paths=['/opt/data/.hermes/config.yaml', os.path.expanduser('~/.hermes/config.yaml')]; [os.makedirs(os.path.dirname(p), exist_ok=True) for p in paths]; exec('''for p in paths:\\n  try:\\n    with open(p,\\\"r\\\") as f: cfg=yaml.safe_load(f) or {}\\n  except Exception: cfg={}\\n  if not isinstance(cfg, dict): cfg={}\\n  dash=cfg.get(\\\"dashboard\\\")\\n  if not isinstance(dash, dict): dash={\\\"enabled\\\": True, \\\"host\\\": \\\"0.0.0.0\\\", \\\"port\\\": 9119}\\n  dash[\\\"enabled\\\"]=True; dash[\\\"host\\\"]=\\\"0.0.0.0\\\"; dash[\\\"port\\\"]=9119\\n  dash[\\\"basic_auth\\\"]={\\\"username\\\": usr, \\\"password_hash\\\": h}\\n  cfg[\\\"dashboard\\\"]=dash\\n  with open(p,\\\"w\\\") as f: yaml.dump(cfg, f, default_flow_style=False)\\n''')\" 2>/dev/null; exec hermes gateway run"]
+    command: ["bash", "-c", "python3 -c \"import os, yaml; from plugins.dashboard_auth.basic import hash_password; usr=os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'; pwd=os.environ.get('HERMES_DASHBOARD_PASSWORD') or os.environ.get('API_SERVER_KEY') or 'admin123'; h=hash_password(pwd); paths=['/opt/data/.hermes/config.yaml', os.path.expanduser('~/.hermes/config.yaml')]; [os.makedirs(os.path.dirname(p), exist_ok=True) for p in paths]; exec('''for p in paths:\\n  try:\\n    with open(p,\\\"r\\\") as f: cfg=yaml.safe_load(f) or {}\\n  except Exception: cfg={}\\n  if not isinstance(cfg, dict): cfg={}\\n  dash=cfg.get(\\\"dashboard\\\")\\n  if not isinstance(dash, dict): dash={\\\"enabled\\\": True, \\\"host\\\": \\\"0.0.0.0\\\", \\\"port\\\": 9119}\\n  dash[\\\"enabled\\\"]=True; dash[\\\"host\\\"]=\\\"0.0.0.0\\\"; dash[\\\"port\\\"]=9119\\n  dash[\\\"basic_auth\\\"]={\\\"username\\\": usr, \\\"password_hash\\\": h}\\n  cfg[\\\"dashboard\\\"]=dash\\n  cfg[\\\"session_reset\\\"]={\\\"notify_user\\\": False}\\n  disp=cfg.get(\\\"display\\\") or {}\\n  if not isinstance(disp, dict): disp={}\\n  disp[\\\"show_system_header\\\"]=False\\n  disp[\\\"tool_progress\\\"]=\\\"off\\\"\\n  disp[\\\"platforms\\\"]={\\\"whatsapp\\\": {\\\"tool_progress\\\": \\\"off\\\"}}\\n  cfg[\\\"display\\\"]=disp\\n  with open(p,\\\"w\\\") as f: yaml.dump(cfg, f, default_flow_style=False)\\n''')\" 2>/dev/null; exec hermes gateway run"]
 
     volumes:
       - hermes_agent_hermes_data_v5:/opt/data
@@ -143,7 +143,7 @@ services:
       - WHATSAPP_OWNER_NAME=${WHATSAPP_OWNER_NAME:-}
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
-      - WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:3000
+      - WHATSAPP_BRIDGE_URL=http://127.0.0.1:3000
       - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
 
       # Modelos por função — todos usam Gemini por padrão (requer GOOGLE_API_KEY)
@@ -251,56 +251,6 @@ services:
         - "traefik.http.routers.hermes-pty.tls.certresolver=le"
         - "traefik.http.routers.hermes-pty.service=hermes-dash"
         - "traefik.http.routers.hermes-pty.priority=300"
-
-  whatsapp-bridge:
-    #image: nousresearch/hermes-agent:v2026.5.16
-    image: nousresearch/hermes-agent:v2026.7.20
-    restart: unless-stopped
-    # Aguarda o bridge.js ser copiado para o volume antes de iniciar.
-    # Se o Node.js encerrar com erro, limpa a sessão corrompida e sai (Docker reinicia o container).
-    command: ["bash", "-c", "while [ ! -f /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js ]; do sleep 1; done && node /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js --port 3000 --session /opt/data/.hermes/platforms/whatsapp/session --mode bot || (echo 'Cleaning session...' && rm -rf /opt/data/.hermes/platforms/whatsapp/session/* && exit 1)"]
-
-    volumes:
-      - hermes_agent_hermes_data_v5:/opt/data
-
-    environment:
-      - HOME=/opt/data
-      - HERMES_HOME=/opt/data/.hermes
-      - NODE_PATH=/opt/hermes/scripts/whatsapp-bridge/node_modules
-      - TZ=${TZ:-America/Sao_Paulo}
-      # HERMES_DASH_HOST expõe o endpoint /whatsapp (QR + status) via Traefik
-      - HERMES_DASH_HOST=${HERMES_DASH_HOST}
-      - WHATSAPP_BRIDGE_HOST=${HERMES_DASH_HOST}
-      - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
-      - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
-      # WHATSAPP_OWNER_NUMBER é indispensável — identifica mensagens do próprio dono
-      - WHATSAPP_OWNER_NUMBER=${WHATSAPP_OWNER_NUMBER}
-      - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
-      # WHATSAPP_CLIENT_MEDIA_MODEL e GOOGLE_API_KEY: usados pela bridge para transcrever mídia recebida
-      - WHATSAPP_CLIENT_MEDIA_MODEL=${WHATSAPP_CLIENT_MEDIA_MODEL:-gemini-3.1-flash-lite}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-
-    networks:
-      - traefik_public
-
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-        delay: 10s
-        max_attempts: 0
-      labels:
-        - "traefik.enable=true"
-        - "traefik.docker.network=traefik_public"
-        # Endpoint QR/status exposto no mesmo domínio do Dashboard, com prioridade maior
-        - "traefik.http.routers.whatsapp-bridge.rule=Host(`${HERMES_DASH_HOST}`) && PathPrefix(`${WHATSAPP_QR_PATH:-/whatsapp}`)"
-        - "traefik.http.routers.whatsapp-bridge.entrypoints=websecure"
-        - "traefik.http.routers.whatsapp-bridge.tls=true"
-        - "traefik.http.routers.whatsapp-bridge.tls.certresolver=le"
-        - "traefik.http.routers.whatsapp-bridge.service=whatsapp-bridge"
-        - "traefik.http.routers.whatsapp-bridge.priority=350"
-        - "traefik.http.services.whatsapp-bridge.loadbalancer.server.port=3000"
 
 volumes:
   hermes_agent_hermes_data_v5:

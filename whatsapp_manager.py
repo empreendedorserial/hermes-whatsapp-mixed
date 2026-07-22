@@ -4552,7 +4552,24 @@ def pre_gateway_dispatch(*args, **kwargs):
         return None  # Não definido → plugin não faz nada
 
     clean_owner = "".join(c for c in owner_number.split("@")[0].split(":")[0] if c.isdigit())
+    
+    # Detectar from_me via raw_message do evento (campo correto no Hermes)
+    _raw_msg = getattr(event, "raw_message", None) or {}
+    if isinstance(_raw_msg, str):
+        try:
+            import ast as _ast
+            _raw_msg = _ast.literal_eval(_raw_msg)
+        except Exception:
+            _raw_msg = {}
+    _is_from_me = bool(_raw_msg.get("fromMe") or _raw_msg.get("from_me"))
+
+    # Identificar chat
+    chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+    resolved_chat = _resolve_phone_from_jid(chat_id)
+    clean_chat = "".join(c for c in resolved_chat.split("@")[0].split(":")[0] if c.isdigit())
+    
     is_owner = (_normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner))
+    is_self_chat = (clean_sender == clean_chat) and is_owner
 
     # Transcrever áudios ENVIADOS pelo André para enriquecer o style learning
     if is_owner and media_info["has_media"] and media_info["media_type"] in ["ptt", "audio"]:
@@ -4590,22 +4607,6 @@ def pre_gateway_dispatch(*args, **kwargs):
                 media_info["media_urls"] = [_audio_path]
                 logger.info(f"[audio-out] Transcrição via fallback: {Path(_audio_path).name}")
                 _transcribe_outgoing_audio(event, media_info)
-
-    # Identificar chat
-    chat_id = str(event.source.chat_id) if event.source.chat_id else ""
-    resolved_chat = _resolve_phone_from_jid(chat_id)
-    clean_chat = "".join(c for c in resolved_chat.split("@")[0].split(":")[0] if c.isdigit())
-    is_self_chat = (clean_sender == clean_chat)
-
-    # Detectar from_me via raw_message do evento (campo correto no Hermes)
-    _raw_msg = getattr(event, "raw_message", None) or {}
-    if isinstance(_raw_msg, str):
-        try:
-            import ast as _ast
-            _raw_msg = _ast.literal_eval(_raw_msg)
-        except Exception:
-            _raw_msg = {}
-    _is_from_me = bool(_raw_msg.get("fromMe") or _raw_msg.get("from_me"))
 
     # Persistir mensagens manuais do André no SQLite (Hermes não grava from_me=1 automaticamente)
     # Nota: para from_me=1, sender_id==chat_id, então is_self_chat seria True erroneamente.
@@ -4708,7 +4709,7 @@ def pre_gateway_dispatch(*args, **kwargs):
         "como usar", "como te usar", "como usar voce", "como usar você",
         "me ensina a usar", "me ensine a usar",
     ]
-    if is_owner and any(kw in normalized_msg for kw in _help_keywords):
+    if (is_owner or _is_from_me) and any(kw in normalized_msg for kw in _help_keywords):
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         owner_name = config.whatsapp_owner_name or "André"
         help_text = (
