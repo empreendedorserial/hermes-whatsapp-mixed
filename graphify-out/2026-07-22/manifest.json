@@ -95,8 +95,8 @@
     "semantic_hash": "39abdf2c755ccbb7ac29e7fe4440cc37"
   },
   "whatsapp_manager.py": {
-    "mtime": 1784691239.8755481,
-    "ast_hash": "7a537d8c0fadbe121c0fefed8ed2e1d4",
+    "mtime": 1784687907.5843503,
+    "ast_hash": "185a0b7c025ae7d959ab5b23599e27e0",
     "semantic_hash": ""
   },
   ".agents/rules/graphify.md": {
@@ -125,8 +125,8 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1784692900.5521083,
-    "ast_hash": "17d64e0c0d7dc9babb9e2da38b01bf51",
+    "mtime": 1784074634.8463368,
+    "ast_hash": "48910533dab11ac82b3b246a32f26f94",
     "semantic_hash": ""
   },
   "deploy/PASSO_A_PASSO.md": {
@@ -155,8 +155,8 @@
     "semantic_hash": "a999a8732dafae494a4e8e32a4cc0ae5"
   },
   "deploy/docker-compose.easypanel.yml": {
-    "mtime": 1784692931.70753,
-    "ast_hash": "0923abca592e9042c848cdafb15fb79d",
+    "mtime": 1784683753.5817258,
+    "ast_hash": "1bd2a5873feb85d6c1d5983041be7c05",
     "semantic_hash": ""
   },
   "deploy/docker-compose.yml": {
@@ -340,8 +340,8 @@
     "semantic_hash": ""
   },
   "adapter.py": {
-    "mtime": 1784691206.54727,
-    "ast_hash": "a0e582f5fb48c6c26c1f848f94359c57",
+    "mtime": 1784684950.8449686,
+    "ast_hash": "fa1d16397e1692eebef529e68d6c3d64",
     "semantic_hash": ""
   }
 }

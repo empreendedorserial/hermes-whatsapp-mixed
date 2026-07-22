@@ -1,16 +1,16 @@
-# Graph Report - hermes-whatsapp-mixed  (2026-07-21)
+# Graph Report - hermes-whatsapp-mixed  (2026-07-22)
 
 ## Corpus Check
-- 62 files · ~113,529 words
+- 63 files · ~114,321 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1830 nodes · 2354 edges · 144 communities (94 shown, 50 thin omitted)
+- 1831 nodes · 2361 edges · 145 communities (95 shown, 50 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 40 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `45ac9760`
+- Built from commit: `6a0ac1a3`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -149,6 +149,7 @@
 - WhatsApp Env Vars Skill
 - WhatsApp Logs Diagnostics Skill
 - _push_personal_contacts_to_github
+- _fetch_chat_history
 
 ## God Nodes (most connected - your core abstractions)
 1. `BaseWhatsAppManagerTest` - 33 edges
@@ -177,7 +178,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (144 total, 50 thin omitted)
+## Communities (145 total, 50 thin omitted)
 
 ### Community 0 - "Node.js WhatsApp Bridge"
 Cohesion: 0.03
@@ -224,8 +225,8 @@ Cohesion: 0.09
 Nodes (12): Verifica processamento de áudio usando o modelo configurado em WHATSAPP_CLIENT_M, Verifica que o processamento de imagens se limita a no máximo 5 imagens por mens, Verifica que _process_media_message retorna None se GOOGLE_API_KEY estiver ausen, Verifica que _process_media_message retorna None se o evento não contiver mídia., Verifica que _process_media_message retorna None para tipos de mídia não suporta, Verifica que _process_media_message retorna None se o arquivo físico não existir, Verifica que pre_gateway_dispatch processa áudio, atualiza evento e persiste no, Verifica _get_media_info com atributos diretos no objeto. (+4 more)
 
 ### Community 14 - "Workspace Setup & Architecture Overview"
-Cohesion: 0.09
-Nodes (35): _check_bot_paused(), _classify_owner_intent(), _clear_owner_status(), _extract_update_fields_via_llm(), _find_contact_matches(), _generate_status_response(), _get_active_owner_status(), _get_media_info() (+27 more)
+Cohesion: 0.10
+Nodes (31): _classify_owner_intent(), _clear_owner_status(), _extract_update_fields_via_llm(), _find_contact_matches(), _generate_status_response(), _get_active_owner_status(), _get_media_info(), _human_send() (+23 more)
 
 ### Community 15 - "Test cases for user/bot interaction logic"
 Cohesion: 0.11
@@ -240,20 +241,20 @@ Cohesion: 0.12
 Nodes (19): _build_owner_context(), _build_personal_prompt(), _build_support_prompt(), _datetime_context_block(), _load_personal_contacts(), _load_support_files(), _owner_status_context_block(), pre_llm_call() (+11 more)
 
 ### Community 19 - "Bot Paused & Silencing checks"
-Cohesion: 0.14
-Nodes (14): Garante que sync não substitui nome real por nome genérico 'Contato XXXX'., TestSyncContactsNamePreservation, _fetch_all_bridge_contact_names(), _github_put_file(), Retorna o manual_relationship mais confiável para um contato.      Lê do existin, Sincroniza contatos do SQLite local para personal_contacts.json e envia para o G, Retorna True se há mensagens novas do André desde o último aprendizado., Injeta a seção de exemplos no SOUL_WHATSAPP.md e faz push para o GitHub.      Pr (+6 more)
+Cohesion: 0.12
+Nodes (18): _check_bot_paused(), _collect_andre_messages_by_relationship(), _fetch_all_bridge_contact_names(), _github_put_file(), Retorna o manual_relationship mais confiável para um contato.      Lê do existin, Sincroniza contatos do SQLite local para personal_contacts.json e envia para o G, Retorna True se há mensagens novas do André desde o último aprendizado., Coleta mensagens do André (from_me=1) agrupadas por relacionamento.      Retorna (+10 more)
 
 ### Community 20 - "Deploy Soul WhatsApp specifications"
 Cohesion: 0.14
 Nodes (13): 🚫 Diretrizes de Abordagem e Identificação (CRÍTICO), 🚫 Diretrizes de Decisões e Compromissos (CRÍTICO), 🚫 Diretrizes de Segurança e Restrições Rígidas, Exemplo 1:, Exemplo 2:, Exemplo 3:, Exemplo 4:, Exemplo 5: Cliente pergunta se é um bot (+5 more)
 
 ### Community 21 - "System README & deployment instructions"
-Cohesion: 0.06
-Nodes (33): Arquitetura, Arquivos de configuração (em `/opt/data/`), Bancos de dados, Comandos no WhatsApp (self-chat), Como Usar a AISA CLI, Conectar o WhatsApp (QR Code), Dedup de respostas duplicadas, Deploy de atualizações (+25 more)
+Cohesion: 0.12
+Nodes (16): 📐 Arquitetura do Container, 💬 Comandos no WhatsApp (SelfChat), 📲 Conectar o WhatsApp (QR Code), Deploy via Easypanel, Deploy via Portainer (Swarm), 🚀 Destaques da Versão v2026, 📁 Estrutura do Repositório, Hermes WhatsApp Plugin (+8 more)
 
 ### Community 22 - "_classify_contact_via_llm"
-Cohesion: 0.29
-Nodes (3): Verifica que o auto-updater do plugin usa git fetch/reset quando .git existe., Verifica que o classificador de contatos utiliza o modelo configurado no ambient, TestExternalServicesAndUpdates
+Cohesion: 0.25
+Nodes (5): Verifica que o auto-updater do plugin usa git fetch/reset quando .git existe., Verifica que o classificador de contatos utiliza o modelo configurado no ambient, TestExternalServicesAndUpdates, _classify_contact_via_llm(), Classifica contatos usando a API do LLM (Gemini, OpenAI ou OpenRouter) com base
 
 ### Community 23 - "Contact management test cases"
 Cohesion: 0.14
@@ -272,8 +273,8 @@ Cohesion: 0.18
 Nodes (10): Exemplo 1: Conversa com o André (Admin - MODO A), Exemplo 2: Conversa com Cliente (Suporte WhatsApp - MODO B), Exemplo 3: Conversa com Cliente (Suporte WhatsApp - MODO B), Exemplo 4: Conversa com Cliente (Suporte WhatsApp - MODO B), Exemplo 5: Conversa com Cliente (Suporte WhatsApp - MODO B), 📝 EXEMPLOS PRÁTICOS DE DIÁLOGOS (FEW-SHOT), 👤 MODO A: Assistente Pessoal do André (Quando falar com André Alencar), 💼 MODO B: Chatbot de Suporte Comercial (Quando falar com Clientes) (+2 more)
 
 ### Community 27 - "Bridge Node Package Dependencies"
-Cohesion: 0.09
-Nodes (15): Testes para o hook post_llm_call — filtragem, dedup de turno e typing., Contato recebe assistant_response filtrado., Owner sem EXEC no response: post_llm_call retorna None (Hermes envia normalmente, Tool results intermediários são suprimidos (espaço)., Afirmações de ação no sistema são substituídas por recusa., Números de telefone são redactados., Segundo post_llm_call para o mesmo turno é suprimido., Turno já enviado antes de um restart (chave carregada do disco) deve ser suprimi (+7 more)
+Cohesion: 0.06
+Nodes (22): Testes para o hook post_llm_call — filtragem, dedup de turno e typing., Contato recebe assistant_response filtrado., Owner sem EXEC no response: post_llm_call retorna None (Hermes envia normalmente, Tool results intermediários são suprimidos (espaço)., Afirmações de ação no sistema são substituídas por recusa., Números de telefone são redactados., Segundo post_llm_call para o mesmo turno é suprimido., Turno já enviado antes de um restart (chave carregada do disco) deve ser suprimi (+14 more)
 
 ### Community 28 - "Google API service builder"
 Cohesion: 0.10
@@ -300,8 +301,8 @@ Cohesion: 0.06
 Nodes (32): 1. WhatsApp, 2. E-mail (Gmail API / Google Workspace), 3. LLM (MiniMax), Arquitetura do Hermes Agent, Arquivos de Configuração e Persona, Backup Failsafe do Core (STT Tradicional):, Como funciona:, Credenciais não aparecem no ambiente (+24 more)
 
 ### Community 34 - "Base WhatsApp Manager Test Suite"
-Cohesion: 0.20
-Nodes (4): BaseWhatsAppManagerTest, MockContext, Garante que atualização NL não sobrescreve tone/summary/guidelines., TestNLUpdateOwnerFieldsRestriction
+Cohesion: 0.15
+Nodes (9): BaseWhatsAppManagerTest, MockContext, Python unit tests for the whatsapp-manager plugin., Garante que atualização NL não sobrescreve tone/summary/guidelines., Garante que sync não substitui nome real por nome genérico 'Contato XXXX'., Testes para o hook pre_tool_call — bloqueio de tools para contatos., TestNLUpdateOwnerFieldsRestriction, TestPreToolCall (+1 more)
 
 ### Community 35 - "Deploy WhatsApp Logs & Diagnostics"
 Cohesion: 0.08
@@ -340,16 +341,16 @@ Cohesion: 0.12
 Nodes (13): Testa a geração do SOUL_WHATSAPP.md com padrões do LLM + exemplos do Python., Cria lista de dicts com pares (contact_msg, andre_msg). None = sem contexto., Diálogo com contexto deve ter dois bullets separados, não indentado., Deve haver linha em branco entre pares de diálogo., O nome do contato deve aparecer como label no bullet., Nome do dono nunca deve aparecer como label do contato., Mensagem sem contexto deve ter só bullet do André., O sentinel ## EXEMPLOS REAIS DE ESCRITA deve estar no output. (+5 more)
 
 ### Community 50 - "Graphify workflows definition"
-Cohesion: 0.14
-Nodes (12): Testes para _normalize_brazilian_phone e _normalize_text., Número com 9 extra deve ser normalizado para 8 dígitos locais., Número sem 9 extra não deve ser alterado., Deve ignorar espaços, parênteses, hifens., Número não-brasileiro não deve ser alterado., Deve remover acentos e converter para minúsculas., TestNormalizeAndTextUtils, _collect_andre_messages_by_relationship() (+4 more)
+Cohesion: 0.11
+Nodes (16): Testes para _normalize_brazilian_phone e _normalize_text., Número com 9 extra deve ser normalizado para 8 dígitos locais., Número sem 9 extra não deve ser alterado., Deve ignorar espaços, parênteses, hifens., Número não-brasileiro não deve ser alterado., Deve remover acentos e converter para minúsculas., TestNormalizeAndTextUtils, _dedup_personal_contacts() (+8 more)
 
 ### Community 57 - "🟠 Alto (estabilidade e segurança)"
 Cohesion: 0.09
 Nodes (22): 10. Permissões do `google_token.json` — `google_api.py`, 11. Duplicação 5x de `manual_relationship` migration — `whatsapp_manager.py`, 12. Caminhos hardcoded espalhados — `whatsapp_manager.py`, 13. `sessionDir` não utilizado — `allowlist.js` linha ~15, 14. Thread race em `_persist_transcription_to_db()` — `whatsapp_manager.py` linhas ~357-371, 15. `google_api.py` — cobertura zero, 16. `allowlist.js` — cobertura zero (isolada), 1. Path traversal em `/send-media` — `bridge.js` (+14 more)
 
 ### Community 58 - "TestOwnerCommands"
-Cohesion: 0.06
-Nodes (21): Testes para o fluxo _pending_contact_update: não encontrado → pede número → apli, Quando contato não é encontrado, armazena pendência e pergunta o número., Quando dono responde com número, pendência é aplicada e removida., Testes para _check_chat_silenced., Segunda chamada dentro do TTL não deve fazer HTTP., Testes para comandos do owner em pre_gateway_dispatch., update contact Isabel relationship=Filha' executa e retorna skip., update contact Isabel' sem campos avisa o owner. (+13 more)
+Cohesion: 0.07
+Nodes (17): Testes para _check_chat_silenced., Segunda chamada dentro do TTL não deve fazer HTTP., Testes para comandos do owner em pre_gateway_dispatch., update contact Isabel relationship=Filha' executa e retorna skip., update contact Isabel' sem campos avisa o owner., update contact Isabel' sem campo=valor avisa o owner., NL update com contato encontrado retorna skip., Owner informa status: _save_owner_status é chamado e retorna skip. (+9 more)
 
 ### Community 59 - "Deploy do Plugin WhatsApp Manager"
 Cohesion: 0.10
@@ -384,16 +385,16 @@ Cohesion: 0.21
 Nodes (9): Testes para _process_media_message — transcrição de áudio e imagem., Patch das propriedades de config via __get__ no tipo., Sem API key: retorna None., Arquivo de mídia inexistente: retorna None., Tipo de mídia não suportado (vídeo, documento): retorna None., Gemini transcreve áudio com sucesso., Gemini descreve imagem com sucesso., Gemini falha e sem outros providers: retorna None. (+1 more)
 
 ### Community 67 - "TestLiveClassifyContact"
-Cohesion: 0.16
-Nodes (9): Testes para _live_classify_contact., Helper: configura mock SQLite para retornar stats e histórico., Contato novo com mensagens suficientes deve ser classificado via LLM., Sem mensagens no DB, deve retornar None sem chamar LLM., Dono nunca deve ser classificado — deve retornar None imediatamente., manual_relationship definido pelo dono deve sobrescrever o que o LLM classificar, Com poucas mensagens (< mínimo), deve usar classificação padrão sem chamar LLM., Resultado da classificação deve ser gravado em personal_contacts.json. (+1 more)
+Cohesion: 0.17
+Nodes (11): Testes para _live_classify_contact., Helper: configura mock SQLite para retornar stats e histórico., Contato novo com mensagens suficientes deve ser classificado via LLM., Sem mensagens no DB, deve retornar None sem chamar LLM., Dono nunca deve ser classificado — deve retornar None imediatamente., manual_relationship definido pelo dono deve sobrescrever o que o LLM classificar, Com poucas mensagens (< mínimo), deve usar classificação padrão sem chamar LLM., Resultado da classificação deve ser gravado em personal_contacts.json. (+3 more)
 
 ### Community 68 - "TestFullSummaryFunctions"
-Cohesion: 0.12
-Nodes (19): Python unit tests for the whatsapp-manager plugin., Testes para _call_llm_api., TestCallLlmApi, _call_llm_api(), _classify_contact_via_llm(), _compress_full_summary(), _dedup_personal_contacts(), _live_classify_contact() (+11 more)
+Cohesion: 0.19
+Nodes (10): Testes para _call_llm_api., TestCallLlmApi, _call_llm_api(), _compress_full_summary(), Atualiza o full_summary de um contato com uma nova sessão de conversa.      Cham, Comprime um full_summary longo em 1-2 linhas para uso no contexto de atendimento, Atualiza full_summary para contatos com sessões novas no state.db.      Processa, Envia uma requisição HTTP POST para uma API de LLM e extrai o texto da resposta. (+2 more)
 
 ### Community 69 - "TestPreToolCall"
-Cohesion: 0.12
-Nodes (9): Testes para o hook pre_tool_call — bloqueio de tools para contatos., Contato não pode usar tools., Owner pode usar tools (retorna None = permitir)., Owner com device suffix (5511999999999:2@s.whatsapp.net) é reconhecido., Plataformas diferentes de whatsapp passam sem bloqueio., Session vazia passa (não há como identificar)., Contato com device suffix é bloqueado corretamente., Número do owner com 8 dígitos local vs 9 dígitos ainda é reconhecido. (+1 more)
+Cohesion: 0.14
+Nodes (10): BasePlatformAdapter, Native Hermes Platform Adapter for WhatsApp Sidecar Bridge., Fallback Base class for standalone testing or direct invocation., Platform Adapter connecting Hermes Gateway to WhatsApp Baileys sidecar bridge., Query connection status from whatsapp-bridge., Return platform status dictionary for Gateway and Web UI Dashboard., Send a text message via whatsapp-bridge, passing through security firewall., Send typing presence indicator to chat. (+2 more)
 
 ### Community 71 - "TestBuildLidPhoneMap"
 Cohesion: 0.29
@@ -412,8 +413,8 @@ Cohesion: 0.18
 Nodes (10): Autorização Google OAuth2 (Gmail), Configuração no Google Cloud Console, Notas Importantes, O que o agente deve fazer, Passo 1 — Verificar se o token já existe, Passo 2 — Verificar credenciais, Passo 3 — Gerar a URL de autorização, Passo 4 — Receber e processar (código ou URL) (+2 more)
 
 ### Community 75 - "TestPendingContactUpdate"
-Cohesion: 0.12
-Nodes (18): WhatsApp Manager Plugin Package Entry Point., commit_file_to_repo(), _ensure_google_libs(), _load_status_notified(), _load_turn_sent_from_disk(), pre_tool_call(), _pull_and_merge_configurations(), Restaura _turn_sent do disco na inicialização, ignorando entradas expiradas. (+10 more)
+Cohesion: 0.13
+Nodes (16): WhatsApp Manager Plugin Package Entry Point., commit_file_to_repo(), _ensure_google_libs(), _load_status_notified(), _load_turn_sent_from_disk(), _pull_and_merge_configurations(), Restaura _turn_sent do disco na inicialização, ignorando entradas expiradas., Instala as bibliotecas da Google API no venv do Hermes se ainda não estiverem di (+8 more)
 
 ### Community 76 - "test_utils_and_filters.py"
 Cohesion: 0.29
@@ -500,8 +501,8 @@ Cohesion: 0.48
 Nodes (6): main(), normalize_br(), Passo 1 SEM o fix — replicando o bug original., Passo 1 COM o fix — phone < 8 chars é ignorado., step1_com_fix(), step1_sem_fix()
 
 ### Community 103 - "_fetch_chat_history"
-Cohesion: 0.38
-Nodes (4): Testes para _fetch_chat_history., TestFetchChatHistory, _fetch_chat_history(), Busca histórico de mensagens do servidor HTTP.
+Cohesion: 0.29
+Nodes (4): Testes para o fluxo _pending_contact_update: não encontrado → pede número → apli, Quando contato não é encontrado, armazena pendência e pergunta o número., Quando dono responde com número, pendência é aplicada e removida., TestPendingContactUpdate
 
 ### Community 107 - "post_llm_call"
 Cohesion: 0.33
@@ -515,22 +516,26 @@ Nodes (4): Docker Compose, Docker Compose EasyPanel, EasyPanel Config, Portainer
 Cohesion: 0.38
 Nodes (4): Testes para _push_personal_contacts_to_github., TestPushPersonalContactsToGithub, _push_personal_contacts_to_github(), Envia o arquivo personal_contacts.json local diretamente para o repositório do G
 
+### Community 144 - "_fetch_chat_history"
+Cohesion: 0.38
+Nodes (4): Testes para _fetch_chat_history., TestFetchChatHistory, _fetch_chat_history(), Busca histórico de mensagens do servidor HTTP.
+
 ## Knowledge Gaps
-- **478 isolated node(s):** `recentLogs`, `errorCounters`, `activityCounters`, `args`, `PORT` (+473 more)
+- **464 isolated node(s):** `recentLogs`, `errorCounters`, `activityCounters`, `args`, `PORT` (+459 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **50 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `TestPostLlmCall` connect `Bridge Node Package Dependencies` to `Base WhatsApp Manager Test Suite`, `TestFullSummaryFunctions`, `TestOwnerCommands`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
-- **Why does `TestOwnerCommands` connect `TestOwnerCommands` to `Base WhatsApp Manager Test Suite`, `TestFullSummaryFunctions`?**
-  _High betweenness centrality (0.013) - this node is a cross-community bridge._
+- **Why does `TestDedupPersonalContacts` connect `TestDedupPersonalContacts` to `Base WhatsApp Manager Test Suite`, `Graphify workflows definition`?**
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Why does `TestOwnerCommands` connect `TestOwnerCommands` to `Base WhatsApp Manager Test Suite`?**
+  _High betweenness centrality (0.014) - this node is a cross-community bridge._
 - **Why does `PluginConfig` connect `WhatsApp Manager Configurations` to `Workspace Setup & Architecture Overview`?**
   _High betweenness centrality (0.013) - this node is a cross-community bridge._
-- **What connects `WhatsApp Manager Plugin Package Entry Point.`, `recentLogs`, `errorCounters` to the rest of the system?**
-  _822 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `WhatsApp Manager Plugin Package Entry Point.`, `Native Hermes Platform Adapter for WhatsApp Sidecar Bridge.`, `Fallback Base class for standalone testing or direct invocation.` to the rest of the system?**
+  _815 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Node.js WhatsApp Bridge` be split into smaller, more focused modules?**
   _Cohesion score 0.031746031746031744 - nodes in this community are weakly interconnected._
 - **Should `Deploy Bridge Code Artifacts` be split into smaller, more focused modules?**

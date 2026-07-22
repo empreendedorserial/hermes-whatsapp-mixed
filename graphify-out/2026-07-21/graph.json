@@ -16428,6 +16428,36 @@
       "norm_label": "exemplo 6: fluxo com foco em entender o cliente, sem oferecer produtos de graca"
     },
     {
+      "label": "crypto-projection-dashboard.md",
+      "file_type": "document",
+      "source_file": "deploy/skills/aisa/crypto-projection-dashboard.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "deploy_skills_aisa_crypto_projection_dashboard",
+      "community": 141,
+      "norm_label": "crypto-projection-dashboard.md"
+    },
+    {
+      "label": "pizzarias-sem-sit.md",
+      "file_type": "document",
+      "source_file": "deploy/skills/aisa/pizzarias-sem-sit.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "deploy_skills_aisa_pizzarias_sem_sit",
+      "community": 142,
+      "norm_label": "pizzarias-sem-sit.md"
+    },
+    {
+      "label": "youtube-claude-code-lead-discovery.md",
+      "file_type": "document",
+      "source_file": "deploy/skills/aisa/youtube-claude-code-lead-discovery.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "deploy_skills_aisa_youtube_claude_code_lead_discovery",
+      "community": 143,
+      "norm_label": "youtube-claude-code-lead-discovery.md"
+    },
+    {
       "label": "SKILL.md",
       "file_type": "document",
       "source_file": "deploy/skills/hermes-architecture/SKILL.md",
@@ -42578,5 +42608,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "ee257e8d5a7d3f2a3d482c1570704b07b07d7f25"
+  "built_at_commit": "45ac9760590528f66e492e03b659979abaa089df"
 }
