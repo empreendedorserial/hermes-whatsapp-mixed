@@ -428,7 +428,7 @@ fi
 # Sincroniza e desativa todas as ferramentas no profile de atendimento WhatsApp por padrão
 mkdir -p "/opt/data/.hermes/profiles/whatsapp"
 cp "/opt/data/SOUL_WHATSAPP.md" "/opt/data/.hermes/profiles/whatsapp/SOUL.md" 2>/dev/null || true
-$PYTHON_BIN -c "import yaml, os; p='/opt/data/.hermes/profiles/whatsapp/config.yaml'; os.makedirs(os.path.dirname(p), exist_ok=True); cfg={'model': {'default': 'gemini-3.1-flash-lite', 'provider': 'gemini'}, 'tools': {'enabled': False}, 'skills': {'enabled': False}, 'terminal': {'backend': 'disabled'}, 'display': {'show_system_header': False, 'tool_progress': 'off'}}; open(p, 'w').write(yaml.dump(cfg, default_flow_style=False))" 2>/dev/null || true
+$PYTHON_BIN -c "import yaml, os; p='/opt/data/.hermes/profiles/whatsapp/config.yaml'; os.makedirs(os.path.dirname(p), exist_ok=True); cfg={'model': {'default': 'gemini-3.1-flash-lite', 'provider': 'gemini'}, 'agent': {'tool_use_enforcement': 'disabled'}, 'tools': {'enabled': False, 'file_operations': False, 'code_execution': False, 'vision': False, 'image_generation': False, 'web_search': False, 'browser': False, 'terminal': False}, 'toolsets': {'file_operations': False, 'code_execution': False, 'vision': False, 'image_generation': False, 'web_search': False, 'browser': False, 'terminal': False}, 'skills': {'enabled': False}, 'terminal': {'backend': 'disabled'}, 'display': {'show_system_header': False, 'tool_progress': 'off'}}; open(p, 'w').write(yaml.dump(cfg, default_flow_style=False))" 2>/dev/null || true
 echo "  ✓ Profile de WhatsApp configurado com a persona SOUL_WHATSAPP.md e ferramentas desativadas por padrão."
 
 # Se o profile de E-mail do Hermes já existir, sincroniza também o SOUL_EMAIL
