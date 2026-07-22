@@ -132,9 +132,10 @@
 
 services:
   hermes:
-    image: nousresearch/hermes-agent:v2026.5.16
+    #image: nousresearch/hermes-agent:v2026.5.16
+    image: nousresearch/hermes-agent:v2026.7.20
     restart: unless-stopped
-    command: ["bash", "-c", "git config --global --add safe.directory /opt/data/.hermes/plugins/whatsapp-manager 2>/dev/null || true; exec hermes gateway run"]
+    command: ["bash", "-c", "git config --global --add safe.directory /opt/data/.hermes/plugins/whatsapp-manager 2>/dev/null || true; python3 -c \"import os, yaml; from plugins.dashboard_auth.basic import hash_password; usr=os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'; pwd=os.environ.get('HERMES_DASHBOARD_PASSWORD') or os.environ.get('API_SERVER_KEY') or 'admin123'; h=hash_password(pwd); paths=['/opt/data/.hermes/config.yaml', os.path.expanduser('~/.hermes/config.yaml')]; [os.makedirs(os.path.dirname(p), exist_ok=True) for p in paths]; exec('''for p in paths:\\n  try:\\n    with open(p,\\\"r\\\") as f: cfg=yaml.safe_load(f) or {}\\n  except Exception: cfg={}\\n  if not isinstance(cfg, dict): cfg={}\\n  dash=cfg.get(\\\"dashboard\\\")\\n  if not isinstance(dash, dict): dash={\\\"enabled\\\": True, \\\"host\\\": \\\"0.0.0.0\\\", \\\"port\\\": 9119}\\n  dash[\\\"enabled\\\"]=True; dash[\\\"host\\\"]=\\\"0.0.0.0\\\"; dash[\\\"port\\\"]=9119\\n  dash[\\\"basic_auth\\\"]={\\\"username\\\": usr, \\\"password_hash\\\": h}\\n  cfg[\\\"dashboard\\\"]=dash\\n  with open(p,\\\"w\\\") as f: yaml.dump(cfg, f, default_flow_style=False)\\n''')\" 2>/dev/null; exec hermes gateway run"]
 
     volumes:
       # Volume principal: persiste /opt/data (workspace, plugins, sessão WhatsApp, banco SQLite)

@@ -1,16 +1,16 @@
-# Graph Report - hermes-whatsapp-mixed  (2026-07-21)
+# Graph Report - hermes-whatsapp-mixed  (2026-07-14)
 
 ## Corpus Check
-- 62 files · ~113,529 words
+- 59 files · ~113,104 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1830 nodes · 2354 edges · 144 communities (94 shown, 50 thin omitted)
+- 1827 nodes · 2354 edges · 141 communities (91 shown, 50 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 40 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `45ac9760`
+- Built from commit: `ee257e8d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -177,7 +177,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (144 total, 50 thin omitted)
+## Communities (141 total, 50 thin omitted)
 
 ### Community 0 - "Node.js WhatsApp Bridge"
 Cohesion: 0.03

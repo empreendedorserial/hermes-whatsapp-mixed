@@ -326,6 +326,17 @@ if [ -n "$ENV_MAX_TURNS" ] && [ -f "$BASE_DIR/config.yaml" ]; then
     rm -f "$BASE_DIR/config.yaml.bak"
 fi
 
+# Configuração de Autenticação do Dashboard (zero-config para o cliente final)
+DASH_USER="${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}"
+DASH_PASS_PLAIN="${HERMES_DASHBOARD_PASSWORD:-${HERMES_DASH_PASSWORD:-${API_SERVER_KEY:-admin123}}}"
+
+PYTHON_BIN="/opt/hermes/.venv/bin/python"
+[ ! -x "$PYTHON_BIN" ] && PYTHON_BIN="python3"
+
+echo "🔒 Configurando autenticação automática do Dashboard..."
+$PYTHON_BIN -c "import os, yaml; from plugins.dashboard_auth.basic import hash_password; usr=os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or '$DASH_USER'; pwd=os.environ.get('HERMES_DASHBOARD_PASSWORD') or os.environ.get('API_SERVER_KEY') or '$DASH_PASS_PLAIN'; h=hash_password(pwd); paths=['$BASE_DIR/config.yaml', os.path.expanduser('~/.hermes/config.yaml')]; [os.makedirs(os.path.dirname(p), exist_ok=True) for p in paths]; exec('''for p in paths:\n  try:\n    with open(p,\"r\") as f: cfg=yaml.safe_load(f) or {}\n  except Exception: cfg={}\n  if not isinstance(cfg, dict): cfg={}\n  dash=cfg.get(\"dashboard\")\n  if not isinstance(dash, dict): dash={\"enabled\": True, \"host\": \"0.0.0.0\", \"port\": 9119}\n  dash[\"enabled\"]=True; dash[\"host\"]=\"0.0.0.0\"; dash[\"port\"]=9119\n  dash[\"basic_auth\"]={\"username\": usr, \"password_hash\": h}\n  cfg[\"dashboard\"]=dash\n  with open(p,\"w\") as f: yaml.dump(cfg, f, default_flow_style=False)\n''')" 2>/dev/null || true
+echo "  ✓ Autenticação da Dashboard configurada! (Usuário: $DASH_USER | Senha: $DASH_PASS_PLAIN)"
+
 # Baixa o modelo de chaves de API (.env) se ele não existir localmente
 if [ ! -f "$BASE_DIR/.env" ]; then
     if ! download_file "$RAW_URL/env.example" "$BASE_DIR/.env" "$CURL_CODE_AUTH_HEADER"; then

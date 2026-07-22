@@ -29,10 +29,10 @@
 #   API_SERVER_KEY         Chave secreta para autenticar chamadas à API do Hermes
 #                          Gerar: openssl rand -hex 32
 #
-# 🔒 AUTENTICAÇÃO DO DASHBOARD
-#   Gerida AUTOMATICAMENTE pelo setup.sh durante a inicialização do container!
-#   Você pode definir a senha desejada na variável HERMES_DASHBOARD_PASSWORD.
-#   Caso não defina, a senha será automaticamente a sua API_SERVER_KEY (ou admin123).
+# 🔒 BASIC AUTH NO DASHBOARD (obrigatória — sem default, protege contra acesso público)
+#   HERMES_DASH_AUTH_USERS  Usuário:hash para proteger o Dashboard via Traefik
+#                          Gerar: echo $(htpasswd -nb usuario senha) | sed -e s/\$/\$\$/g
+#                          → o Dashboard expõe terminal, logs e conversas — NUNCA deixe sem isso
 #
 # 🤖 PROVIDER DE IA (obrigatória na prática)
 #   GOOGLE_API_KEY         Chave da Google AI Studio / Vertex AI
@@ -59,7 +59,6 @@
 #   OPENAI_API_KEY         Chave da OpenAI (GPT-4, etc.)
 #   ANTHROPIC_API_KEY      Chave da Anthropic (Claude)
 #   OPENROUTER_API_KEY     Chave da OpenRouter (acesso multi-provider)
-#   AISA_API_KEY           Chave da AISA (provider de IA)
 #
 # 🤖 MODELOS POR FUNÇÃO (padrão: gemini-3.1-flash-lite / provider: gemini)
 #   WHATSAPP_OWNER_MODEL          Modelo usado para responder ao dono
@@ -101,13 +100,12 @@ version: "3.8"
 
 services:
   hermes:
-    #image: nousresearch/hermes-agent:v2026.5.16
-    image: nousresearch/hermes-agent:v2026.7.20
+    image: nousresearch/hermes-agent:v2026.5.16
     restart: unless-stopped
     # Micro-proxy TCP: escuta em 127.0.0.1:3000 e redireciona para whatsapp-bridge:3000
     # Isso expõe a bridge internamente como se fosse localhost, compatível com o plugin.
     # Em seguida executa o gateway principal do Hermes.
-    command: ["bash", "-c", "node -e \"process.on('uncaughtException', () => {}); const net = require('net'); net.createServer(s => { const c = net.connect(3000, 'whatsapp-bridge'); s.pipe(c).pipe(s); c.on('error', () => s.destroy()); s.on('error', () => c.destroy()); }).listen(3000, '127.0.0.1');\" & python3 -c \"import os, yaml; from plugins.dashboard_auth.basic import hash_password; usr=os.environ.get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME') or 'admin'; pwd=os.environ.get('HERMES_DASHBOARD_PASSWORD') or os.environ.get('API_SERVER_KEY') or 'admin123'; h=hash_password(pwd); paths=['/opt/data/.hermes/config.yaml', os.path.expanduser('~/.hermes/config.yaml')]; [os.makedirs(os.path.dirname(p), exist_ok=True) for p in paths]; exec('''for p in paths:\\n  try:\\n    with open(p,\\\"r\\\") as f: cfg=yaml.safe_load(f) or {}\\n  except Exception: cfg={}\\n  if not isinstance(cfg, dict): cfg={}\\n  dash=cfg.get(\\\"dashboard\\\")\\n  if not isinstance(dash, dict): dash={\\\"enabled\\\": True, \\\"host\\\": \\\"0.0.0.0\\\", \\\"port\\\": 9119}\\n  dash[\\\"enabled\\\"]=True; dash[\\\"host\\\"]=\\\"0.0.0.0\\\"; dash[\\\"port\\\"]=9119\\n  dash[\\\"basic_auth\\\"]={\\\"username\\\": usr, \\\"password_hash\\\": h}\\n  cfg[\\\"dashboard\\\"]=dash\\n  with open(p,\\\"w\\\") as f: yaml.dump(cfg, f, default_flow_style=False)\\n''')\" 2>/dev/null; exec hermes gateway run"]
+    command: ["bash", "-c", "node -e \"process.on('uncaughtException', () => {}); const net = require('net'); net.createServer(s => { const c = net.connect(3000, 'whatsapp-bridge'); s.pipe(c).pipe(s); c.on('error', () => s.destroy()); s.on('error', () => c.destroy()); }).listen(3000, '127.0.0.1');\" & exec hermes gateway run"]
 
     volumes:
       - hermes_agent_hermes_data_v5:/opt/data
@@ -163,14 +161,11 @@ services:
       - API_SERVER_KEY=${API_SERVER_KEY}
       - API_SERVER_CORS_ORIGINS=${API_SERVER_CORS_ORIGINS:-*}
 
-      # Dashboard (porta 9119 — autenticação gerida automaticamente pelo setup.sh)
+      # Dashboard (porta 9119)
       - HERMES_DASHBOARD=1
       - HERMES_DASHBOARD_HOST=0.0.0.0
       - HERMES_DASHBOARD_PORT=9119
       - HERMES_DASHBOARD_TUI=1
-      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
-      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH:-}
-      - HERMES_DASHBOARD_PASSWORD=${HERMES_DASHBOARD_PASSWORD:-}
 
       # Sincronização de contexto via GitHub
       - HERMES_SETUP_GITHUB_USER=${HERMES_SETUP_GITHUB_USER:-empreendedorserial}
@@ -211,6 +206,10 @@ services:
         - "traefik.enable=true"
         - "traefik.docker.network=traefik_public"
 
+        # Basic Auth no Dashboard — protege contra acesso público indevido
+        # Gerar HERMES_DASH_AUTH_USERS com: echo $(htpasswd -nb usuario senha) | sed -e s/\\$/\\$\\$/g
+        - "traefik.http.middlewares.hermes-dash-auth.basicauth.users=${HERMES_DASH_AUTH_USERS}"
+
         # API REST → porta 8642
         - "traefik.http.routers.hermes-api.rule=Host(`${HERMES_API_HOST}`)"
         - "traefik.http.routers.hermes-api.entrypoints=websecure"
@@ -219,42 +218,45 @@ services:
         - "traefik.http.routers.hermes-api.service=hermes-api"
         - "traefik.http.services.hermes-api.loadbalancer.server.port=8642"
 
-        # Dashboard → porta 9119 (protegido nativamente pelo Hermes)
+        # Dashboard → porta 9119 (protegido por Basic Auth)
         - "traefik.http.routers.hermes-dash.rule=Host(`${HERMES_DASH_HOST}`)"
         - "traefik.http.routers.hermes-dash.entrypoints=websecure"
         - "traefik.http.routers.hermes-dash.tls=true"
         - "traefik.http.routers.hermes-dash.tls.certresolver=le"
         - "traefik.http.routers.hermes-dash.service=hermes-dash"
+        - "traefik.http.routers.hermes-dash.middlewares=hermes-dash-auth"
         - "traefik.http.services.hermes-dash.loadbalancer.server.port=9119"
         - "traefik.http.services.hermes-dash.loadbalancer.responseforwarding.flushinterval=100ms"
 
-        # WebSocket /api/ws (Dashboard TUI) — protegido nativamente pelo Hermes
+        # WebSocket /api/ws (Dashboard TUI) — protegido por Basic Auth
         - "traefik.http.routers.hermes-ws.rule=Host(`${HERMES_DASH_HOST}`) && PathPrefix(`/api/ws`)"
         - "traefik.http.routers.hermes-ws.entrypoints=websecure"
         - "traefik.http.routers.hermes-ws.tls=true"
         - "traefik.http.routers.hermes-ws.tls.certresolver=le"
         - "traefik.http.routers.hermes-ws.service=hermes-dash"
+        - "traefik.http.routers.hermes-ws.middlewares=hermes-dash-auth"
         - "traefik.http.routers.hermes-ws.priority=300"
 
-        # WebSocket /api/events (streaming de eventos) — protegido nativamente pelo Hermes
+        # WebSocket /api/events (streaming de eventos) — protegido por Basic Auth
         - "traefik.http.routers.hermes-events.rule=Host(`${HERMES_DASH_HOST}`) && PathPrefix(`/api/events`)"
         - "traefik.http.routers.hermes-events.entrypoints=websecure"
         - "traefik.http.routers.hermes-events.tls=true"
         - "traefik.http.routers.hermes-events.tls.certresolver=le"
         - "traefik.http.routers.hermes-events.service=hermes-dash"
+        - "traefik.http.routers.hermes-events.middlewares=hermes-dash-auth"
         - "traefik.http.routers.hermes-events.priority=300"
 
-        # WebSocket /api/pty (terminal interativo no Dashboard) — protegido nativamente pelo Hermes
+        # WebSocket /api/pty (terminal interativo no Dashboard) — protegido por Basic Auth
         - "traefik.http.routers.hermes-pty.rule=Host(`${HERMES_DASH_HOST}`) && PathPrefix(`/api/pty`)"
         - "traefik.http.routers.hermes-pty.entrypoints=websecure"
         - "traefik.http.routers.hermes-pty.tls=true"
         - "traefik.http.routers.hermes-pty.tls.certresolver=le"
         - "traefik.http.routers.hermes-pty.service=hermes-dash"
+        - "traefik.http.routers.hermes-pty.middlewares=hermes-dash-auth"
         - "traefik.http.routers.hermes-pty.priority=300"
 
   whatsapp-bridge:
-    #image: nousresearch/hermes-agent:v2026.5.16
-    image: nousresearch/hermes-agent:v2026.7.20
+    image: nousresearch/hermes-agent:v2026.5.16
     restart: unless-stopped
     # Aguarda o bridge.js ser copiado para o volume antes de iniciar.
     # Se o Node.js encerrar com erro, limpa a sessão corrompida e sai (Docker reinicia o container).
