@@ -2622,6 +2622,59 @@ class TestPushPersonalContactsToGithub(BaseWhatsAppManagerTest):
         self.assertEqual(call_kwargs[1].get("github_path") or call_kwargs[0][3], "personal_contacts.json")
 
 
+class TestFieldLevelMergeAndPushFailureNotification(BaseWhatsAppManagerTest):
+    """Testes para _merge_records_field_level e _notify_owner_if_push_failed.
+
+    Cobre a correção do bug: um pull periódico não deve mais apagar um campo local
+    preenchido (ex: manual_relationship) com um valor vazio/nulo vindo do GitHub, e uma
+    falha de push não deve mais ficar 100% silenciosa.
+    """
+
+    def test_remote_empty_field_does_not_wipe_local_value(self):
+        from whatsapp_manager import _merge_records_field_level
+        remote = {"5511@s.whatsapp.net": {"name": "Isabel", "manual_relationship": None}}
+        local = {"5511@s.whatsapp.net": {"name": "Isabel", "manual_relationship": "Filha"}}
+        merged = _merge_records_field_level(remote, local)
+        self.assertEqual(merged["5511@s.whatsapp.net"]["manual_relationship"], "Filha")
+
+    def test_remote_non_empty_field_wins_over_local(self):
+        from whatsapp_manager import _merge_records_field_level
+        remote = {"5511@s.whatsapp.net": {"name": "Isabel", "manual_relationship": "Amiga"}}
+        local = {"5511@s.whatsapp.net": {"name": "Isabel", "manual_relationship": "Filha"}}
+        merged = _merge_records_field_level(remote, local)
+        self.assertEqual(merged["5511@s.whatsapp.net"]["manual_relationship"], "Amiga")
+
+    def test_local_only_key_is_preserved(self):
+        from whatsapp_manager import _merge_records_field_level
+        remote = {"a@s.whatsapp.net": {"name": "A"}}
+        local = {"a@s.whatsapp.net": {"name": "A"}, "b@s.whatsapp.net": {"name": "B"}}
+        merged = _merge_records_field_level(remote, local)
+        self.assertIn("b@s.whatsapp.net", merged)
+        self.assertEqual(merged["b@s.whatsapp.net"]["name"], "B")
+
+    def test_local_only_field_not_present_in_remote_is_kept(self):
+        from whatsapp_manager import _merge_records_field_level
+        remote = {"a@s.whatsapp.net": {"name": "A"}}
+        local = {"a@s.whatsapp.net": {"name": "A", "notes": "prefere ligação"}}
+        merged = _merge_records_field_level(remote, local)
+        self.assertEqual(merged["a@s.whatsapp.net"]["notes"], "prefere ligação")
+
+    @patch("whatsapp_manager._human_send")
+    def test_notifies_owner_when_push_fails(self, mock_send):
+        from whatsapp_manager import _notify_owner_if_push_failed
+        _notify_owner_if_push_failed(lambda: False, "os contatos")
+        mock_send.assert_called_once()
+        chat_id, message = mock_send.call_args[0]
+        self.assertIn("5511999999999", chat_id)
+        self.assertIn("os contatos", message)
+
+    @patch("whatsapp_manager._human_send")
+    def test_does_not_notify_when_push_succeeds(self, mock_send):
+        from whatsapp_manager import _notify_owner_if_push_failed
+        _notify_owner_if_push_failed(lambda: True, "os contatos")
+        mock_send.assert_not_called()
+
+
 class TestRunSyncInBackground(BaseWhatsAppManagerTest):
     """Testes para _run_sync_in_background."""
 

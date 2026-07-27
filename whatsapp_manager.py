@@ -822,6 +822,40 @@ def _sanitize_classification_result(res: dict) -> dict:
     return res
 
 
+def _merge_records_field_level(remote_records: dict, local_records: dict) -> dict:
+    """Mescla dois dicts de registros (chave -> dict de campos) sem deixar um campo vazio/nulo
+    do lado remoto apagar silenciosamente um valor real já salvo localmente.
+
+    Motivo: o push para o GitHub roda em background e pode falhar silenciosamente (rede, API,
+    permissão). Sem essa proteção, a próxima sincronização (boot ou automática a cada 24h) troca
+    o registro local inteiro pelo remoto desatualizado, perdendo edições recentes (ex: um
+    manual_relationship setado via chat que nunca chegou a ser publicado no GitHub).
+
+    Regra: por registro existente nos dois lados, parte do remoto (fonte de verdade — preserva
+    campos que só existem lá, como classificações automáticas de outro dispositivo) e só troca um
+    campo pelo valor local quando o remoto está vazio/nulo ali e o local não está. Um campo
+    remoto não-vazio sempre vence, mesmo divergindo do local — isso não é resolução de conflito,
+    é só impedir que "vazio" apague "preenchido". Registros que só existem localmente são mantidos.
+    """
+    merged: dict = {}
+    for key, remote_val in remote_records.items():
+        if not isinstance(remote_val, dict):
+            merged[key] = remote_val
+            continue
+        local_val = local_records.get(key)
+        record = dict(remote_val)
+        if isinstance(local_val, dict):
+            for field, lv in local_val.items():
+                rv = record.get(field)
+                if (rv is None or rv == "") and lv not in (None, ""):
+                    record[field] = lv
+        merged[key] = record
+    for key, local_val in local_records.items():
+        if key not in merged:
+            merged[key] = local_val
+    return merged
+
+
 def _call_llm_api(url: str, headers: dict, payload: dict, extract_fn, timeout: int = 30) -> str | None:
     """Envia uma requisição HTTP POST para uma API de LLM e extrai o texto da resposta.
 
@@ -3409,14 +3443,38 @@ def _update_contact_fields(identifier: str, fields: dict) -> str:
     except Exception as e:
         return f"❌ Erro ao salvar personal_contacts.json: {e}"
 
-    # Push para GitHub em background
+    # Push para GitHub em background — avisa o dono se falhar (não fica silencioso)
     try:
-        threading.Thread(target=_push_personal_contacts_to_github, daemon=True).start()
+        threading.Thread(
+            target=lambda: _notify_owner_if_push_failed(_push_personal_contacts_to_github, "a atualização de contato"),
+            daemon=True,
+        ).start()
     except Exception:
         pass
 
     fields_str = ", ".join(f"`{k}`: {v!r}" for k, v in fields.items() if k not in protected)
     return f"✅ Contato *{contact_name}* ({matched_key}) atualizado.\nCampos: {fields_str}"
+
+
+def _notify_owner_if_push_failed(push_fn, what: str) -> None:
+    """Roda push_fn() (uma função sem args que retorna bool) e avisa o dono via WhatsApp se
+    retornar False. Usado em threads de background para que uma falha de sync com o GitHub
+    (rede, API, permissão) nunca fique 100% silenciosa — sem isso, o próximo pull periódico
+    pode sobrescrever a edição local que nunca chegou a ser publicada."""
+    try:
+        ok = push_fn()
+        if not ok:
+            owner_number = config.whatsapp_owner_number
+            if owner_number:
+                owner_chat = f"{owner_number}@s.whatsapp.net"
+                _human_send(
+                    owner_chat,
+                    f"⚠️ Não consegui sincronizar {what} com o GitHub agora. "
+                    "A alteração está salva localmente, mas pode ser perdida numa próxima "
+                    "sincronização automática se o problema persistir. Confira os logs."
+                )
+    except Exception as e:
+        logger.error(f"Erro no wrapper de push+notificação ({what}): {e}")
 
 
 def _push_personal_contacts_to_github() -> bool:
@@ -3603,14 +3661,9 @@ def _pull_and_merge_configurations():
         logger.warning(f"Não foi possível baixar personal_contacts.json do GitHub: {e}")
 
     if remote_contacts is not None:
-        # Mesclar local e remoto
-        merged = {}
-        # Priorizar remoto
-        merged.update(remote_contacts)
-        # Manter locais novos
-        for k, v in local_contacts.items():
-            if k not in merged:
-                merged[k] = v
+        # Mesclar campo a campo — remoto vence quando preenchido, mas nunca apaga um
+        # campo local preenchido com um valor vazio/nulo do remoto (ver _merge_records_field_level)
+        merged = _merge_records_field_level(remote_contacts, local_contacts)
 
         # Remover chaves com número vazio ou inválido (evita falso match no passo 1)
         merged = _sanitize_contacts_keys(merged)
@@ -3637,10 +3690,7 @@ def _pull_and_merge_configurations():
         logger.warning(f"Não foi possível baixar product_catalog.json do GitHub: {e}")
 
     if remote_catalog is not None:
-        merged_catalog = dict(remote_catalog)
-        for k, v in local_catalog.items():
-            if k not in merged_catalog:
-                merged_catalog[k] = v
+        merged_catalog = _merge_records_field_level(remote_catalog, local_catalog)
         try:
             with open(str(_PRODUCT_CATALOG_PATH), "w", encoding="utf-8") as f:
                 json.dump(merged_catalog, f, indent=2, ensure_ascii=False)
@@ -4024,14 +4074,14 @@ def _save_product_catalog(catalog: dict) -> None:
     if not (config_repo and config_token):
         return
 
-    def _push():
+    def _push() -> bool:
         try:
             if "/" in config_repo:
                 repo_user, repo_name = config_repo.split("/", 1)
             else:
                 repo_user = setup_user or "empreendedorserial"
                 repo_name = config_repo
-            _github_put_file(
+            return _github_put_file(
                 repo_user=repo_user,
                 repo_name=repo_name,
                 token=config_token,
@@ -4041,8 +4091,12 @@ def _save_product_catalog(catalog: dict) -> None:
             )
         except Exception as e:
             logger.error(f"Erro ao sincronizar product_catalog.json com o GitHub: {e}")
+            return False
 
-    threading.Thread(target=_push, daemon=True).start()
+    threading.Thread(
+        target=lambda: _notify_owner_if_push_failed(_push, "o catálogo de produtos"),
+        daemon=True,
+    ).start()
 
 
 def _find_catalog_matches(identifier: str) -> list[tuple[str, dict]]:
