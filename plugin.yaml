@@ -1,7 +1,9 @@
 name: whatsapp-manager
 version: "1.1"
 description: |
-  Gerencia o comportamento do WhatsApp: assistente pessoal para o André com roteamento inteligente de modelos (Gemini 1.5 Pro), suporte de clientes (Gemini 3.5 Flash) via SOUL_WHATSAPP.md, e controle de comandos.
+  Gerencia o comportamento do WhatsApp: assistente pessoal para o André (perfil "default") e suporte autônomo a clientes (perfil "whatsapp") via SOUL_WHATSAPP.md, com modelo/provider roteados dinamicamente por perfil (WHATSAPP_OWNER_MODEL/WHATSAPP_CLIENT_MODEL) e controle de comandos.
+
+  Este plugin fornece o bridge.js (Baileys) e os hooks Python com a lógica de negócio (classificação de contato, personas, silenciamento, sync). Desde o Hermes Agent v0.19, o core assume o ciclo de vida do processo da bridge (spawn/monitoramento/restart) — o plugin só instala o arquivo no caminho convencional.
 
   📱 QR Code para parear o WhatsApp:
     • PNG:    https://seu-dominio.com/whatsapp/qr?format=png
