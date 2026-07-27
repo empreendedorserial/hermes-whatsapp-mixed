@@ -1749,6 +1749,33 @@ class TestProductCatalog(BaseWhatsAppManagerTest):
         self.assertEqual(pending["action"], "add")
         self.assertEqual(pending["item"]["name"], "Mentoria Individual")
 
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_add", "intent": "cadastrar produto",
+    })
+    @patch("urllib.request.urlopen")
+    def test_catalog_add_without_name_asks_and_waits_for_details(self, mock_urlopen, mock_intent):
+        """Sem nome extraível, guarda pendência 'awaiting_details' em vez de só avisar e desistir."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._extract_catalog_item_via_llm", return_value={}):
+            res = self._dispatch("gostaria de incluir um produto na lista")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-add-draft"})
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["type"], "awaiting_details")
+
+        # Próxima mensagem do dono é tratada como os detalhes do produto, sem repetir "adiciona um produto"
+        with patch("whatsapp_manager._extract_catalog_item_via_llm", return_value={"name": "Mentoria", "price": "R$ 500"}):
+            res2 = self._dispatch("mentoria, R$ 500")
+
+        self.assertEqual(res2, {"action": "skip", "reason": "catalog-awaiting-details"})
+        pending2 = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending2["action"], "add")
+        self.assertEqual(pending2["item"]["name"], "Mentoria")
+
     @patch("whatsapp_manager._save_product_catalog")
     @patch("whatsapp_manager._load_product_catalog", return_value={})
     @patch("urllib.request.urlopen")

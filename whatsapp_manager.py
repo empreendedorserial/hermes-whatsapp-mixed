@@ -5081,6 +5081,28 @@ def pre_gateway_dispatch(*args, **kwargs):
             del _pending_catalog_action[sender_id]
             pending_catalog = None
 
+        # Aguardando detalhes de um produto novo (nome não veio na primeira mensagem)
+        if pending_catalog and pending_catalog.get("type") == "awaiting_details":
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            del _pending_catalog_action[sender_id]
+            draft = _extract_catalog_item_via_llm(msg_text)
+            if not draft.get("name"):
+                _pending_catalog_action[sender_id] = {
+                    "type": "awaiting_details", "action": "add", "created_at": time.time(),
+                }
+                reply = "❓ Ainda não consegui identificar o nome. Manda algo como: 'mentoria individual, R$ 500'."
+            else:
+                _pending_catalog_action[sender_id] = {
+                    "action": "add", "item": draft, "created_at": time.time(),
+                }
+                reply = (
+                    f"📋 Confirma o cadastro?\n{_format_catalog_item(draft)}\n\n"
+                    "Responda *sim* para salvar ou *não* para cancelar."
+                )
+            if chat_id:
+                _human_send(chat_id, reply)
+            return {"action": "skip", "reason": "catalog-awaiting-details"}
+
         # Desambiguação: owner escolhe qual produto pelo número da lista
         if pending_catalog and pending_catalog.get("type") == "disambiguate":
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
@@ -5297,7 +5319,10 @@ def pre_gateway_dispatch(*args, **kwargs):
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             draft = _extract_catalog_item_via_llm(msg_text)
             if not draft.get("name"):
-                reply = "⚠️ Não consegui identificar o nome do produto/serviço. Tente algo como: 'adiciona um produto: mentoria individual, R$ 500'."
+                _pending_catalog_action[sender_id] = {
+                    "type": "awaiting_details", "action": "add", "created_at": time.time(),
+                }
+                reply = "❓ Qual o nome do produto/serviço? Pode mandar junto a descrição e o preço, ex: 'mentoria individual, R$ 500, 1h por semana'."
             else:
                 _pending_catalog_action[sender_id] = {
                     "action": "add", "item": draft, "created_at": time.time(),
