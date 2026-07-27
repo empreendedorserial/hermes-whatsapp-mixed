@@ -88,6 +88,49 @@ class WhatsAppPlatformAdapter(BasePlatformAdapter):
             logger.error(f"[whatsapp-adapter] Failed to send message to {chat_id}: {e}")
             return False
 
+    def send_poll(self, chat_id: str, name: str, values: list, selectable_count: int = 1) -> bool:
+        """Send a native tap-to-vote poll via whatsapp-bridge (up to 12 options)."""
+        try:
+            payload = json.dumps({
+                "chatId": chat_id,
+                "name": name,
+                "values": values,
+                "selectableCount": selectable_count,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.bridge_url}/send-poll",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status == 200
+        except Exception as e:
+            logger.error(f"[whatsapp-adapter] Failed to send poll to {chat_id}: {e}")
+            return False
+
+    def send_location(self, chat_id: str, latitude: float, longitude: float, name: str = "", address: str = "") -> bool:
+        """Send a location pin via whatsapp-bridge."""
+        try:
+            payload = json.dumps({
+                "chatId": chat_id,
+                "latitude": latitude,
+                "longitude": longitude,
+                "name": name,
+                "address": address,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.bridge_url}/send-location",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status == 200
+        except Exception as e:
+            logger.error(f"[whatsapp-adapter] Failed to send location to {chat_id}: {e}")
+            return False
+
     def send_typing(self, chat_id: str) -> bool:
         """Send typing presence indicator to chat."""
         try:

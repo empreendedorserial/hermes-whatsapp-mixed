@@ -8,7 +8,7 @@ Plugin **`whatsapp-manager`** para o [Hermes Agent v2026](https://github.com/nou
 
 ## 🚀 Destaques da Versão v2026
 
-- **Arquitetura de Container Único (Single-Container):** O Hermes v2026 gerencia a ponte Baileys nativamente em subprocesso interno (`127.0.0.1:3000`), eliminando o container duplicado e o erro de desconexão `440 conflict / replaced`.
+- **Arquitetura de Container Único (Single-Container):** Desde o Hermes Agent v0.19 ("Quicksilver"), o core ganhou uma plataforma WhatsApp nativa (`hermes_plugins.whatsapp_platform`) que descobre, sobe e monitora o processo Node.js da ponte automaticamente — em vez deste plugin gerenciar seu próprio subprocesso. O `bridge.js` deste repositório continua sendo o código que roda; o Hermes só assumiu o ciclo de vida do processo (spawn, pidfile, restart em crash), eliminando o container duplicado e o erro de desconexão `440 conflict / replaced`.
 - **Roteamento Nativo por Perfis (`default` vs `whatsapp`):**
   - **`SelfChat` (Perfil: `default`):** Acesso à persona executiva (`SOUL.md`), histórico completo, comandos de controle e **todas as ferramentas ativas** (código, terminal, busca web, mídias).
   - **Clientes/Contatos (Perfil: `whatsapp`):** Persona de suporte (`SOUL_WHATSAPP.md` + `support_rules.md`), respostas baseadas nas regras de negócio e **todas as ferramentas desativadas por padrão (`toolsets: []`)** com firewall de execução no backend.
@@ -41,18 +41,32 @@ Plugin **`whatsapp-manager`** para o [Hermes Agent v2026](https://github.com/nou
 ## 📐 Arquitetura do Container
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Container Único: hermes (nousresearch/hermes-agent)    │
-│  ├─ Hermes Gateway (Porta 9119 — Dashboard/REST API)     │
-│  ├─ Microprocesso Baileys Node.js (Porta 3000 interna)   │
-│  ├─ Plugin whatsapp-manager (Python Hooks)               │
-│  └─ Isolation Profiles:                                  │
-│     ├─ /profiles/default/   → Dono (Full Tools + SOUL)   │
-│     └─ /profiles/whatsapp/  → Clientes (No Tools + Prompt)│
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Container Único: hermes (nousresearch/hermes-agent)            │
+│  ├─ Hermes Gateway (Porta 9119 — Dashboard/REST API)             │
+│  ├─ hermes_plugins.whatsapp_platform (NATIVO, core >= v0.19)     │
+│  │    └─ descobre, sobe e monitora o processo Node abaixo        │
+│  ├─ Microprocesso Baileys Node.js (bridge.js deste repo, :3000)  │
+│  ├─ Plugin whatsapp-manager (Python Hooks — regras de negócio)   │
+│  └─ Isolation Profiles:                                          │
+│     ├─ /profiles/default/   → Dono (Full Tools + SOUL)           │
+│     └─ /profiles/whatsapp/  → Clientes (No Tools + Prompt)       │
+└──────────────────────────────────────────────────────────────────┘
+
+Quem faz o quê:
+  - whatsapp-manager (este repo) → instala o bridge.js no volume, registra
+    os hooks pre_gateway_dispatch/pre_llm_call/post_llm_call/pre_tool_call
+    (toda a lógica de negócio: classificação de contato, personas, sync).
+  - hermes_plugins.whatsapp_platform (core do Hermes) → dono do ciclo de
+    vida do processo Node: spawn, pidfile com detecção de PID reciclado,
+    restart automático em crash, e o parsing de mensagens recebidas.
+  - O plugin NÃO spawna mais o bridge.js diretamente — só o entrega no
+    caminho convencional para o core encontrar e gerenciar.
 
 Volume Compartilhado: /opt/data
   ├─ .hermes/plugins/whatsapp-manager/   → Código do plugin
+  ├─ .hermes/platforms/whatsapp/bridge/  → bridge.js (gerenciado pelo core)
+  ├─ .hermes/platforms/whatsapp/session/ → Sessão Baileys (creds, chaves)
   ├─ .hermes/profiles/whatsapp/          → Config e SOUL de clientes
   ├─ .hermes/profiles/default/           → Config e SOUL do dono
   ├─ .hermes/whatsapp_messages.db        → Histórico raw (bridge)
@@ -61,6 +75,8 @@ Volume Compartilhado: /opt/data
   ├─ support_rules.md                    → Base de conhecimento (clientes)
   └─ SOUL_WHATSAPP.md                    → Persona e estilo de escrita
 ```
+
+> Detalhe de compatibilidade: o Hermes Agent v0.19+ também ganhou uma plataforma WhatsApp **totalmente nativa** (`plugins/platforms/whatsapp/` no core), com endpoints próprios de polls (`/send-poll`) e localização (`/send-location`). Neste projeto, o core detecta e reaproveita o `bridge.js` deste repo em vez de subir a implementação nativa — este `bridge.js` já implementa os dois endpoints (`POST /send-poll`, `POST /send-location`), com os métodos equivalentes `send_poll()`/`send_location()` expostos em `adapter.py`.
 
 ---
 

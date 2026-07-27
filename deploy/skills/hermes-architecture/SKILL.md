@@ -54,11 +54,23 @@ WHATSAPP_BRIDGE_PORT=18732
 
 **Importante:** O `bridge.js` está em `/opt/data/.hermes/` (persistente), NÃO em `/opt/hermes/scripts/` (efêmero). O bridge sobrevive a rebuilds do container porque foi instalado/copiado para o volume persistente.
 
+**⚠️ Desde o Hermes Agent v0.19 ("Quicksilver"): quem sobe e monitora o processo mudou.**
+O core ganhou uma plataforma WhatsApp nativa (`hermes_plugins.whatsapp_platform`, logger `hermes_plugins.whatsapp_platform.adapter`). Ela é quem faz `node bridge.js --port 3000 --session <path> --mode bot`, escreve o pidfile (`bridge.pid`, com PID + horário de início do processo para detectar PID reciclado) e reinicia em crash. O `register()` do `whatsapp_manager.py` **não spawna mais o processo** — só copia `bridge.js`/`package.json` para o caminho convencional e cria o symlink de compatibilidade `whatsapp/session` → `platforms/whatsapp/session`.
+
+Confirmar isso no log é fácil — procure por linhas assim:
+```
+INFO hermes_plugins.whatsapp_platform.adapter: [Whatsapp] Bridge found at /opt/data/.hermes/platforms/whatsapp/bridge/bridge.js
+```
+Se aparecer, é o core nativo controlando o bridge.js deste projeto (comportamento esperado, não é conflito).
+
 **Verificação:**
 ```bash
 python3 -c "import os; [print(k,'=',v) for k,v in os.environ.items() if 'WHATSAPP' in k.upper()]"
-ps aux | grep bridge | grep -v grep
+ps -eo pid,etime,cmd | grep -i 'node.*bridge' | grep -v grep
+curl -s http://127.0.0.1:3000/whatsapp/status   # teste funcional direto, não depende do core
 ```
+
+**Recursos nativos do core v0.19 (polls e localização):** implementados no `bridge.js` deste projeto como `POST /send-poll` e `POST /send-location`, com `send_poll()`/`send_location()` correspondentes em `adapter.py`. Ver README.md, seção "Arquitetura do Container", para o detalhe.
 
 ---
 
@@ -218,10 +230,14 @@ cat /opt/data/.hermes/auth.json | python3 -c "import json,sys; d=json.load(sys.s
 ### Fluxo do WhatsApp
 
 ```
+0. hermes_plugins.whatsapp_platform (core, v0.19+) sobe e monitora o
+   processo Node do bridge.js deste repo — ciclo de vida do processo,
+   não da lógica de negócio.
 1. Usuario envia mensagem no WhatsApp
 2. Bridge Node.js (/opt/data/.hermes/platforms/whatsapp/bridge/bridge.js) recebe
 3. Bridge faz polling no WhatsApp via Baileys
-4. Mensagem enviada ao gateway Hermes
+4. Mensagem enviada ao gateway Hermes, que dispara os hooks do plugin
+   whatsapp-manager (pre_gateway_dispatch → pre_llm_call → post_llm_call)
 5. Gateway carrega SOUL_whatsapp.md (persona do André, 1ª pessoa singular)
 6. MiniMax processa e retorna resposta
 7. Gateway envia via bridge → WhatsApp

@@ -1467,7 +1467,12 @@ function isSystemError(message) {
       lowercaseMsg.includes('waiting for model response') ||
       lowercaseMsg.includes('iteration budget') ||
       lowercaseMsg.includes('asking model to') ||
-      lowercaseMsg.includes('budget exhausted')) {
+      lowercaseMsg.includes('budget exhausted') ||
+      lowercaseMsg.includes('session automatically reset') ||
+      lowercaseMsg.includes('conversation history cleared') ||
+      trimmedMessage.includes('◆ Model:') ||
+      trimmedMessage.includes('◆ Provider:') ||
+      trimmedMessage.includes('◆ Context:')) {
     return true;
   }
 
@@ -1724,6 +1729,62 @@ messagingRouter.post('/send-media', async (req, res) => {
 
     trackSentMessageId(sent);
 
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send a poll (native tap-to-vote message, up to 12 options per WhatsApp's own limit)
+messagingRouter.post('/send-poll', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, name, values, selectableCount } = req.body;
+  if (!chatId || !name || !Array.isArray(values) || values.length < 2) {
+    return res.status(400).json({ error: 'chatId, name, and at least 2 values are required' });
+  }
+  if (values.length > 12) {
+    return res.status(400).json({ error: 'values must have at most 12 options (WhatsApp limit)' });
+  }
+
+  try {
+    const sent = await sendWithTimeout(chatId, {
+      poll: {
+        name,
+        values,
+        selectableCount: Number.isInteger(selectableCount) && selectableCount > 1 ? selectableCount : 1,
+      },
+    });
+    trackSentMessageId(sent);
+    res.json({ success: true, messageId: sent?.key?.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send a location pin
+messagingRouter.post('/send-location', async (req, res) => {
+  if (!sock || connectionState !== 'connected') {
+    return res.status(503).json({ error: 'Not connected to WhatsApp' });
+  }
+
+  const { chatId, latitude, longitude, name, address } = req.body;
+  if (!chatId || typeof latitude !== 'number' || typeof longitude !== 'number') {
+    return res.status(400).json({ error: 'chatId, latitude and longitude (numbers) are required' });
+  }
+
+  try {
+    const sent = await sendWithTimeout(chatId, {
+      location: {
+        degreesLatitude: latitude,
+        degreesLongitude: longitude,
+        name: name || undefined,
+        address: address || undefined,
+      },
+    });
+    trackSentMessageId(sent);
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {
     res.status(500).json({ error: err.message });

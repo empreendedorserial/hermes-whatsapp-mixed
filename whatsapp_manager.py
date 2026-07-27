@@ -5754,14 +5754,35 @@ def register(ctx):
                             logger.info(f"✓ Repositório privado '{repo_user}/{repo_name}' já existe no GitHub.")
                 except urllib.error.HTTPError as e:
                     if e.code == 404:
-                        logger.warning(f"Repositório '{repo_user}/{repo_name}' não existe. Tentando criar automaticamente...")
+                        # POST /user/repos só cria na conta pessoal dona do token — nunca dentro
+                        # de uma organização. Se repo_user não for o próprio dono do token,
+                        # criar via POST /orgs/{repo_user}/repos em vez disso.
                         create_url = "https://api.github.com/user/repos"
+                        try:
+                            whoami_req = urllib.request.Request("https://api.github.com/user")
+                            whoami_req.add_header("Authorization", f"token {config_token}")
+                            whoami_req.add_header("Accept", "application/vnd.github+json")
+                            whoami_req.add_header("User-Agent", "Hermes-Agent-Plugin")
+                            with urllib.request.urlopen(whoami_req, timeout=10) as whoami_resp:
+                                token_owner = json.loads(whoami_resp.read().decode("utf-8")).get("login", "")
+                            if token_owner and token_owner.lower() != repo_user.lower():
+                                create_url = f"https://api.github.com/orgs/{repo_user}/repos"
+                        except Exception as whoami_err:
+                            logger.warning(
+                                f"Não foi possível confirmar o dono do CONFIG_GITHUB_TOKEN "
+                                f"({whoami_err}); assumindo criação em conta pessoal."
+                            )
+
                         create_data = json.dumps({
                             "name": repo_name,
                             "private": True,
                             "description": "Hermes Configuration Repository",
                             "auto_init": True
                         }).encode("utf-8")
+                        logger.warning(
+                            f"Repositório '{repo_user}/{repo_name}' não existe. "
+                            f"Tentando criar via {create_url} (esperado: '{repo_user}/{repo_name}')..."
+                        )
 
                         create_req = urllib.request.Request(create_url, data=create_data, method="POST")
                         create_req.add_header("Authorization", f"token {config_token}")
@@ -5772,7 +5793,19 @@ def register(ctx):
                         try:
                             with urllib.request.urlopen(create_req, timeout=10) as create_resp:
                                 if create_resp.status in [200, 201]:
-                                    logger.info(f"✓ Repositório privado '{repo_user}/{repo_name}' criado com sucesso no GitHub!")
+                                    created = json.loads(create_resp.read().decode("utf-8"))
+                                    actual_full_name = created.get("full_name", "?")
+                                    actual_html_url = created.get("html_url", "?")
+                                    mismatch = (
+                                        " ⚠️ ATENÇÃO: caiu em local diferente do esperado "
+                                        f"('{repo_user}/{repo_name}') — provavelmente '{repo_user}' é uma "
+                                        "organização e o token não tem permissão de criar repos nela."
+                                        if actual_full_name.lower() != f"{repo_user}/{repo_name}".lower()
+                                        else ""
+                                    )
+                                    logger.info(
+                                        f"✓ Repositório criado no GitHub: '{actual_full_name}' ({actual_html_url}).{mismatch}"
+                                    )
                                     time.sleep(3) # Aguarda o GitHub provisionar o branch main
 
                                     raw_base = "https://raw.githubusercontent.com/empreendedorserial/hermes-whatsapp-mixed/main/deploy"
@@ -5781,10 +5814,26 @@ def register(ctx):
                                     commit_file_to_repo(repo_user, repo_name, config_token, "/opt/data/SOUL_EMAIL.md", "SOUL_EMAIL.md", f"{raw_base}/SOUL_EMAIL.md")
                                     commit_file_to_repo(repo_user, repo_name, config_token, "/opt/data/support_rules.md", "support_rules.md", f"{raw_base}/support_rules.md")
                                     commit_file_to_repo(repo_user, repo_name, config_token, "/opt/data/personal_contacts.json", "personal_contacts.json", f"{raw_base}/personal_contacts.json.example")
+                        except urllib.error.HTTPError as create_err:
+                            try:
+                                error_body = create_err.read().decode("utf-8")
+                            except Exception:
+                                error_body = "(sem corpo de resposta)"
+                            logger.error(
+                                f"Falha ao criar repositório '{repo_user}/{repo_name}' via {create_url} "
+                                f"(HTTP {create_err.code}): {error_body}"
+                            )
                         except Exception as create_err:
-                            logger.error(f"Erro ao criar repositório: {create_err}")
+                            logger.error(
+                                f"Erro inesperado ao criar repositório '{repo_user}/{repo_name}' via {create_url}: {create_err}"
+                            )
+                    else:
+                        logger.error(
+                            f"Erro ao verificar repositório '{repo_user}/{repo_name}' no GitHub "
+                            f"(HTTP {e.code}): {e}"
+                        )
                 except Exception as check_err:
-                    logger.error(f"Erro ao verificar repositório no GitHub: {check_err}")
+                    logger.error(f"Erro ao verificar repositório '{repo_user}/{repo_name}' no GitHub: {check_err}")
         except Exception as repo_err:
             logger.error(f"Erro no processo automático de configuração de repositório: {repo_err}")
 
