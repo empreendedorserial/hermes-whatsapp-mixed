@@ -1,13 +1,14 @@
 # ==============================================================================
 # 📋 STACK: HERMES AGENT  (Swarm / Portainer)
 # ==============================================================================
-# Dois containers:
-#   hermes          — agente principal (LLM gateway + API REST + Dashboard)
-#   whatsapp-bridge — processo Node.js que mantém a sessão WhatsApp via Baileys
+# Container único: o Hermes gerencia o processo da ponte WhatsApp (bridge.js)
+# internamente como subprocesso, expondo-o em 127.0.0.1:3000 dentro do próprio
+# container (WHATSAPP_BRIDGE_URL=http://127.0.0.1:3000). Não há container
+# whatsapp-bridge separado nesta stack.
 #
-# O container hermes sobe um micro-proxy TCP na porta 127.0.0.1:3000 que
-# redireciona tráfego para whatsapp-bridge:3000, permitindo que o plugin
-# interno use WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:3000 via rede Docker.
+# Requer Docker Swarm ativo (não funciona com `docker compose up` simples —
+# usa o bloco `deploy:`, ignorado fora do modo Swarm). Para um único host
+# Docker sem Swarm, use deploy/docker-compose.easypanel.yml como base.
 #
 # Volume compartilhado: hermes_agent_hermes_data_v5 → /opt/data
 #   /opt/data/.hermes/plugins/  → plugins carregados pelo gateway
