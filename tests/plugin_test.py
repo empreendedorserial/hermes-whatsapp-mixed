@@ -1692,6 +1692,217 @@ class TestPendingContactUpdate(BaseWhatsAppManagerTest):
         mock_update.assert_called()
 
 
+class TestProductCatalog(BaseWhatsAppManagerTest):
+    """Testes para o catálogo de produtos/serviços: cadastro/edição/remoção via chat com confirmação."""
+
+    SENDER_ID = "5511999999999@s.whatsapp.net"
+
+    def setUp(self):
+        super().setUp()
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action.clear()
+
+    def tearDown(self):
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action.clear()
+        super().tearDown()
+
+    def _make_event(self, text):
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = self.SENDER_ID
+        event.source.chat_id = self.SENDER_ID
+        event.text = text
+        event.has_media = False
+        return event
+
+    def _make_gateway(self):
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "sess_catalog"
+        gateway._session_model_overrides = {}
+        return gateway
+
+    def _dispatch(self, text):
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        return pre_dispatch("pre_gateway_dispatch", {"event": self._make_event(text), "gateway": self._make_gateway()})
+
+    @patch("whatsapp_manager._extract_catalog_item_via_llm", return_value={
+        "name": "Mentoria Individual", "description": "1h por semana", "price": "R$ 500",
+    })
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_add", "intent": "cadastrar mentoria",
+    })
+    @patch("urllib.request.urlopen")
+    def test_catalog_add_creates_pending_draft(self, mock_urlopen, mock_intent, mock_extract):
+        """Pedido de cadastro guarda o rascunho como pendência e pede confirmação — não salva ainda."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._save_product_catalog") as mock_save:
+            res = self._dispatch("adiciona um produto: mentoria individual, R$ 500, 1h por semana")
+            mock_save.assert_not_called()
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-add-draft"})
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["action"], "add")
+        self.assertEqual(pending["item"]["name"], "Mentoria Individual")
+
+    @patch("whatsapp_manager._save_product_catalog")
+    @patch("whatsapp_manager._load_product_catalog", return_value={})
+    @patch("urllib.request.urlopen")
+    def test_catalog_add_confirm_saves_item(self, mock_urlopen, mock_load, mock_save):
+        """Responder 'sim' à pendência de cadastro salva o produto e limpa a pendência."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "add",
+            "item": {"name": "Mentoria Individual", "description": "1h por semana", "price": "R$ 500"},
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("sim")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        self.assertNotIn(self.SENDER_ID, whatsapp_manager._pending_catalog_action)
+        mock_save.assert_called_once()
+        saved_catalog = mock_save.call_args[0][0]
+        saved_item = next(iter(saved_catalog.values()))
+        self.assertEqual(saved_item["name"], "Mentoria Individual")
+        self.assertTrue(saved_item["active"])
+
+    @patch("whatsapp_manager._save_product_catalog")
+    @patch("urllib.request.urlopen")
+    def test_catalog_add_cancel_discards_draft(self, mock_urlopen, mock_save):
+        """Responder 'não' cancela e não grava nada."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "add",
+            "item": {"name": "Mentoria Individual"},
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("não")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        self.assertNotIn(self.SENDER_ID, whatsapp_manager._pending_catalog_action)
+        mock_save.assert_not_called()
+
+    @patch("whatsapp_manager._extract_catalog_update_via_llm", return_value={"price": "R$ 550"})
+    @patch("whatsapp_manager._find_catalog_matches", return_value=[
+        ("mentoria-individual", {"name": "Mentoria Individual", "price": "R$ 500"}),
+    ])
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_update", "product_identifier": "mentoria", "intent": "editar preço",
+    })
+    @patch("urllib.request.urlopen")
+    def test_catalog_update_single_match_asks_confirmation(self, mock_urlopen, mock_intent, mock_find, mock_extract):
+        """Match único vai direto para confirmação, sem desambiguação."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("muda o preço da mentoria pra 550")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-update-draft"})
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["action"], "update")
+        self.assertEqual(pending["key"], "mentoria-individual")
+        self.assertEqual(pending["changes"], {"price": "R$ 550"})
+
+    @patch("whatsapp_manager._find_catalog_matches", return_value=[
+        ("consultoria-marketing", {"name": "Consultoria de Marketing"}),
+        ("consultoria-financeira", {"name": "Consultoria Financeira"}),
+    ])
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_remove", "product_identifier": "consultoria", "intent": "remover consultoria",
+    })
+    @patch("urllib.request.urlopen")
+    def test_catalog_ambiguous_match_asks_disambiguation(self, mock_urlopen, mock_intent, mock_find):
+        """Múltiplos produtos batendo com o nome pedem desambiguação antes de confirmar."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("remove o produto consultoria")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-remove-draft"})
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["type"], "disambiguate")
+        self.assertEqual(len(pending["candidates"]), 2)
+
+    @patch("whatsapp_manager._save_product_catalog")
+    @patch("whatsapp_manager._load_product_catalog", return_value={
+        "mentoria-individual": {"name": "Mentoria Individual", "active": True},
+    })
+    @patch("urllib.request.urlopen")
+    def test_catalog_remove_confirm_marks_inactive_not_deleted(self, mock_urlopen, mock_load, mock_save):
+        """Confirmar remoção marca active=False em vez de apagar a entrada."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "remove", "key": "mentoria-individual",
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("sim")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        saved_catalog = mock_save.call_args[0][0]
+        self.assertFalse(saved_catalog["mentoria-individual"]["active"])
+        self.assertIn("mentoria-individual", saved_catalog)
+
+    @patch("whatsapp_manager._classify_owner_intent", return_value={"intent_type": "other", "intent": "papo qualquer"})
+    @patch("urllib.request.urlopen")
+    def test_expired_pending_is_discarded(self, mock_urlopen, mock_intent):
+        """Pendência mais velha que o TTL é descartada em vez de aplicada."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "add",
+            "item": {"name": "Produto Antigo"},
+            "created_at": whatsapp_manager.time.time() - whatsapp_manager._PENDING_CATALOG_TTL_S - 1,
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        self._dispatch("sim")
+
+        self.assertNotIn(self.SENDER_ID, whatsapp_manager._pending_catalog_action)
+
+    def test_build_catalog_context_block_only_lists_active_items(self):
+        """Bloco de contexto injetado no prompt só inclui itens ativos."""
+        import whatsapp_manager
+        with patch("whatsapp_manager._load_product_catalog", return_value={
+            "a": {"name": "Produto Ativo", "price": "R$ 100", "active": True},
+            "b": {"name": "Produto Inativo", "price": "R$ 200", "active": False},
+        }):
+            block = whatsapp_manager._build_catalog_context_block()
+        self.assertIn("Produto Ativo", block)
+        self.assertNotIn("Produto Inativo", block)
+
+    def test_find_catalog_matches_exact_takes_priority_over_partial(self):
+        """Match exato retorna sozinho, mesmo se outros itens batem parcialmente."""
+        import whatsapp_manager
+        with patch("whatsapp_manager._load_product_catalog", return_value={
+            "consultoria": {"name": "Consultoria"},
+            "consultoria-vip": {"name": "Consultoria VIP"},
+        }):
+            matches = whatsapp_manager._find_catalog_matches("Consultoria")
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0][1]["name"], "Consultoria")
+
+
 class TestFullSummaryFunctions(BaseWhatsAppManagerTest):
     """Testes para _update_full_summary, _compress_full_summary e _sync_full_summaries."""
 

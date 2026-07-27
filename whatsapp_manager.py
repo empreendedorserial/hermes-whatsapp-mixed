@@ -253,6 +253,11 @@ _pending_contact_update: dict[str, dict] = {}
 # Último cartão de contato compartilhado pelo owner: { sender_id -> {name, phone} }
 _pending_contact_card: dict[str, dict] = {}
 
+# Ação de catálogo (produto/serviço) pendente de confirmação sim/não do owner:
+# { sender_id -> {action: add|update|remove, key, item|changes, created_at, [type=disambiguate, candidates, raw_message]} }
+_pending_catalog_action: dict[str, dict] = {}
+_PENDING_CATALOG_TTL_S: int = 600  # 10 minutos
+
 # Cache TTL para _check_bot_paused() — evita HTTP a cada mensagem
 _BOT_STATUS_TTL_S: int = int(os.getenv("WHATSAPP_BOT_STATUS_TTL_S", "5"))
 _bot_status_cache: dict = {"paused": False, "ts": 0.0}
@@ -868,7 +873,7 @@ def _classify_owner_intent(message: str) -> dict:
 
     prompt = (
         "Você é um classificador de intenções para um assistente de WhatsApp.\n"
-        "Analise a mensagem e classifique em UMA das quatro categorias:\n\n"
+        "Analise a mensagem e classifique em UMA das sete categorias:\n\n"
         "1. ATUALIZAÇÃO DE CONTATO — usuário quer mudar dados de um contato:\n"
         "   Ex: 'coloque a Mayra como namorada', 'cadastre apelido Pedro como Pedrinho'\n\n"
         "2. STATUS DO DONO — usuário informa onde está ou o que vai fazer, com ou sem horário:\n"
@@ -876,7 +881,13 @@ def _classify_owner_intent(message: str) -> dict:
         "       'já voltei', 'cancelar status', 'to livre agora'\n\n"
         "3. CONSULTA DE STATUS — usuário quer saber qual é o status ativo dele:\n"
         "   Ex: 'qual meu status?', 'qual o meu status atual?', 'tem algum status ativo?'\n\n"
-        "4. OUTRO — qualquer outra coisa\n\n"
+        "4. CADASTRAR PRODUTO/SERVIÇO — usuário quer adicionar um produto/serviço NOVO ao catálogo:\n"
+        "   Ex: 'adiciona um produto: mentoria individual, R$ 500', 'cadastra o serviço de consultoria'\n\n"
+        "5. EDITAR PRODUTO/SERVIÇO — usuário quer mudar dados de um produto/serviço JÁ existente:\n"
+        "   Ex: 'muda o preço da mentoria pra 550', 'atualiza a descrição da consultoria'\n\n"
+        "6. REMOVER PRODUTO/SERVIÇO — usuário quer tirar um produto/serviço do catálogo:\n"
+        "   Ex: 'remove o produto mentoria individual', 'tira a consultoria do catálogo'\n\n"
+        "7. OUTRO — qualquer outra coisa\n\n"
         f"Data/hora atual: {now_str}\n"
         f"Mensagem: \"{clean_msg}\"\n\n"
         "Retorne APENAS JSON:\n"
@@ -892,6 +903,12 @@ def _classify_owner_intent(message: str) -> dict:
         "  (se for 'já voltei'/'cancelar status'/'to livre': {\"intent_type\": \"set_status\", \"is_clear\": true, \"intent\": \"limpando status\"})\n"
         "Se for consulta de status:\n"
         "  {\"intent_type\": \"query_status\", \"intent\": \"consultar status ativo\"}\n"
+        "Se for cadastrar produto/serviço:\n"
+        "  {\"intent_type\": \"catalog_add\", \"intent\": \"resumo 5 palavras\"}\n"
+        "Se for editar produto/serviço:\n"
+        "  {\"intent_type\": \"catalog_update\", \"product_identifier\": \"nome do produto a editar\", \"intent\": \"resumo 5 palavras\"}\n"
+        "Se for remover produto/serviço:\n"
+        "  {\"intent_type\": \"catalog_remove\", \"product_identifier\": \"nome do produto a remover\", \"intent\": \"resumo 5 palavras\"}\n"
         "Se for outro:\n"
         "  {\"intent_type\": \"other\", \"intent\": \"resumo 5 palavras\"}\n"
     )
@@ -3605,6 +3622,32 @@ def _pull_and_merge_configurations():
         except Exception as e:
             logger.error(f"Erro ao salvar personal_contacts.json mesclado: {e}")
 
+    # 3. Sincronizar product_catalog.json (merge — mesmo critério de personal_contacts.json)
+    local_catalog = _load_product_catalog()
+    remote_catalog = None
+    try:
+        req = urllib.request.Request(f"{config_base_url}/product_catalog.json")
+        if config_token:
+            req.add_header("Authorization", f"token {config_token}")
+        req.add_header("User-Agent", "Hermes-Agent-Plugin")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            remote_catalog = json.loads(response.read().decode("utf-8"))
+            logger.info("✓ product_catalog.json remoto carregado com sucesso.")
+    except Exception as e:
+        logger.warning(f"Não foi possível baixar product_catalog.json do GitHub: {e}")
+
+    if remote_catalog is not None:
+        merged_catalog = dict(remote_catalog)
+        for k, v in local_catalog.items():
+            if k not in merged_catalog:
+                merged_catalog[k] = v
+        try:
+            with open(str(_PRODUCT_CATALOG_PATH), "w", encoding="utf-8") as f:
+                json.dump(merged_catalog, f, indent=2, ensure_ascii=False)
+            logger.info("✓ Catálogo de produtos mesclado localmente.")
+        except Exception as e:
+            logger.error(f"Erro ao salvar product_catalog.json mesclado: {e}")
+
 
 def _sanitize_contacts_keys(contacts: dict) -> dict:
     """Remove entradas com chave inválida (número vazio ou muito curto)."""
@@ -3946,6 +3989,192 @@ def _load_personal_contacts() -> dict:
     return {}
 
 
+_PRODUCT_CATALOG_PATH = Path("/opt/data/product_catalog.json")
+
+
+def _slugify_catalog_name(name: str) -> str:
+    """Gera uma chave estável a partir do nome do produto (sem acento, minúsculo, hífens)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", _normalize_text(name).strip()).strip("-")
+    return slug or "produto"
+
+
+def _load_product_catalog() -> dict:
+    """Carrega product_catalog.json. Retorna {} se não existir ou estiver corrompido."""
+    try:
+        if _PRODUCT_CATALOG_PATH.exists():
+            with open(str(_PRODUCT_CATALOG_PATH), "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Erro ao carregar product_catalog.json: {e}")
+    return {}
+
+
+def _save_product_catalog(catalog: dict) -> None:
+    """Salva product_catalog.json localmente e sincroniza com o GitHub em background."""
+    try:
+        with open(str(_PRODUCT_CATALOG_PATH), "w", encoding="utf-8") as f:
+            json.dump(catalog, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        logger.error(f"Erro ao salvar product_catalog.json: {e}")
+        return
+
+    config_repo = config.config_repo
+    config_token = config.config_github_token
+    setup_user = config.hermes_setup_github_user
+    if not (config_repo and config_token):
+        return
+
+    def _push():
+        try:
+            if "/" in config_repo:
+                repo_user, repo_name = config_repo.split("/", 1)
+            else:
+                repo_user = setup_user or "empreendedorserial"
+                repo_name = config_repo
+            _github_put_file(
+                repo_user=repo_user,
+                repo_name=repo_name,
+                token=config_token,
+                github_path="product_catalog.json",
+                content=json.dumps(catalog, ensure_ascii=False, indent=2).encode("utf-8"),
+                commit_msg="Update product_catalog.json via WhatsApp",
+            )
+        except Exception as e:
+            logger.error(f"Erro ao sincronizar product_catalog.json com o GitHub: {e}")
+
+    threading.Thread(target=_push, daemon=True).start()
+
+
+def _find_catalog_matches(identifier: str) -> list[tuple[str, dict]]:
+    """Retorna [(key, item), ...] cujo nome bate com identifier (exato tem prioridade e é inequívoco)."""
+    catalog = _load_product_catalog()
+    id_norm = _normalize_text(identifier)
+    matches: list[tuple[str, dict]] = []
+    for key, item in catalog.items():
+        name_norm = _normalize_text(item.get("name", ""))
+        if id_norm == name_norm:
+            return [(key, item)]
+        if name_norm and id_norm in name_norm:
+            matches.append((key, item))
+    return matches
+
+
+def _format_catalog_item(item: dict, changes: dict | None = None) -> str:
+    """Formata um item do catálogo para exibição ao owner, com diff opcional (valor atual → novo)."""
+    lines = [f"Nome: {item.get('name', '')}"]
+    for field, label in (("description", "Descrição"), ("price", "Preço")):
+        current = item.get(field) or "—"
+        if changes and field in changes:
+            lines.append(f"{label}: {current} → {changes[field]}")
+        else:
+            lines.append(f"{label}: {current}")
+    return "\n".join(lines)
+
+
+def _build_catalog_context_block() -> str:
+    """Monta o bloco de contexto do catálogo (apenas itens ativos) para injetar no prompt do LLM."""
+    catalog = _load_product_catalog()
+    active_items = [item for item in catalog.values() if item.get("active", True)]
+    if not active_items:
+        return ""
+    lines = ["### CATÁLOGO DE PRODUTOS E SERVIÇOS ###"]
+    for item in active_items:
+        line = f"- {item.get('name', '')}"
+        if item.get("price"):
+            line += f" ({item['price']})"
+        if item.get("description"):
+            line += f": {item['description']}"
+        lines.append(line)
+    return "\n".join(lines) + "\n\n"
+
+
+def _catalog_llm_call(prompt: str, timeout: int = 15) -> str | None:
+    """Chama o primeiro provider de LLM disponível (Google → OpenAI → OpenRouter), mesma cadeia
+    usada pelos outros extratores de campos do plugin."""
+    google_key = config.google_api_key
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    classify_model = config.whatsapp_contact_classifier_model
+    model_name = classify_model or "gemini-3.1-flash-lite"
+
+    for key, url, headers, make_payload, extract_fn in [
+        (google_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_key}",
+         {"Content-Type": "application/json"},
+         lambda p: {"contents": [{"parts": [{"text": p}]}], "generationConfig": {"maxOutputTokens": 256}},
+         lambda r: r["candidates"][0]["content"]["parts"][0]["text"]),
+        (openai_key,
+         "https://api.openai.com/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"},
+         lambda p: {"model": classify_model or "gpt-4o-mini", "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+        (openrouter_key,
+         "https://openrouter.ai/api/v1/chat/completions",
+         {"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"},
+         lambda p: {"model": classify_model or "google/gemini-flash-1.5-8b", "messages": [{"role": "user", "content": p}]},
+         lambda r: r["choices"][0]["message"]["content"]),
+    ]:
+        if not key:
+            continue
+        text_content = _call_llm_api(url, headers, make_payload(prompt), extract_fn, timeout=timeout)
+        if text_content:
+            return text_content
+    return None
+
+
+def _extract_catalog_item_via_llm(message: str) -> dict:
+    """Extrai name/description/price de uma mensagem em linguagem natural para um NOVO produto.
+
+    Retorna {} se não conseguir identificar um nome — nunca inventa descrição/preço não mencionados.
+    """
+    prompt = (
+        "O usuário (dono do negócio) quer cadastrar um produto ou serviço novo no catálogo, "
+        "a partir da seguinte mensagem:\n"
+        f"\"{message}\"\n\n"
+        "Extraia os campos e retorne APENAS JSON:\n"
+        "  {\"name\": \"nome do produto/serviço\", \"description\": \"descrição curta ou null\", "
+        "\"price\": \"preço como texto (ex: 'R$ 500') ou null\"}\n"
+        "Se não houver um nome claro de produto/serviço, retorne {\"name\": null}.\n"
+        "NÃO invente descrição ou preço que não foram mencionados — use null.\n"
+    )
+    text_content = _catalog_llm_call(prompt)
+    if not text_content:
+        return {}
+    try:
+        result = _extract_json_from_text(text_content)
+        if not isinstance(result, dict) or not result.get("name"):
+            return {}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price") and v is not None}
+    except Exception as e:
+        logger.info(f"[catalog-extract] Erro ao parsear JSON de cadastro: {e} — raw: {repr(text_content)[:200]}")
+        return {}
+
+
+def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
+    """Extrai SOMENTE os campos (name/description/price) explicitamente mencionados para edição."""
+    prompt = (
+        f"O usuário pediu para editar o produto/serviço '{product_name}' com a seguinte instrução:\n"
+        f"\"{message}\"\n\n"
+        "Extraia SOMENTE os campos explicitamente mencionados para alteração e retorne JSON.\n"
+        "Campos permitidos: name, description, price.\n"
+        "NÃO invente valores. Se um campo não foi mencionado, não o inclua no JSON.\n"
+        "Exemplos:\n"
+        "  'muda o preço pra 350' → {\"price\": \"R$ 350\"}\n"
+        "  'atualiza a descrição: agora inclui suporte por 30 dias' → {\"description\": \"agora inclui suporte por 30 dias\"}\n"
+    )
+    text_content = _catalog_llm_call(prompt)
+    if not text_content:
+        return {}
+    try:
+        result = _extract_json_from_text(text_content)
+        if not isinstance(result, dict):
+            return {}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price") and v is not None}
+    except Exception as e:
+        logger.info(f"[catalog-extract] Erro ao parsear JSON de edição: {e} — raw: {repr(text_content)[:200]}")
+        return {}
+
+
 def _datetime_context_block() -> str:
     """Retorna bloco com data/hora atual, dia da semana e tipo de dia para injetar no contexto do LLM."""
     from datetime import datetime as _dt
@@ -4088,6 +4317,7 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
             f"- NUNCA informe telefone, número, e-mail ou dados de contato de amigos, clientes ou qualquer pessoa da agenda do {owner_name}.\n"
             "- NUNCA exiba representações de ferramentas como '📖 read_file: ...' ou 'terminal'."
             f"{(chr(10) + chr(10) + '### REFERÊNCIA DE PRODUTOS E NEGÓCIOS DO ANDRÉ ###' + chr(10) + 'Use apenas se o contato perguntar sobre produtos, preços, serviços ou negócios. Caso contrário, ignore completamente.' + chr(10) + rules_content) if rules_content else ''}"
+            f"{chr(10)}{_build_catalog_context_block()}"
         )
     }
 
@@ -4164,6 +4394,7 @@ def _build_support_prompt(
             f"{contact_block}"
             "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
             f"{rules_content}\n\n"
+            f"{_build_catalog_context_block()}"
             f"{_owner_status_context_block(reveal_status=False)}"
             f"{history_section}"
             "REGRAS DE FORMATO — sem exceção:\n"
@@ -4723,6 +4954,12 @@ def pre_gateway_dispatch(*args, **kwargs):
             "• Comando direto: `update contact <nome> campo=valor`\n"
             "  Campos: `relationship`, `nickname`, `notes`, `tone`, `guidelines`\n"
             "  Relacionamentos: `Amigo`, `AmigoProximo`, `Parente`, `Filho`, `Cliente`, `Vendedor`\n\n"
+            "*🛒 CATÁLOGO DE PRODUTOS/SERVIÇOS*\n"
+            "• Cadastrar: _\"adiciona um produto: mentoria individual, R$ 500\"_\n"
+            "• Editar: _\"muda o preço da mentoria pra 550\"_\n"
+            "• Remover: _\"remove o produto mentoria individual\"_\n"
+            "• Toda ação pede confirmação (*sim*/*não*) antes de salvar\n"
+            "• O bot usa o catálogo pra responder clientes/amigos que perguntarem sobre produtos\n\n"
             "*🔍 CONSULTAR HISTÓRICO*\n"
             "• _\"o que a Isabel falou?\"_ — busca histórico real da conversa\n"
             "• _\"o que João me mandou ontem?\"_ — funciona com qualquer contato\n\n"
@@ -4783,6 +5020,96 @@ def pre_gateway_dispatch(*args, **kwargs):
                 logger.error(f"Erro ao enviar resposta update contact: {send_err}")
 
         return {"action": "skip", "reason": "update-contact-command"}
+
+    if is_owner:
+        pending_catalog = _pending_catalog_action.get(sender_id)
+        if pending_catalog and (time.time() - pending_catalog.get("created_at", 0) > _PENDING_CATALOG_TTL_S):
+            del _pending_catalog_action[sender_id]
+            pending_catalog = None
+
+        # Desambiguação: owner escolhe qual produto pelo número da lista
+        if pending_catalog and pending_catalog.get("type") == "disambiguate":
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            m = re.match(r"^\s*(\d+)\s*$", msg_text.strip())
+            candidates = pending_catalog.get("candidates", [])
+            catalog_action = pending_catalog.get("action")
+            del _pending_catalog_action[sender_id]
+            idx = int(m.group(1)) - 1 if m else -1
+            if m and 0 <= idx < len(candidates):
+                key, item = candidates[idx]
+                if catalog_action == "remove":
+                    _pending_catalog_action[sender_id] = {"action": "remove", "key": key, "created_at": time.time()}
+                    reply = (
+                        f"📋 Confirma a remoção de \"{item.get('name')}\" do catálogo?\n"
+                        "(fica oculto pros clientes, mas não é apagado — dá pra reativar depois)\n\n"
+                        "Responda *sim* para remover ou *não* para cancelar."
+                    )
+                else:
+                    changes = _extract_catalog_update_via_llm(item.get("name", ""), pending_catalog.get("raw_message", ""))
+                    if not changes:
+                        reply = f"⚠️ Não consegui identificar o que alterar em \"{item.get('name')}\"."
+                    else:
+                        _pending_catalog_action[sender_id] = {"action": "update", "key": key, "changes": changes, "created_at": time.time()}
+                        reply = (
+                            f"📋 Confirma a alteração em \"{item.get('name')}\"?\n{_format_catalog_item(item, changes)}\n\n"
+                            "Responda *sim* para salvar ou *não* para cancelar."
+                        )
+            else:
+                reply = "❌ Escolha inválida. Operação cancelada."
+            if chat_id:
+                _human_send(chat_id, reply)
+            return {"action": "skip", "reason": "catalog-disambiguate"}
+
+        # Confirmação final (sim/não) de uma ação de catálogo pendente
+        if pending_catalog:
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            reply_norm = _normalize_text(msg_text.strip())
+            confirm_words = {"sim", "s", "confirma", "confirmar", "ok", "pode", "isso", "salva", "salvar", "correto", "certo"}
+            cancel_words = {"nao", "n", "cancela", "cancelar", "cancelado", "errado"}
+            if reply_norm in confirm_words:
+                del _pending_catalog_action[sender_id]
+                catalog = _load_product_catalog()
+                catalog_action = pending_catalog.get("action")
+                if catalog_action == "add":
+                    item = pending_catalog["item"]
+                    base_key = _slugify_catalog_name(item["name"])
+                    key, n = base_key, 2
+                    while key in catalog:
+                        key = f"{base_key}-{n}"
+                        n += 1
+                    item["active"] = True
+                    item["updated_at"] = time.time()
+                    catalog[key] = item
+                    _save_product_catalog(catalog)
+                    reply = f"✅ Produto \"{item['name']}\" cadastrado."
+                elif catalog_action == "update":
+                    key = pending_catalog["key"]
+                    if key in catalog:
+                        catalog[key].update(pending_catalog["changes"])
+                        catalog[key]["updated_at"] = time.time()
+                        _save_product_catalog(catalog)
+                        reply = f"✅ Produto \"{catalog[key]['name']}\" atualizado."
+                    else:
+                        reply = "❌ Esse produto não existe mais no catálogo."
+                elif catalog_action == "remove":
+                    key = pending_catalog["key"]
+                    if key in catalog:
+                        catalog[key]["active"] = False
+                        catalog[key]["updated_at"] = time.time()
+                        _save_product_catalog(catalog)
+                        reply = f"✅ Produto \"{catalog[key]['name']}\" removido do catálogo."
+                    else:
+                        reply = "❌ Esse produto não existe mais no catálogo."
+                else:
+                    reply = "❌ Ação pendente inválida."
+            elif reply_norm in cancel_words:
+                del _pending_catalog_action[sender_id]
+                reply = "❌ Operação cancelada."
+            else:
+                reply = "Responda *sim* para confirmar ou *não* para cancelar a operação pendente no catálogo."
+            if chat_id:
+                _human_send(chat_id, reply)
+            return {"action": "skip", "reason": "catalog-confirmation"}
 
     if is_owner:
         # Verificar se há pendência aguardando número e a mensagem atual é um número
@@ -4910,6 +5237,73 @@ def pre_gateway_dispatch(*args, **kwargs):
                 except Exception as e:
                     logger.error(f"[owner-status] Erro ao responder consulta: {e}")
             return {"action": "skip", "reason": "owner-status-query"}
+
+        # Cadastrar produto/serviço novo — extrai campos e pede confirmação antes de salvar
+        if intent_type == "catalog_add":
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            draft = _extract_catalog_item_via_llm(msg_text)
+            if not draft.get("name"):
+                reply = "⚠️ Não consegui identificar o nome do produto/serviço. Tente algo como: 'adiciona um produto: mentoria individual, R$ 500'."
+            else:
+                _pending_catalog_action[sender_id] = {
+                    "action": "add", "item": draft, "created_at": time.time(),
+                }
+                reply = (
+                    f"📋 Confirma o cadastro?\n{_format_catalog_item(draft)}\n\n"
+                    "Responda *sim* para salvar ou *não* para cancelar."
+                )
+            if chat_id:
+                _human_send(chat_id, reply)
+            return {"action": "skip", "reason": "catalog-add-draft"}
+
+        # Editar ou remover produto/serviço existente — identifica o item (com desambiguação) antes de confirmar
+        if intent_type in ("catalog_update", "catalog_remove"):
+            chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+            product_identifier = intent_result.get("product_identifier", "")
+            catalog_action = "update" if intent_type == "catalog_update" else "remove"
+            candidates = _find_catalog_matches(product_identifier) if product_identifier else []
+
+            if not candidates:
+                reply = (
+                    f"⚠️ Não encontrei \"{product_identifier}\" no catálogo. "
+                    "Quer que eu cadastre como produto novo? Se sim, descreva o produto novamente."
+                )
+            elif len(candidates) > 1:
+                _pending_catalog_action[sender_id] = {
+                    "type": "disambiguate", "action": catalog_action,
+                    "candidates": candidates, "raw_message": msg_text, "created_at": time.time(),
+                }
+                lines = [f"❓ Encontrei {len(candidates)} produtos com \"{product_identifier}\":"]
+                for i, (_, item) in enumerate(candidates, 1):
+                    lines.append(f"  {i}. {item.get('name', '')}")
+                lines.append("\nQual deles? (responda com o número)")
+                reply = "\n".join(lines)
+            else:
+                key, item = candidates[0]
+                if catalog_action == "remove":
+                    _pending_catalog_action[sender_id] = {
+                        "action": "remove", "key": key, "created_at": time.time(),
+                    }
+                    reply = (
+                        f"📋 Confirma a remoção de \"{item.get('name')}\" do catálogo?\n"
+                        "(fica oculto pros clientes, mas não é apagado — dá pra reativar depois)\n\n"
+                        "Responda *sim* para remover ou *não* para cancelar."
+                    )
+                else:
+                    changes = _extract_catalog_update_via_llm(item.get("name", ""), msg_text)
+                    if not changes:
+                        reply = f"⚠️ Não consegui identificar o que alterar em \"{item.get('name')}\"."
+                    else:
+                        _pending_catalog_action[sender_id] = {
+                            "action": "update", "key": key, "changes": changes, "created_at": time.time(),
+                        }
+                        reply = (
+                            f"📋 Confirma a alteração em \"{item.get('name')}\"?\n{_format_catalog_item(item, changes)}\n\n"
+                            "Responda *sim* para salvar ou *não* para cancelar."
+                        )
+            if chat_id:
+                _human_send(chat_id, reply)
+            return {"action": "skip", "reason": f"catalog-{catalog_action}-draft"}
 
         nl_contact_name = (intent_result.get("contact_identifier") or intent_result.get("contact_name")) if intent_result.get("is_update") else None
 
