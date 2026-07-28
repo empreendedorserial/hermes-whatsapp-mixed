@@ -79,6 +79,12 @@
 #   WHATSAPP_ALLOWED_USERS Números autorizados a interagir (padrão: * = todos)
 #   WHATSAPP_CONNECTION_NAME Nome da conexão exibido no Dashboard (padrão: EmpreendedorSerial)
 #
+# ⏳ DEBOUNCE DE MENSAGENS (agrupa fragmentos de texto antes de processar)
+#   WHATSAPP_DEBOUNCE_INITIAL_MS      Espera inicial em ms antes de processar (padrão: 15000)
+#   WHATSAPP_DEBOUNCE_MIN_MS          Piso do decaimento progressivo em ms (padrão: 2000)
+#   WHATSAPP_DEBOUNCE_DECAY           Fator de decaimento a cada fragmento novo (padrão: 0.6)
+#   WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT  Pular debounce no self-chat do dono (padrão: true)
+#
 # 🔑 GOOGLE CLOUD / OAUTH
 #   GOOGLE_CLIENT_ID       Client ID para autenticação OAuth (Calendar, Drive, etc.)
 #   GOOGLE_CLIENT_SECRET   Client Secret correspondente
@@ -180,6 +186,12 @@ services:
       - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
       - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
       - WHATSAPP_CONNECTION_NAME=${WHATSAPP_CONNECTION_NAME:-EmpreendedorSerial}
+
+      # Debounce de mensagens (agrupa fragmentos de texto antes de processar)
+      - WHATSAPP_DEBOUNCE_INITIAL_MS=${WHATSAPP_DEBOUNCE_INITIAL_MS:-15000}
+      - WHATSAPP_DEBOUNCE_MIN_MS=${WHATSAPP_DEBOUNCE_MIN_MS:-2000}
+      - WHATSAPP_DEBOUNCE_DECAY=${WHATSAPP_DEBOUNCE_DECAY:-0.6}
+      - WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT=${WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT:-true}
 
       # Modelos por função — todos usam Gemini por padrão (requer GOOGLE_API_KEY)
       - WHATSAPP_OWNER_MODEL=${WHATSAPP_OWNER_MODEL:-gemini-3.1-flash-lite}
