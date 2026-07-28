@@ -4188,15 +4188,26 @@ def _build_catalog_context_block() -> str:
             line += f" — chave Pix: {item['pix_key']}"
         lines.append(line)
     lines.append(
-        "\n### COMO CONDUZIR UMA VENDA ###\n"
-        "Quando o cliente confirmar que quer comprar um item da lista acima, informe o preço e diga que "
-        "o pagamento é feito via Pix. Se o item tiver uma chave Pix na lista acima, informe essa chave "
-        "exata para o cliente pagar. Peça para ele enviar o comprovante (print/foto do pagamento) aqui "
-        "mesmo na conversa. Diga que, após a confirmação do pagamento pela nossa equipe: se for um "
-        "produto digital (tem um link de acesso próprio, como um site/sistema), o acesso será liberado "
-        "por esse link; se for um produto físico (algo que precisa ser enviado, como o Mini PC), ele "
-        "será despachado após a verificação. NÃO direcione o cliente para comprar em outro lugar quando "
-        "o item já está no catálogo — a venda é conduzida aqui na conversa."
+        "\n### COMO REVELAR ESSAS INFORMAÇÕES (seja natural, não despeje tudo de uma vez) ###\n"
+        "- Se o cliente pedir uma LISTA (ex: 'quais produtos vc tem', 'o que vc vende'), responda de "
+        "forma enxuta: só o nome e o preço de cada item, uma linha por item. NÃO inclua descrição, link "
+        "ou chave Pix nessa resposta — isso só bagunça uma lista.\n"
+        "- Se o cliente perguntar sobre um item ESPECÍFICO ou pedir mais detalhes, aí sim conte a "
+        "descrição e o link, como numa conversa normal.\n"
+        "- A chave Pix e as instruções de pagamento (abaixo) só entram quando o cliente disser que quer "
+        "COMPRAR/FECHAR aquele item — nunca antecipe isso numa lista geral ou numa primeira resposta "
+        "sobre o produto."
+    )
+    lines.append(
+        "\n### COMO CONDUZIR UMA VENDA (só quando o cliente confirmar que quer comprar) ###\n"
+        "Informe o preço (se ainda não tiver dito) e diga que o pagamento é feito via Pix. Se o item "
+        "tiver uma chave Pix na lista acima, informe essa chave exata para o cliente pagar. Peça para "
+        "ele enviar o comprovante (print/foto do pagamento) aqui mesmo na conversa. Diga que, após a "
+        "confirmação do pagamento pela nossa equipe: se for um produto digital (tem um link de acesso "
+        "próprio, como um site/sistema), o acesso será liberado por esse link; se for um produto físico "
+        "(algo que precisa ser enviado, como o Mini PC), ele será despachado após a verificação. NÃO "
+        "direcione o cliente para comprar em outro lugar quando o item já está no catálogo — a venda é "
+        "conduzida aqui na conversa."
     )
     return "\n".join(lines) + "\n\n"
 
