@@ -4510,10 +4510,12 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
     """
     google_key = config.google_api_key
     if not google_key or not file_paths:
+        logger.info(f"[sale-detect] Abortado cedo — google_key={'sim' if google_key else 'não'} file_paths={file_paths!r}")
         return None
 
     file_path = file_paths[0]
     if not os.path.exists(file_path):
+        logger.info(f"[sale-detect] Arquivo não encontrado no momento da checagem: {file_path!r}")
         return None
 
     try:
@@ -5145,6 +5147,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     sale_detection = None
     if media_info["has_media"] and media_info["media_urls"]:
         media_type = media_info["media_type"]
+        logger.info(f"[sale-detect] mídia recebida: media_type={media_type!r} urls={media_info['media_urls']!r}")
         # Detecção de comprovante de pagamento — roda ANTES de _process_media_message porque
         # essa função apaga o arquivo físico assim que termina (privacidade: sem guardar mídia).
         # Aqui só LEMOS o arquivo, sem apagar; quem apaga continua sendo o fluxo normal abaixo.
@@ -5152,6 +5155,7 @@ def pre_gateway_dispatch(*args, **kwargs):
             try:
                 _caption_text = (getattr(event, "text", "") or "").strip()
                 sale_detection = _detect_and_extract_sale_from_image(media_info["media_urls"], _caption_text)
+                logger.info(f"[sale-detect] chamado para {media_info['media_urls']!r} — resultado: {sale_detection!r}")
             except Exception as sale_detect_err:
                 logger.error(f"[sale-detect] Erro ao analisar imagem para comprovante: {sale_detect_err}")
         if media_type in ["ptt", "audio", "image"]:
