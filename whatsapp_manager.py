@@ -4165,7 +4165,14 @@ def _build_catalog_context_block() -> str:
     active_items = [item for item in catalog.values() if item.get("active", True)]
     if not active_items:
         return ""
-    lines = ["### CATÁLOGO DE PRODUTOS E SERVIÇOS ###"]
+    lines = [
+        "### CATÁLOGO DE PRODUTOS E SERVIÇOS (OFICIAL, VÁLIDO AGORA) ###",
+        "Os itens abaixo são os produtos/serviços que você REALMENTE vende hoje. "
+        "Se o cliente perguntar o que você vende, quais produtos/serviços tem, preços ou catálogo, "
+        "responda com base NESTA lista. É PROIBIDO dizer que não tem produtos, que só faz consultoria "
+        "sob demanda, ou negar ter algo pra vender quando esta lista não está vazia — isso é uma "
+        "informação desatualizada da sua persona geral e esta lista sempre tem prioridade sobre ela.",
+    ]
     for item in active_items:
         line = f"- {item.get('name', '')}"
         if item.get("price"):
