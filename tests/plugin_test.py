@@ -1852,6 +1852,170 @@ class TestSalesDetection(BaseWhatsAppManagerTest):
         existing = {"v1": {}, "v2": {}}
         self.assertEqual(whatsapp_manager._next_sale_id(existing), "v3")
 
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("whatsapp_manager._load_personal_contacts", return_value={})
+    @patch("whatsapp_manager._process_media_message", return_value="comprovante de pagamento")
+    @patch("whatsapp_manager._find_address_in_recent_messages", return_value="Rua das Flores, 123")
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={
+        "is_payment_receipt": True, "amount": "R$ 15,00", "address": None,
+    })
+    @patch("urllib.request.urlopen")
+    def test_address_found_in_earlier_message_no_pending_created(
+        self, mock_urlopen, mock_detect, mock_find_addr, mock_process, mock_contacts, mock_load, mock_save
+    ):
+        """Endereço mandado ANTES do comprovante: achado no histórico, sem precisar ficar pendente."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._human_send"):
+            event = self._make_image_event(self.CLIENT_ID, self.CLIENT_ID)
+            self._dispatch_event(event)
+
+        mock_find_addr.assert_called_once_with(self.CLIENT_ID)
+        saved_sale = next(iter(mock_save.call_args[0][0].values()))
+        self.assertEqual(saved_sale["address"], "Rua das Flores, 123")
+        self.assertNotIn(self.CLIENT_ID, whatsapp_manager._pending_sale_address)
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("whatsapp_manager._load_personal_contacts", return_value={})
+    @patch("whatsapp_manager._process_media_message", return_value="comprovante de pagamento")
+    @patch("whatsapp_manager._find_address_in_recent_messages", return_value=None)
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={
+        "is_payment_receipt": True, "amount": "R$ 15,00", "address": None,
+    })
+    @patch("urllib.request.urlopen")
+    def test_no_address_anywhere_sets_pending_for_next_message(
+        self, mock_urlopen, mock_detect, mock_find_addr, mock_process, mock_contacts, mock_load, mock_save
+    ):
+        """Sem endereço na legenda nem no histórico: fica pendente aguardando a próxima mensagem."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._human_send"):
+            event = self._make_image_event(self.CLIENT_ID, self.CLIENT_ID)
+            self._dispatch_event(event)
+
+        self.assertIn(self.CLIENT_ID, whatsapp_manager._pending_sale_address)
+        saved_sale = next(iter(mock_save.call_args[0][0].values()))
+        self.assertIsNone(saved_sale["address"])
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={"v1": {"contact_name": "João", "address": None}})
+    @patch("whatsapp_manager._extract_address_via_llm", return_value="Av. Brasil, 500")
+    @patch("whatsapp_manager._check_bot_paused", return_value=True)
+    @patch("urllib.request.urlopen")
+    def test_pending_address_captured_from_next_message_without_interrupting_flow(
+        self, mock_urlopen, mock_paused, mock_extract, mock_load, mock_save
+    ):
+        """Endereço mandado DEPOIS do comprovante: capturado como efeito colateral, sem
+        interceptar a mensagem (ela segue o fluxo normal do cliente)."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        whatsapp_manager._pending_sale_address[self.CLIENT_ID] = {"sale_id": "v1", "created_at": whatsapp_manager.time.time()}
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_text_event(self.CLIENT_ID, self.CLIENT_ID, "Av. Brasil, 500, apto 4")
+        with patch("whatsapp_manager._human_send"):
+            res = self._dispatch_event(event)
+
+        self.assertNotIn(self.CLIENT_ID, whatsapp_manager._pending_sale_address)
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved["v1"]["address"], "Av. Brasil, 500")
+        # Não retornou skip específico de venda — mensagem seguiu pro fluxo normal
+        # (que aqui bate no "bot-pausado" mockado, não em nada relacionado a vendas).
+        self.assertEqual(res, {"action": "skip", "reason": "bot-pausado"})
+
+    @patch("whatsapp_manager._extract_address_via_llm", return_value=None)
+    @patch("whatsapp_manager._check_bot_paused", return_value=True)
+    @patch("urllib.request.urlopen")
+    def test_expired_pending_address_is_discarded(self, mock_urlopen, mock_paused, mock_extract):
+        """Pendência de endereço mais velha que o TTL é descartada."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        whatsapp_manager._pending_sale_address[self.CLIENT_ID] = {
+            "sale_id": "v1", "created_at": whatsapp_manager.time.time() - whatsapp_manager._PENDING_SALE_ADDRESS_TTL_S - 1,
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_text_event(self.CLIENT_ID, self.CLIENT_ID, "oi, tudo bem?")
+        self._dispatch_event(event)
+
+        self.assertNotIn(self.CLIENT_ID, whatsapp_manager._pending_sale_address)
+
+    @patch("whatsapp_manager._update_contact_fields", return_value="✅ Contato João atualizado.")
+    def test_save_address_to_contact_reuses_update_contact_fields(self, mock_update):
+        """_save_address_to_contact delega pra _update_contact_fields com o telefone extraído do chat_id."""
+        import whatsapp_manager
+        whatsapp_manager._save_address_to_contact("5511888877777@s.whatsapp.net", "Rua X, 123")
+        mock_update.assert_called_once_with("5511888877777", {"address": "Rua X, 123"})
+
+    def test_save_address_to_contact_noop_without_address(self):
+        import whatsapp_manager
+        with patch("whatsapp_manager._update_contact_fields") as mock_update:
+            whatsapp_manager._save_address_to_contact("5511888877777@s.whatsapp.net", "")
+            mock_update.assert_not_called()
+
+    @patch("whatsapp_manager._save_address_to_contact")
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("whatsapp_manager._load_personal_contacts", return_value={})
+    @patch("whatsapp_manager._process_media_message", return_value="comprovante de pagamento")
+    @patch("whatsapp_manager._find_address_in_recent_messages", return_value="Rua das Flores, 123")
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={
+        "is_payment_receipt": True, "amount": "R$ 15,00", "address": None,
+    })
+    @patch("urllib.request.urlopen")
+    def test_address_from_receipt_flow_also_saved_to_contact(
+        self, mock_urlopen, mock_detect, mock_find_addr, mock_process, mock_contacts, mock_load, mock_save, mock_save_addr
+    ):
+        """Endereço achado durante a detecção da venda também é gravado no cadastro do contato."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._human_send"):
+            event = self._make_image_event(self.CLIENT_ID, self.CLIENT_ID)
+            self._dispatch_event(event)
+
+        mock_save_addr.assert_called_once_with(self.CLIENT_ID, "Rua das Flores, 123")
+
+    @patch("whatsapp_manager._save_address_to_contact")
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={"v1": {"contact_name": "João", "address": None}})
+    @patch("whatsapp_manager._extract_address_via_llm", return_value="Av. Brasil, 500")
+    @patch("whatsapp_manager._check_bot_paused", return_value=True)
+    @patch("urllib.request.urlopen")
+    def test_address_from_pending_capture_also_saved_to_contact(
+        self, mock_urlopen, mock_paused, mock_extract, mock_load, mock_save, mock_save_addr
+    ):
+        """Endereço capturado numa mensagem posterior também é gravado no cadastro do contato."""
+        import whatsapp_manager
+        whatsapp_manager._pending_sale_address.clear()
+        whatsapp_manager._pending_sale_address[self.CLIENT_ID] = {"sale_id": "v1", "created_at": whatsapp_manager.time.time()}
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_text_event(self.CLIENT_ID, self.CLIENT_ID, "Av. Brasil, 500, apto 4")
+        with patch("whatsapp_manager._human_send"):
+            self._dispatch_event(event)
+
+        mock_save_addr.assert_called_once_with(self.CLIENT_ID, "Av. Brasil, 500")
+
 
 class TestProductCatalog(BaseWhatsAppManagerTest):
     """Testes para o catálogo de produtos/serviços: cadastro/edição/remoção via chat com confirmação."""

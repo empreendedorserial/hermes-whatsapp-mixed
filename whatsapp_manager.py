@@ -258,6 +258,11 @@ _pending_contact_card: dict[str, dict] = {}
 _pending_catalog_action: dict[str, dict] = {}
 _PENDING_CATALOG_TTL_S: int = 600  # 10 minutos
 
+# Venda com comprovante detectado mas sem endereço ainda — aguardando o cliente mandar
+# numa mensagem seguinte: { chat_id -> {sale_id, created_at} }
+_pending_sale_address: dict[str, dict] = {}
+_PENDING_SALE_ADDRESS_TTL_S: int = 1800  # 30 minutos
+
 # Cache TTL para _check_bot_paused() — evita HTTP a cada mensagem
 _BOT_STATUS_TTL_S: int = int(os.getenv("WHATSAPP_BOT_STATUS_TTL_S", "5"))
 _bot_status_cache: dict = {"paused": False, "ts": 0.0}
@@ -4173,7 +4178,7 @@ def _build_catalog_context_block() -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def _catalog_llm_call(prompt: str, timeout: int = 15) -> str | None:
+def _text_llm_call(prompt: str, timeout: int = 15) -> str | None:
     """Chama o primeiro provider de LLM disponível (Google → OpenAI → OpenRouter), mesma cadeia
     usada pelos outros extratores de campos do plugin."""
     google_key = config.google_api_key
@@ -4223,7 +4228,7 @@ def _extract_catalog_item_via_llm(message: str) -> dict:
         "Se não houver um nome claro de produto/serviço, retorne {\"name\": null}.\n"
         "NÃO invente descrição, preço ou link que não foram mencionados — use null.\n"
     )
-    text_content = _catalog_llm_call(prompt)
+    text_content = _text_llm_call(prompt)
     if not text_content:
         return {}
     try:
@@ -4251,7 +4256,7 @@ def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
         "  'atualiza a descrição: agora inclui suporte por 30 dias' → {\"description\": \"agora inclui suporte por 30 dias\"}\n"
         "  'inclua o link do produto https://exemplo.com' → {\"link\": \"https://exemplo.com\"}\n"
     )
-    text_content = _catalog_llm_call(prompt)
+    text_content = _text_llm_call(prompt)
     if not text_content:
         return {}
     try:
@@ -4376,6 +4381,83 @@ def _format_sale_record(sale_id: str, sale: dict) -> str:
         lines.append(f"Endereço: {sale['address']}")
     lines.append(f"Status: {sale.get('status', 'pending_review')}")
     return "\n".join(lines)
+
+
+def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 15) -> list[str]:
+    """Busca os textos das últimas mensagens do CLIENTE (from_me=0) nesse chat, dentro da janela
+    de tempo — usado pra achar um endereço que o cliente mandou ANTES do comprovante Pix."""
+    bridge_db = Path("/opt/data/.hermes/whatsapp_messages.db")
+    if not bridge_db.exists():
+        return []
+    cutoff = int(time.time()) - (minutes * 60)
+    try:
+        with sqlite3.connect(str(bridge_db)) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT body FROM messages
+                WHERE chat_id = ? AND from_me = 0 AND body IS NOT NULL AND body != ''
+                  AND timestamp >= ?
+                ORDER BY timestamp DESC LIMIT ?
+                """,
+                (chat_id, cutoff, limit),
+            )
+            return [r[0] for r in cur.fetchall() if r[0]]
+    except sqlite3.Error as e:
+        logger.warning(f"[sale-address] Erro ao consultar histórico de mensagens: {e}")
+        return []
+
+
+def _extract_address_via_llm(text: str) -> str | None:
+    """Verifica se um texto contém um endereço de entrega e o extrai, se houver.
+
+    Usado tanto pra achar o endereço entre mensagens recentes do cliente quanto pra capturar
+    o endereço quando ele chega numa mensagem DEPOIS do comprovante (via _pending_sale_address).
+    """
+    if not text or len(text.strip()) < 5:
+        return None
+    prompt = (
+        "Analise a mensagem abaixo e determine se contém um ENDEREÇO DE ENTREGA "
+        "(rua, número, bairro, cidade, ponto de referência, etc — mesmo que informal ou incompleto).\n\n"
+        f"Mensagem: \"{text}\"\n\n"
+        "Se contiver um endereço, retorne APENAS JSON: {\"address\": \"endereço extraído\"}\n"
+        "Se NÃO contiver endereço (é só papo comum, pergunta, agradecimento, nome, etc), "
+        "retorne APENAS: {\"address\": null}\n"
+    )
+    text_content = _text_llm_call(prompt, timeout=10)
+    if not text_content:
+        return None
+    try:
+        parsed = _extract_json_from_text(text_content)
+        if isinstance(parsed, dict):
+            addr = parsed.get("address")
+            return addr if isinstance(addr, str) and addr.strip() else None
+    except Exception as e:
+        logger.info(f"[sale-address] Erro ao parsear JSON: {e} — raw: {repr(text_content)[:200]}")
+    return None
+
+
+def _find_address_in_recent_messages(chat_id: str) -> str | None:
+    """Percorre as mensagens recentes do cliente (mais nova primeiro) procurando um endereço."""
+    for text in _find_recent_client_messages(chat_id):
+        addr = _extract_address_via_llm(text)
+        if addr:
+            return addr
+    return None
+
+
+def _save_address_to_contact(chat_id: str, address: str) -> None:
+    """Salva o endereço também no cadastro do contato em personal_contacts.json, reaproveitando
+    _update_contact_fields (mesma busca/espelhamento @lid↔@s.whatsapp.net já usado em todo o
+    resto do plugin) em vez de duplicar essa lógica aqui."""
+    if not address or not chat_id:
+        return
+    try:
+        phone_identifier = chat_id.split("@")[0]
+        result = _update_contact_fields(phone_identifier, {"address": address})
+        logger.info(f"[sale-address] Endereço salvo no contato {chat_id}: {result}")
+    except Exception as e:
+        logger.error(f"[sale-address] Erro ao salvar endereço no contato: {e}")
 
 
 def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = "") -> dict | None:
@@ -5093,6 +5175,13 @@ def pre_gateway_dispatch(*args, **kwargs):
                 or getattr(event, "senderName", None)
                 or clean_sender
             )
+            # Endereço: 1) veio na legenda da própria imagem (já em sale_detection);
+            # 2) senão, procura nas mensagens recentes do cliente (endereço mandado ANTES do
+            # comprovante); 3) senão, fica pendente aguardando a PRÓXIMA mensagem do cliente.
+            address = sale_detection.get("address")
+            if not address:
+                address = _find_address_in_recent_messages(chat_id)
+
             sales = _load_sales()
             sale_id = _next_sale_id(sales)
             sales[sale_id] = {
@@ -5102,12 +5191,18 @@ def pre_gateway_dispatch(*args, **kwargs):
                 "payment_datetime": sale_detection.get("payment_datetime"),
                 "sender_name": sale_detection.get("sender_name"),
                 "bank_app": sale_detection.get("bank_app"),
-                "address": sale_detection.get("address"),
+                "address": address,
                 "status": "pending_review",
                 "detected_at": time.time(),
             }
             _save_sales(sales)
-            logger.info(f"[sale-detect] Venda {sale_id} registrada para {contact_name} ({chat_id})")
+            logger.info(f"[sale-detect] Venda {sale_id} registrada para {contact_name} ({chat_id}) — endereço={'sim' if address else 'aguardando'}")
+
+            if address:
+                _save_address_to_contact(chat_id, address)
+
+            if not address and chat_id:
+                _pending_sale_address[chat_id] = {"sale_id": sale_id, "created_at": time.time()}
 
             if chat_id:
                 _human_send(chat_id, "Recebemos seu comprovante! Pedido confirmado 🙏")
@@ -5123,6 +5218,34 @@ def pre_gateway_dispatch(*args, **kwargs):
         except Exception as sale_action_err:
             logger.error(f"[sale-detect] Erro ao registrar venda: {sale_action_err}")
         return {"action": "skip", "reason": "sale-detected"}
+
+    # Captura de endereço enviado DEPOIS do comprovante — roda como efeito colateral, sem
+    # interromper o fluxo normal (o cliente pode estar falando de qualquer outra coisa também).
+    if not is_owner and chat_id in _pending_sale_address:
+        _pending = _pending_sale_address[chat_id]
+        if time.time() - _pending.get("created_at", 0) > _PENDING_SALE_ADDRESS_TTL_S:
+            del _pending_sale_address[chat_id]
+        else:
+            try:
+                _addr_text = (getattr(event, "text", "") or "").strip()
+                _addr = _extract_address_via_llm(_addr_text) if _addr_text else None
+                if _addr:
+                    sales = _load_sales()
+                    _sale_id = _pending["sale_id"]
+                    if _sale_id in sales:
+                        sales[_sale_id]["address"] = _addr
+                        _save_sales(sales)
+                        logger.info(f"[sale-address] Endereço capturado para venda {_sale_id}: {_addr}")
+                        _save_address_to_contact(chat_id, _addr)
+                        owner_number_clean = clean_owner
+                        if owner_number_clean:
+                            _human_send(
+                                f"{owner_number_clean}@s.whatsapp.net",
+                                f"📍 Endereço da venda {_sale_id} atualizado: {_addr}"
+                            )
+                    del _pending_sale_address[chat_id]
+            except Exception as addr_err:
+                logger.error(f"[sale-address] Erro ao capturar endereço pendente: {addr_err}")
 
     # Transcrever áudios ENVIADOS pelo André para enriquecer o style learning
     if is_owner and media_info["has_media"] and media_info["media_type"] in ["ptt", "audio"]:
@@ -5293,7 +5416,8 @@ def pre_gateway_dispatch(*args, **kwargs):
             "pedido pra ele na hora e registra a venda como pendente de revisão sua\n"
             "• Ver: `listar vendas` / `vendas pendentes`\n"
             "• Revisar: `confirmar venda v1` ou `rejeitar venda v1`\n"
-            "• Endereço só é capturado se vier no mesmo print (legenda/texto junto)\n\n"
+            "• Endereço: captura da legenda do print, de mensagens recentes do cliente (antes do "
+            "comprovante) ou da próxima mensagem dele (depois) — não precisa vir tudo junto\n\n"
             "*🔍 CONSULTAR HISTÓRICO*\n"
             "• _\"o que a Isabel falou?\"_ — busca histórico real da conversa\n"
             "• _\"o que João me mandou ontem?\"_ — funciona com qualquer contato\n\n"
