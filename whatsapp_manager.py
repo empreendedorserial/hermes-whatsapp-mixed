@@ -5037,7 +5037,9 @@ def pre_gateway_dispatch(*args, **kwargs):
     # Comando: ajuda / como funciona — detectado por keywords sem LLM para baixa latência
     _help_keywords = [
         "quais comandos", "que comandos", "quais os comandos", "quais sao os comandos",
-        "quais são os comandos", "me explique como funciona", "como voce funciona",
+        "quais são os comandos", "listar comandos", "liste os comandos", "liste comandos",
+        "mostrar comandos", "mostre os comandos", "mostre comandos",
+        "me explique como funciona", "como voce funciona",
         "como você funciona", "como vc funciona", "o que voce faz", "o que você faz",
         "o que vc faz", "me explica como funciona", "me explique o que voce faz",
         "o que posso fazer", "o que consigo fazer", "quais funcionalidades",
