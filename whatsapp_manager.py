@@ -907,7 +907,7 @@ def _classify_owner_intent(message: str) -> dict:
 
     prompt = (
         "Você é um classificador de intenções para um assistente de WhatsApp.\n"
-        "Analise a mensagem e classifique em UMA das sete categorias:\n\n"
+        "Analise a mensagem e classifique em UMA das oito categorias:\n\n"
         "1. ATUALIZAÇÃO DE CONTATO — usuário quer mudar dados de um contato:\n"
         "   Ex: 'coloque a Mayra como namorada', 'cadastre apelido Pedro como Pedrinho'\n\n"
         "2. STATUS DO DONO — usuário informa onde está ou o que vai fazer, com ou sem horário:\n"
@@ -919,9 +919,13 @@ def _classify_owner_intent(message: str) -> dict:
         "   Ex: 'adiciona um produto: mentoria individual, R$ 500', 'cadastra o serviço de consultoria'\n\n"
         "5. EDITAR PRODUTO/SERVIÇO — usuário quer mudar dados de um produto/serviço JÁ existente:\n"
         "   Ex: 'muda o preço da mentoria pra 550', 'atualiza a descrição da consultoria'\n\n"
-        "6. REMOVER PRODUTO/SERVIÇO — usuário quer tirar um produto/serviço do catálogo:\n"
+        "6. REMOVER PRODUTO/SERVIÇO — usuário quer tirar um produto/serviço do catálogo (fica oculto, mas não é apagado):\n"
         "   Ex: 'remove o produto mentoria individual', 'tira a consultoria do catálogo'\n\n"
-        "7. OUTRO — qualquer outra coisa\n\n"
+        "7. APAGAR PRODUTO/SERVIÇO DEFINITIVAMENTE — usuário quer excluir um produto de vez, sem possibilidade de recuperar "
+        "(diferente de só remover/desativar):\n"
+        "   Ex: 'apaga definitivamente o produto mentoria', 'exclua permanentemente a consultoria', "
+        "'deleta de vez o produto X, não precisa mais dele'\n\n"
+        "8. OUTRO — qualquer outra coisa\n\n"
         f"Data/hora atual: {now_str}\n"
         f"Mensagem: \"{clean_msg}\"\n\n"
         "Retorne APENAS JSON:\n"
@@ -943,6 +947,8 @@ def _classify_owner_intent(message: str) -> dict:
         "  {\"intent_type\": \"catalog_update\", \"product_identifier\": \"nome do produto a editar\", \"intent\": \"resumo 5 palavras\"}\n"
         "Se for remover produto/serviço:\n"
         "  {\"intent_type\": \"catalog_remove\", \"product_identifier\": \"nome do produto a remover\", \"intent\": \"resumo 5 palavras\"}\n"
+        "Se for apagar produto/serviço definitivamente:\n"
+        "  {\"intent_type\": \"catalog_delete_permanent\", \"product_identifier\": \"nome do produto a apagar\", \"intent\": \"resumo 5 palavras\"}\n"
         "Se for outro:\n"
         "  {\"intent_type\": \"other\", \"intent\": \"resumo 5 palavras\"}\n"
     )
@@ -4235,6 +4241,45 @@ def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
         return {}
 
 
+def _build_catalog_pending_for_action(catalog_action: str, key: str, item: dict, raw_message: str) -> tuple[dict | None, str]:
+    """Resolve remove/update/delete_permanent para um item de catálogo já identificado
+    (via match único ou desambiguação já resolvida). Retorna (pendência a salvar ou None
+    se a ação não pode prosseguir, mensagem de resposta ao dono)."""
+    if catalog_action == "remove":
+        pending = {"action": "remove", "key": key, "created_at": time.time()}
+        reply = (
+            f"📋 Confirma a remoção de \"{item.get('name')}\" do catálogo?\n"
+            "(fica oculto pros clientes, mas não é apagado — dá pra reativar depois)\n\n"
+            "Responda *sim* para remover ou *não* para cancelar."
+        )
+        return pending, reply
+
+    if catalog_action == "delete_permanent":
+        if item.get("active", True):
+            return None, (
+                f"⚠️ \"{item.get('name')}\" ainda está ativo no catálogo. Primeiro remova (desative) o produto — "
+                "depois eu posso apagar definitivamente."
+            )
+        pending = {"action": "delete_permanent", "key": key, "created_at": time.time()}
+        reply = (
+            f"⚠️ *ATENÇÃO* — isso vai apagar \"{item.get('name')}\" definitivamente do catálogo, "
+            "sem possibilidade de recuperar depois.\n\n"
+            "Responda *sim* para apagar ou *não* para cancelar."
+        )
+        return pending, reply
+
+    # update
+    changes = _extract_catalog_update_via_llm(item.get("name", ""), raw_message)
+    if not changes:
+        return None, f"⚠️ Não consegui identificar o que alterar em \"{item.get('name')}\"."
+    pending = {"action": "update", "key": key, "changes": changes, "created_at": time.time()}
+    reply = (
+        f"📋 Confirma a alteração em \"{item.get('name')}\"?\n{_format_catalog_item(item, changes)}\n\n"
+        "Responda *sim* para salvar ou *não* para cancelar."
+    )
+    return pending, reply
+
+
 def _datetime_context_block() -> str:
     """Retorna bloco com data/hora atual, dia da semana e tipo de dia para injetar no contexto do LLM."""
     from datetime import datetime as _dt
@@ -5017,9 +5062,11 @@ def pre_gateway_dispatch(*args, **kwargs):
             "*🛒 CATÁLOGO DE PRODUTOS/SERVIÇOS*\n"
             "• Cadastrar: _\"adiciona um produto: mentoria individual, R$ 500\"_\n"
             "• Editar: _\"muda o preço da mentoria pra 550\"_\n"
-            "• Remover: _\"remove o produto mentoria individual\"_\n"
+            "• Remover (desativa, reversível): _\"remove o produto mentoria individual\"_\n"
+            "• Apagar definitivamente (só funciona se já estiver removido/desativado): "
+            "_\"apaga definitivamente o produto mentoria individual\"_\n"
             "• Listar: `listar catálogo` / `quais produtos`\n"
-            "• Toda ação de adicionar/editar/remover pede confirmação (*sim*/*não*) antes de salvar — "
+            "• Toda ação de adicionar/editar/remover/apagar pede confirmação (*sim*/*não*) antes de executar — "
             "e dá pra emendar mais detalhes (ex: um link) antes de confirmar\n"
             "• O bot usa o catálogo pra responder clientes/amigos que perguntarem sobre produtos\n\n"
             "*🔍 CONSULTAR HISTÓRICO*\n"
@@ -5152,23 +5199,11 @@ def pre_gateway_dispatch(*args, **kwargs):
             idx = int(m.group(1)) - 1 if m else -1
             if m and 0 <= idx < len(candidates):
                 key, item = candidates[idx]
-                if catalog_action == "remove":
-                    _pending_catalog_action[sender_id] = {"action": "remove", "key": key, "created_at": time.time()}
-                    reply = (
-                        f"📋 Confirma a remoção de \"{item.get('name')}\" do catálogo?\n"
-                        "(fica oculto pros clientes, mas não é apagado — dá pra reativar depois)\n\n"
-                        "Responda *sim* para remover ou *não* para cancelar."
-                    )
-                else:
-                    changes = _extract_catalog_update_via_llm(item.get("name", ""), pending_catalog.get("raw_message", ""))
-                    if not changes:
-                        reply = f"⚠️ Não consegui identificar o que alterar em \"{item.get('name')}\"."
-                    else:
-                        _pending_catalog_action[sender_id] = {"action": "update", "key": key, "changes": changes, "created_at": time.time()}
-                        reply = (
-                            f"📋 Confirma a alteração em \"{item.get('name')}\"?\n{_format_catalog_item(item, changes)}\n\n"
-                            "Responda *sim* para salvar ou *não* para cancelar."
-                        )
+                pending, reply = _build_catalog_pending_for_action(
+                    catalog_action, key, item, pending_catalog.get("raw_message", "")
+                )
+                if pending:
+                    _pending_catalog_action[sender_id] = pending
             else:
                 reply = "❌ Escolha inválida. Operação cancelada."
             if chat_id:
@@ -5215,6 +5250,15 @@ def pre_gateway_dispatch(*args, **kwargs):
                         reply = f"✅ Produto \"{catalog[key]['name']}\" removido do catálogo."
                     else:
                         reply = "❌ Esse produto não existe mais no catálogo."
+                elif catalog_action == "delete_permanent":
+                    key = pending_catalog["key"]
+                    if key in catalog:
+                        deleted_name = catalog[key].get("name", key)
+                        del catalog[key]
+                        _save_product_catalog(catalog)
+                        reply = f"🗑️ Produto \"{deleted_name}\" apagado definitivamente."
+                    else:
+                        reply = "❌ Esse produto já não existe mais no catálogo."
                 else:
                     reply = "❌ Ação pendente inválida."
             elif reply_norm in cancel_words:
@@ -5405,17 +5449,19 @@ def pre_gateway_dispatch(*args, **kwargs):
             return {"action": "skip", "reason": "catalog-add-draft"}
 
         # Editar ou remover produto/serviço existente — identifica o item (com desambiguação) antes de confirmar
-        if intent_type in ("catalog_update", "catalog_remove"):
+        if intent_type in ("catalog_update", "catalog_remove", "catalog_delete_permanent"):
             chat_id = str(event.source.chat_id) if event.source.chat_id else ""
             product_identifier = intent_result.get("product_identifier", "")
-            catalog_action = "update" if intent_type == "catalog_update" else "remove"
+            catalog_action = {
+                "catalog_update": "update", "catalog_remove": "remove", "catalog_delete_permanent": "delete_permanent",
+            }[intent_type]
             candidates = _find_catalog_matches(product_identifier) if product_identifier else []
 
             if not candidates:
                 reply = (
                     f"⚠️ Não encontrei \"{product_identifier}\" no catálogo. "
                     "Quer que eu cadastre como produto novo? Se sim, descreva o produto novamente."
-                )
+                ) if catalog_action != "delete_permanent" else f"⚠️ Não encontrei \"{product_identifier}\" no catálogo."
             elif len(candidates) > 1:
                 _pending_catalog_action[sender_id] = {
                     "type": "disambiguate", "action": catalog_action,
@@ -5428,27 +5474,9 @@ def pre_gateway_dispatch(*args, **kwargs):
                 reply = "\n".join(lines)
             else:
                 key, item = candidates[0]
-                if catalog_action == "remove":
-                    _pending_catalog_action[sender_id] = {
-                        "action": "remove", "key": key, "created_at": time.time(),
-                    }
-                    reply = (
-                        f"📋 Confirma a remoção de \"{item.get('name')}\" do catálogo?\n"
-                        "(fica oculto pros clientes, mas não é apagado — dá pra reativar depois)\n\n"
-                        "Responda *sim* para remover ou *não* para cancelar."
-                    )
-                else:
-                    changes = _extract_catalog_update_via_llm(item.get("name", ""), msg_text)
-                    if not changes:
-                        reply = f"⚠️ Não consegui identificar o que alterar em \"{item.get('name')}\"."
-                    else:
-                        _pending_catalog_action[sender_id] = {
-                            "action": "update", "key": key, "changes": changes, "created_at": time.time(),
-                        }
-                        reply = (
-                            f"📋 Confirma a alteração em \"{item.get('name')}\"?\n{_format_catalog_item(item, changes)}\n\n"
-                            "Responda *sim* para salvar ou *não* para cancelar."
-                        )
+                pending, reply = _build_catalog_pending_for_action(catalog_action, key, item, msg_text)
+                if pending:
+                    _pending_catalog_action[sender_id] = pending
             if chat_id:
                 _human_send(chat_id, reply)
             return {"action": "skip", "reason": f"catalog-{catalog_action}-draft"}

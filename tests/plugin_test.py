@@ -2007,6 +2007,69 @@ class TestProductCatalog(BaseWhatsAppManagerTest):
 
         self.assertEqual(res, {"action": "skip", "reason": "catalog-list-command"})
 
+    @patch("whatsapp_manager._find_catalog_matches", return_value=[
+        ("mentoria-individual", {"name": "Mentoria Individual", "active": True}),
+    ])
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_delete_permanent", "product_identifier": "mentoria", "intent": "apagar de vez",
+    })
+    @patch("urllib.request.urlopen")
+    def test_delete_permanent_refuses_active_product(self, mock_urlopen, mock_intent, mock_find):
+        """Não deixa apagar definitivamente um produto que ainda está ativo — pede pra desativar primeiro."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("apaga definitivamente o produto mentoria")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-delete_permanent-draft"})
+        self.assertNotIn(self.SENDER_ID, whatsapp_manager._pending_catalog_action)
+
+    @patch("whatsapp_manager._find_catalog_matches", return_value=[
+        ("mentoria-individual", {"name": "Mentoria Individual", "active": False}),
+    ])
+    @patch("whatsapp_manager._classify_owner_intent", return_value={
+        "intent_type": "catalog_delete_permanent", "product_identifier": "mentoria", "intent": "apagar de vez",
+    })
+    @patch("urllib.request.urlopen")
+    def test_delete_permanent_asks_confirmation_for_inactive_product(self, mock_urlopen, mock_intent, mock_find):
+        """Produto já inativo: cria pendência de apagar definitivamente e pede confirmação."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("apaga definitivamente o produto mentoria")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-delete_permanent-draft"})
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["action"], "delete_permanent")
+        self.assertEqual(pending["key"], "mentoria-individual")
+
+    @patch("whatsapp_manager._save_product_catalog")
+    @patch("whatsapp_manager._load_product_catalog", return_value={
+        "mentoria-individual": {"name": "Mentoria Individual", "active": False},
+    })
+    @patch("urllib.request.urlopen")
+    def test_delete_permanent_confirm_removes_key_entirely(self, mock_urlopen, mock_load, mock_save):
+        """Confirmar a exclusão definitiva remove a chave do dict inteiramente (não é soft-delete)."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "delete_permanent", "key": "mentoria-individual",
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("sim")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        mock_save.assert_called_once()
+        saved_catalog = mock_save.call_args[0][0]
+        self.assertNotIn("mentoria-individual", saved_catalog)
+
 
 class TestFullSummaryFunctions(BaseWhatsAppManagerTest):
     """Testes para _update_full_summary, _compress_full_summary e _sync_full_summaries."""
