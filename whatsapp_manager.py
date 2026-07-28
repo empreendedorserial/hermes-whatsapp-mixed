@@ -5511,14 +5511,16 @@ def pre_gateway_dispatch(*args, **kwargs):
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "catalog-list-command"}
 
-    # Comando: listar vendas / vendas pendentes — determinístico (sem LLM)
-    _sales_list_keywords = [
-        "listar vendas", "lista vendas", "liste as vendas", "liste vendas",
-        "mostrar vendas", "mostre as vendas", "mostre vendas", "ver vendas",
-        "vendas pendentes", "vendas cadastradas", "quais vendas",
-    ]
+    # Comando: listar vendas / vendas pendentes — determinístico (sem LLM).
+    # Checagem por palavras soltas (não frase exata) pra aguentar variações como
+    # "quais as vendas de hoje" sem precisar prever cada combinação possível.
     _normalized_for_sales_list = _normalize_text(normalized_msg)
-    if is_owner and any(kw in _normalized_for_sales_list for kw in _sales_list_keywords):
+    _sales_words = set(_normalized_for_sales_list.split())
+    _sales_query_words = {"listar", "lista", "liste", "mostrar", "mostre", "ver", "quais", "qual"}
+    _sales_list_trigger = "vendas" in _sales_words and (
+        bool(_sales_words & _sales_query_words) or "pendentes" in _sales_words or "cadastradas" in _sales_words
+    )
+    if is_owner and _sales_list_trigger:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sales = _load_sales()
         only_pending = "pendente" in _normalized_for_sales_list
