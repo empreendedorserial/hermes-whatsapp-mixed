@@ -6225,6 +6225,10 @@ def pre_llm_call(*args, **kwargs):
 
     # ── Modo A: André (dono) ──────────────────────────────────────────────
     if _normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner):
+        logger.info(
+            f"[prompt] Modo A (dono) ativado: sender_id={sender_id!r} clean_sender={clean_sender!r} "
+            f"clean_owner={clean_owner!r} owner_number_cfg={owner_number!r}"
+        )
         chat_id = _resolve_chat_id(sender_id)
         history_context = _fetch_chat_history(chat_id, limit=50) if chat_id else ""
         history_section = (
