@@ -4174,7 +4174,11 @@ def _build_catalog_context_block() -> str:
         "— isso é uma informação desatualizada da sua persona geral e esta lista sempre tem prioridade sobre ela. "
         "É IGUALMENTE PROIBIDO inventar, complementar ou citar qualquer produto/serviço que NÃO esteja "
         "nesta lista (mesmo que pareça plausível pelo seu conhecimento geral do negócio) — se não está aqui, "
-        "você não vende.",
+        "você não vende. "
+        "Esta lista pode ter mudado desde a última vez que você respondeu sobre produtos NESTA MESMA "
+        "conversa — se uma mensagem sua anterior aqui mencionou um conjunto diferente de produtos, ela "
+        "está desatualizada. Sempre releia a lista abaixo antes de responder e use exatamente ela, "
+        "mesmo que contradiga o que você mesmo disse antes.",
     ]
     for item in active_items:
         line = f"- {item.get('name', '')}"
