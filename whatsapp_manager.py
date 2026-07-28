@@ -5511,33 +5511,10 @@ def pre_gateway_dispatch(*args, **kwargs):
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "catalog-list-command"}
 
-    # Comando: listar vendas / vendas pendentes — determinístico (sem LLM).
-    # Checagem por palavras soltas (não frase exata) pra aguentar variações como
-    # "quais as vendas de hoje" sem precisar prever cada combinação possível.
-    _normalized_for_sales_list = _normalize_text(normalized_msg)
-    _sales_words = set(_normalized_for_sales_list.split())
-    _sales_query_words = {"listar", "lista", "liste", "mostrar", "mostre", "ver", "quais", "qual"}
-    _sales_list_trigger = "vendas" in _sales_words and (
-        bool(_sales_words & _sales_query_words) or "pendentes" in _sales_words or "cadastradas" in _sales_words
-    )
-    if is_owner and _sales_list_trigger:
-        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
-        sales = _load_sales()
-        only_pending = "pendente" in _normalized_for_sales_list
-        items = {k: v for k, v in sales.items() if not only_pending or v.get("status") == "pending_review"}
-        if not items:
-            reply = "💰 Nenhuma venda pendente." if only_pending else "💰 Nenhuma venda registrada ainda."
-        else:
-            lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "")]
-            for sale_id, sale in items.items():
-                lines.append("\n" + _format_sale_record(sale_id, sale))
-            reply = "\n".join(lines)
-        if chat_id:
-            _human_send(chat_id, reply)
-        return {"action": "skip", "reason": "sales-list-command"}
-
     # Comando: confirmar venda <id> / rejeitar venda <id> — determinístico (sem LLM,
-    # decisão sobre dinheiro não deveria depender de classificação por linguagem natural)
+    # decisão sobre dinheiro não deveria depender de classificação por linguagem natural).
+    # Checado ANTES do comando de listagem abaixo pra essa ação específica não ser
+    # engolida pelo gatilho mais amplo de "vendas".
     _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", normalized_msg, re.IGNORECASE)
     if is_owner and _sale_review_match:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
@@ -5556,6 +5533,30 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id:
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "sale-review-command"}
+
+    # Comando: listar vendas / vendas pendentes — determinístico (sem LLM).
+    # Gatilho amplo (só a palavra "vendas", sem exigir um verbo exato) pra não perder
+    # o comando por causa de erro de digitação (ex: "litar vendas") — a alternativa
+    # é essa mensagem cair no LLM geral, que já alucinou sistemas inteiros (Shopify,
+    # gateway, etc.) que não existem aqui. Falso positivo aqui é só mostrar a lista
+    # de vendas sem necessidade; a alucinação é bem pior.
+    _normalized_for_sales_list = _normalize_text(normalized_msg)
+    _sales_list_trigger = "vendas" in _normalized_for_sales_list.split()
+    if is_owner and _sales_list_trigger:
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        sales = _load_sales()
+        only_pending = "pendente" in _normalized_for_sales_list
+        items = {k: v for k, v in sales.items() if not only_pending or v.get("status") == "pending_review"}
+        if not items:
+            reply = "💰 Nenhuma venda pendente." if only_pending else "💰 Nenhuma venda registrada ainda."
+        else:
+            lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "")]
+            for sale_id, sale in items.items():
+                lines.append("\n" + _format_sale_record(sale_id, sale))
+            reply = "\n".join(lines)
+        if chat_id:
+            _human_send(chat_id, reply)
+        return {"action": "skip", "reason": "sales-list-command"}
 
     # Comando: update contact <nome> <campo>=<valor> [campo=valor ...]
     # Exemplo: "update contact Isabel relationship=Filha notes=minha filha mais velha"
