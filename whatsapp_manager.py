@@ -331,6 +331,20 @@ def _get_media_info(event) -> dict:
         if not info["message_id"]:
             info["message_id"] = raw.get("messageId") or raw.get("message_id") or raw.get("id")
 
+    # 3. No adapter nativo do Hermes 0.19+, media_urls costuma vir preenchido (aponta pro
+    # cache local do bridge) mas has_media/media_type não vêm mais setados no objeto event.
+    # Um caminho de mídia real é sinal suficiente de que há mídia — não exigir has_media
+    # separadamente, e inferir o tipo pela extensão do arquivo quando não vier explícito.
+    if info["media_urls"]:
+        if not info["has_media"]:
+            info["has_media"] = True
+        if not info["media_type"]:
+            ext = os.path.splitext(info["media_urls"][0])[1].lower()
+            if ext in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                info["media_type"] = "image"
+            elif ext in (".ogg", ".m4a", ".mp3", ".wav", ".opus"):
+                info["media_type"] = "ptt"
+
     return info
 
 
@@ -5145,26 +5159,6 @@ def pre_gateway_dispatch(*args, **kwargs):
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
     sale_detection = None
-    if media_info["has_media"] or media_info["media_urls"] or media_info["media_type"]:
-        logger.info(f"[sale-detect] _get_media_info bruto: {media_info!r}")
-    elif os.path.isdir("/opt/data/.hermes/image_cache") and any(
-        time.time() - os.path.getmtime(os.path.join("/opt/data/.hermes/image_cache", f)) < 20
-        for f in os.listdir("/opt/data/.hermes/image_cache")
-    ):
-        # _get_media_info não achou nada, mas uma imagem foi cacheada pelo bridge nos
-        # últimos 20s — provável mudança de estrutura do evento no adapter nativo do
-        # Hermes 0.19. Diagnóstico único: descobrir onde o caminho da imagem realmente
-        # está no objeto event, já que "media_urls"/"hasMedia" não o encontraram.
-        try:
-            _event_attrs = {
-                a: repr(getattr(event, a))[:200]
-                for a in dir(event)
-                if not a.startswith("_")
-                and any(kw in a.lower() for kw in ("media", "image", "cache", "attach", "file", "path", "url"))
-            }
-            logger.info(f"[sale-detect] _get_media_info vazio mas imagem cacheada recentemente — atributos do event: {_event_attrs!r}")
-        except Exception as _diag_err:
-            logger.info(f"[sale-detect] Erro no diagnóstico de atributos do event: {_diag_err}")
     if media_info["has_media"] and media_info["media_urls"]:
         media_type = media_info["media_type"]
         logger.info(f"[sale-detect] mídia recebida: media_type={media_type!r} urls={media_info['media_urls']!r}")
