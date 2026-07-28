@@ -4766,7 +4766,10 @@ def _build_support_prompt(
             "- NUNCA use ferramentas como terminal, read_file, write_file, cron ou similares.\n"
             "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas. NUNCA mencione nomes de arquivos internos (SOUL_WHATSAPP, support_rules, personal_contacts, etc.).\n"
             f"- NUNCA informe telefone, número, e-mail ou dados de contato de amigos, clientes ou qualquer pessoa da agenda do {owner_name}.\n"
-            "- NUNCA exiba representações de ferramentas como '📖 read_file: ...', 'terminal', etc."
+            "- NUNCA exiba representações de ferramentas como '📖 read_file: ...', 'terminal', etc.\n"
+            "- Se houver itens no ### CATÁLOGO DE PRODUTOS E SERVIÇOS ### acima, eles SÃO o que você vende. "
+            "NUNCA diga que não tem produtos, que não vende nada ou que só faz projetos sob medida quando "
+            "esse catálogo não estiver vazio — cite os itens dele."
         )
     }
 
