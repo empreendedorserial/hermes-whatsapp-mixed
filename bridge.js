@@ -211,6 +211,11 @@ const CHUNK_DELAY_MS = parseInt(process.env.WHATSAPP_CHUNK_DELAY_MS || '300', 10
 const WHATSAPP_DEBOUNCE_INITIAL_MS = parseInt(process.env.WHATSAPP_DEBOUNCE_INITIAL_MS || '15000', 10);
 const WHATSAPP_DEBOUNCE_MIN_MS     = parseInt(process.env.WHATSAPP_DEBOUNCE_MIN_MS     || '2000',  10);
 const WHATSAPP_DEBOUNCE_DECAY      = parseFloat(process.env.WHATSAPP_DEBOUNCE_DECAY    || '0.6');
+// No self-chat (o dono falando consigo mesmo), pular o debounce por padrão — respostas
+// imediatas. Trade-off: se você mandar várias mensagens curtas em sequência, cada uma vira
+// uma chamada separada ao LLM em vez de esperar e consolidar num único turno.
+// Para manter o debounce também no self-chat: WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT=false
+const WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT = (process.env.WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT || 'true') !== 'false';
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-call timeout for sock.sendMessage(). Baileys occasionally hangs forever
 // when uploading media to WhatsApp servers (and, less often, on text sends),
@@ -910,7 +915,8 @@ let onMessagesUpsert = async ({ messages, type }) => {
     };
 
     // ── DEBOUNCE PROGRESSIVO: apenas mensagens de texto puro ─────────────────
-    if (!hasMedia && WHATSAPP_DEBOUNCE_INITIAL_MS > 0) {
+    const debounceEnabledForThisChat = WHATSAPP_DEBOUNCE_INITIAL_MS > 0 && !(WHATSAPP_DEBOUNCE_SKIP_SELF_CHAT && isSelfChat);
+    if (!hasMedia && debounceEnabledForThisChat) {
       const pending = debounceBuffer.get(chatId);
       if (pending) {
         // Já existe buffer para este chat: acumular fragmento e reduzir o timer
