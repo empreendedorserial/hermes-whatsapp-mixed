@@ -3704,6 +3704,29 @@ def _pull_and_merge_configurations():
         except Exception as e:
             logger.error(f"Erro ao salvar product_catalog.json mesclado: {e}")
 
+    # 4. Sincronizar sales.json (merge — mesmo critério dos demais)
+    local_sales = _load_sales()
+    remote_sales = None
+    try:
+        req = urllib.request.Request(f"{config_base_url}/sales.json")
+        if config_token:
+            req.add_header("Authorization", f"token {config_token}")
+        req.add_header("User-Agent", "Hermes-Agent-Plugin")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            remote_sales = json.loads(response.read().decode("utf-8"))
+            logger.info("✓ sales.json remoto carregado com sucesso.")
+    except Exception as e:
+        logger.warning(f"Não foi possível baixar sales.json do GitHub: {e}")
+
+    if remote_sales is not None:
+        merged_sales = _merge_records_field_level(remote_sales, local_sales)
+        try:
+            with open(str(_SALES_PATH), "w", encoding="utf-8") as f:
+                json.dump(merged_sales, f, indent=2, ensure_ascii=False)
+            logger.info("✓ Vendas mescladas localmente.")
+        except Exception as e:
+            logger.error(f"Erro ao salvar sales.json mesclado: {e}")
+
 
 def _sanitize_contacts_keys(contacts: dict) -> dict:
     """Remove entradas com chave inválida (número vazio ou muito curto)."""
@@ -4280,6 +4303,148 @@ def _build_catalog_pending_for_action(catalog_action: str, key: str, item: dict,
     return pending, reply
 
 
+_SALES_PATH = Path("/opt/data/sales.json")
+
+
+def _load_sales() -> dict:
+    """Carrega sales.json. Retorna {} se não existir ou estiver corrompido."""
+    try:
+        if _SALES_PATH.exists():
+            with open(str(_SALES_PATH), "r", encoding="utf-8") as f:
+                return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Erro ao carregar sales.json: {e}")
+    return {}
+
+
+def _save_sales(sales: dict) -> None:
+    """Salva sales.json localmente e sincroniza com o GitHub em background,
+    avisando o dono se o push falhar (mesmo padrão de _save_product_catalog)."""
+    try:
+        with open(str(_SALES_PATH), "w", encoding="utf-8") as f:
+            json.dump(sales, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        logger.error(f"Erro ao salvar sales.json: {e}")
+        return
+
+    config_repo = config.config_repo
+    config_token = config.config_github_token
+    setup_user = config.hermes_setup_github_user
+    if not (config_repo and config_token):
+        return
+
+    def _push() -> bool:
+        try:
+            if "/" in config_repo:
+                repo_user, repo_name = config_repo.split("/", 1)
+            else:
+                repo_user = setup_user or "empreendedorserial"
+                repo_name = config_repo
+            return _github_put_file(
+                repo_user=repo_user,
+                repo_name=repo_name,
+                token=config_token,
+                github_path="sales.json",
+                content=json.dumps(sales, ensure_ascii=False, indent=2).encode("utf-8"),
+                commit_msg="Update sales.json via WhatsApp",
+            )
+        except Exception as e:
+            logger.error(f"Erro ao sincronizar sales.json com o GitHub: {e}")
+            return False
+
+    threading.Thread(target=lambda: _notify_owner_if_push_failed(_push, "o registro de vendas"), daemon=True).start()
+
+
+def _next_sale_id(sales: dict) -> str:
+    """Gera um ID curto e sequencial (v1, v2, ...) fácil de digitar em comandos."""
+    n = 1
+    while f"v{n}" in sales:
+        n += 1
+    return f"v{n}"
+
+
+def _format_sale_record(sale_id: str, sale: dict) -> str:
+    """Formata um registro de venda para exibição ao dono."""
+    lines = [f"ID: {sale_id}", f"Cliente: {sale.get('contact_name', '')}"]
+    if sale.get("amount"):
+        lines.append(f"Valor: {sale['amount']}")
+    if sale.get("payment_datetime"):
+        lines.append(f"Data/hora do pagamento: {sale['payment_datetime']}")
+    if sale.get("sender_name"):
+        lines.append(f"Nome no comprovante: {sale['sender_name']}")
+    if sale.get("address"):
+        lines.append(f"Endereço: {sale['address']}")
+    lines.append(f"Status: {sale.get('status', 'pending_review')}")
+    return "\n".join(lines)
+
+
+def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = "") -> dict | None:
+    """Analisa a PRIMEIRA imagem de uma mensagem recebida e determina se parece um comprovante
+    de pagamento Pix/transferência bancária. NÃO apaga o arquivo — quem apaga é
+    _process_media_message(), chamada logo depois no fluxo normal.
+
+    Retorna None se não há imagem/chave de API/erro de leitura, ou um dict:
+      {"is_payment_receipt": bool, "amount", "payment_datetime", "sender_name", "bank_app", "address"}
+    """
+    google_key = config.google_api_key
+    if not google_key or not file_paths:
+        return None
+
+    file_path = file_paths[0]
+    if not os.path.exists(file_path):
+        return None
+
+    try:
+        with open(file_path, "rb") as f:
+            base64_data = base64.b64encode(f.read()).decode("utf-8")
+    except OSError as e:
+        logger.error(f"[sale-detect] Erro ao ler imagem: {e}")
+        return None
+
+    mime_type = _get_mime_type(file_path)
+    media_model = config.whatsapp_client_media_model or "gemini-3.1-flash-lite"
+    prompt = (
+        "Você é um assistente de e-commerce brasileiro. Analise esta imagem e determine se é um "
+        "COMPROVANTE DE PAGAMENTO PIX ou transferência bancária (print de app de banco mostrando "
+        "pagamento realizado, geralmente com valor em R$, data/hora e indicação de sucesso).\n\n"
+        f"Texto que veio junto com a imagem (pode conter endereço de entrega): \"{caption_text}\"\n\n"
+        "Se FOR um comprovante de pagamento, retorne APENAS JSON:\n"
+        "{\"is_payment_receipt\": true, \"amount\": \"valor como texto, ex: 'R$ 15,00', ou null\", "
+        "\"payment_datetime\": \"data/hora visível no comprovante ou null\", "
+        "\"sender_name\": \"nome de quem pagou, se visível, ou null\", "
+        "\"bank_app\": \"nome do banco/app se identificável ou null\", "
+        "\"address\": \"endereço de entrega mencionado no texto acima, ou null\"}\n\n"
+        "Se NÃO for um comprovante de pagamento (foto comum, produto, documento, print de outra coisa), "
+        "retorne APENAS: {\"is_payment_receipt\": false}\n"
+        "NÃO invente valores que não estão visíveis — use null.\n"
+    )
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
+        payload = {
+            "contents": [{"parts": [
+                {"inlineData": {"mimeType": mime_type, "data": base64_data}},
+                {"text": prompt},
+            ]}]
+        }
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        logger.warning(f"[sale-detect] Gemini falhou: {e}")
+        return None
+
+    try:
+        parsed = _extract_json_from_text(text_content)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception as e:
+        logger.info(f"[sale-detect] Erro ao parsear JSON: {e} — raw: {repr(text_content)[:200]}")
+        return None
+
+
 def _datetime_context_block() -> str:
     """Retorna bloco com data/hora atual, dia da semana e tipo de dia para injetar no contexto do LLM."""
     from datetime import datetime as _dt
@@ -4850,8 +5015,18 @@ def pre_gateway_dispatch(*args, **kwargs):
 
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
+    sale_detection = None
     if media_info["has_media"] and media_info["media_urls"]:
         media_type = media_info["media_type"]
+        # Detecção de comprovante de pagamento — roda ANTES de _process_media_message porque
+        # essa função apaga o arquivo físico assim que termina (privacidade: sem guardar mídia).
+        # Aqui só LEMOS o arquivo, sem apagar; quem apaga continua sendo o fluxo normal abaixo.
+        if media_type == "image":
+            try:
+                _caption_text = (getattr(event, "text", "") or "").strip()
+                sale_detection = _detect_and_extract_sale_from_image(media_info["media_urls"], _caption_text)
+            except Exception as sale_detect_err:
+                logger.error(f"[sale-detect] Erro ao analisar imagem para comprovante: {sale_detect_err}")
         if media_type in ["ptt", "audio", "image"]:
             result_text = _process_media_message(event)
             if result_text:
@@ -4906,6 +5081,48 @@ def pre_gateway_dispatch(*args, **kwargs):
     
     is_owner = (_normalize_brazilian_phone(clean_sender) == _normalize_brazilian_phone(clean_owner))
     is_self_chat = (clean_sender == clean_chat) and is_owner
+
+    # Comprovante de pagamento detectado num cliente — registra a venda (pendente de revisão),
+    # confirma o pedido pro cliente na hora, e avisa o dono no self-chat.
+    if sale_detection and sale_detection.get("is_payment_receipt") and not is_owner:
+        try:
+            personal_contacts = _load_personal_contacts()
+            contact_name = (
+                (personal_contacts.get(chat_id) or {}).get("name")
+                or getattr(event, "sender_name", None)
+                or getattr(event, "senderName", None)
+                or clean_sender
+            )
+            sales = _load_sales()
+            sale_id = _next_sale_id(sales)
+            sales[sale_id] = {
+                "contact_key": chat_id,
+                "contact_name": contact_name,
+                "amount": sale_detection.get("amount"),
+                "payment_datetime": sale_detection.get("payment_datetime"),
+                "sender_name": sale_detection.get("sender_name"),
+                "bank_app": sale_detection.get("bank_app"),
+                "address": sale_detection.get("address"),
+                "status": "pending_review",
+                "detected_at": time.time(),
+            }
+            _save_sales(sales)
+            logger.info(f"[sale-detect] Venda {sale_id} registrada para {contact_name} ({chat_id})")
+
+            if chat_id:
+                _human_send(chat_id, "Recebemos seu comprovante! Pedido confirmado 🙏")
+
+            owner_number_clean = clean_owner
+            if owner_number_clean:
+                owner_chat = f"{owner_number_clean}@s.whatsapp.net"
+                _human_send(
+                    owner_chat,
+                    f"💰 Nova venda detectada — aguardando sua revisão:\n{_format_sale_record(sale_id, sales[sale_id])}\n\n"
+                    f"`confirmar venda {sale_id}` ou `rejeitar venda {sale_id}`"
+                )
+        except Exception as sale_action_err:
+            logger.error(f"[sale-detect] Erro ao registrar venda: {sale_action_err}")
+        return {"action": "skip", "reason": "sale-detected"}
 
     # Transcrever áudios ENVIADOS pelo André para enriquecer o style learning
     if is_owner and media_info["has_media"] and media_info["media_type"] in ["ptt", "audio"]:
@@ -5071,6 +5288,12 @@ def pre_gateway_dispatch(*args, **kwargs):
             "• Toda ação de adicionar/editar/remover/apagar pede confirmação (*sim*/*não*) antes de executar — "
             "e dá pra emendar mais detalhes (ex: um link) antes de confirmar\n"
             "• O bot usa o catálogo pra responder clientes/amigos que perguntarem sobre produtos\n\n"
+            "*💰 VENDAS (comprovante Pix)*\n"
+            "• Quando um cliente manda print de comprovante Pix, o bot detecta sozinho, confirma o "
+            "pedido pra ele na hora e registra a venda como pendente de revisão sua\n"
+            "• Ver: `listar vendas` / `vendas pendentes`\n"
+            "• Revisar: `confirmar venda v1` ou `rejeitar venda v1`\n"
+            "• Endereço só é capturado se vier no mesmo print (legenda/texto junto)\n\n"
             "*🔍 CONSULTAR HISTÓRICO*\n"
             "• _\"o que a Isabel falou?\"_ — busca histórico real da conversa\n"
             "• _\"o que João me mandou ontem?\"_ — funciona com qualquer contato\n\n"
@@ -5118,6 +5341,50 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id:
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "catalog-list-command"}
+
+    # Comando: listar vendas / vendas pendentes — determinístico (sem LLM)
+    _sales_list_keywords = [
+        "listar vendas", "lista vendas", "liste as vendas", "liste vendas",
+        "mostrar vendas", "mostre as vendas", "mostre vendas", "ver vendas",
+        "vendas pendentes", "vendas cadastradas", "quais vendas",
+    ]
+    _normalized_for_sales_list = _normalize_text(normalized_msg)
+    if is_owner and any(kw in _normalized_for_sales_list for kw in _sales_list_keywords):
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        sales = _load_sales()
+        only_pending = "pendente" in _normalized_for_sales_list
+        items = {k: v for k, v in sales.items() if not only_pending or v.get("status") == "pending_review"}
+        if not items:
+            reply = "💰 Nenhuma venda pendente." if only_pending else "💰 Nenhuma venda registrada ainda."
+        else:
+            lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "")]
+            for sale_id, sale in items.items():
+                lines.append("\n" + _format_sale_record(sale_id, sale))
+            reply = "\n".join(lines)
+        if chat_id:
+            _human_send(chat_id, reply)
+        return {"action": "skip", "reason": "sales-list-command"}
+
+    # Comando: confirmar venda <id> / rejeitar venda <id> — determinístico (sem LLM,
+    # decisão sobre dinheiro não deveria depender de classificação por linguagem natural)
+    _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", normalized_msg, re.IGNORECASE)
+    if is_owner and _sale_review_match:
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        action_word, sale_id = _sale_review_match.group(1).lower(), _sale_review_match.group(2).strip()
+        sales = _load_sales()
+        if sale_id not in sales:
+            reply = f"❌ Venda \"{sale_id}\" não encontrada."
+        else:
+            sales[sale_id]["status"] = "confirmed" if action_word == "confirmar" else "rejected"
+            sales[sale_id]["reviewed_at"] = time.time()
+            _save_sales(sales)
+            reply = (
+                f"✅ Venda {sale_id} confirmada." if action_word == "confirmar"
+                else f"🗑️ Venda {sale_id} marcada como rejeitada."
+            )
+        if chat_id:
+            _human_send(chat_id, reply)
+        return {"action": "skip", "reason": "sale-review-command"}
 
     # Comando: update contact <nome> <campo>=<valor> [campo=valor ...]
     # Exemplo: "update contact Isabel relationship=Filha notes=minha filha mais velha"

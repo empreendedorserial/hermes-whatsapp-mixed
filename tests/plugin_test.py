@@ -1692,6 +1692,167 @@ class TestPendingContactUpdate(BaseWhatsAppManagerTest):
         mock_update.assert_called()
 
 
+class TestSalesDetection(BaseWhatsAppManagerTest):
+    """Testes para a detecção de comprovante Pix e o registro/revisão de vendas."""
+
+    CLIENT_ID = "5511888877777@s.whatsapp.net"
+
+    def _make_image_event(self, sender_id, chat_id, caption=""):
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = sender_id
+        event.source.chat_id = chat_id
+        event.text = caption
+        event.has_media = True
+        event.media_type = "image"
+        event.media_urls = ["/path/to/receipt.jpg"]
+        return event
+
+    def _make_text_event(self, sender_id, chat_id, text):
+        event = MagicMock()
+        event.source.platform = "whatsapp"
+        event.source.user_id = sender_id
+        event.source.chat_id = chat_id
+        event.text = text
+        event.has_media = False
+        return event
+
+    def _dispatch_event(self, event):
+        pre_dispatch = self.ctx.hooks.get("pre_gateway_dispatch")
+        gateway = MagicMock()
+        gateway._session_key_for_source.return_value = "sess_sales"
+        gateway._session_model_overrides = {}
+        return pre_dispatch("pre_gateway_dispatch", {"event": event, "gateway": gateway})
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("whatsapp_manager._load_personal_contacts", return_value={})
+    @patch("whatsapp_manager._process_media_message", return_value="foto de um comprovante de pagamento")
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={
+        "is_payment_receipt": True, "amount": "R$ 15,00", "payment_datetime": "28/07 14:30",
+        "sender_name": "Maria Silva", "bank_app": "Nubank", "address": None,
+    })
+    @patch("urllib.request.urlopen")
+    def test_client_payment_receipt_is_recorded_and_notified(
+        self, mock_urlopen, mock_detect, mock_process, mock_contacts, mock_load, mock_save
+    ):
+        """Comprovante de cliente: grava a venda como pending_review e avisa cliente + dono."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._human_send") as mock_send:
+            event = self._make_image_event(self.CLIENT_ID, self.CLIENT_ID, caption="aqui está o comprovante")
+            res = self._dispatch_event(event)
+
+        self.assertEqual(res, {"action": "skip", "reason": "sale-detected"})
+        mock_save.assert_called_once()
+        saved_sales = mock_save.call_args[0][0]
+        saved_sale = next(iter(saved_sales.values()))
+        self.assertEqual(saved_sale["status"], "pending_review")
+        self.assertEqual(saved_sale["amount"], "R$ 15,00")
+        self.assertEqual(saved_sale["contact_key"], self.CLIENT_ID)
+        # Confirma pro cliente + avisa o dono = 2 mensagens
+        self.assertEqual(mock_send.call_count, 2)
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._process_media_message", return_value="uma selfie")
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={
+        "is_payment_receipt": True, "amount": "R$ 15,00",
+    })
+    @patch("urllib.request.urlopen")
+    def test_owner_sending_image_never_triggers_sale(self, mock_urlopen, mock_detect, mock_process, mock_save):
+        """Mesmo que a detecção retorne positivo, imagem do PRÓPRIO dono nunca vira venda."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_image_event(owner_id, owner_id, caption="teste")
+        res = self._dispatch_event(event)
+
+        self.assertNotEqual(res, {"action": "skip", "reason": "sale-detected"})
+        mock_save.assert_not_called()
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._process_media_message", return_value="uma foto de um gato")
+    @patch("whatsapp_manager._detect_and_extract_sale_from_image", return_value={"is_payment_receipt": False})
+    @patch("urllib.request.urlopen")
+    def test_non_receipt_image_does_not_create_sale(self, mock_urlopen, mock_detect, mock_process, mock_save):
+        """Imagem comum (não comprovante) não vira venda nem interrompe o fluxo normal."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        event = self._make_image_event(self.CLIENT_ID, self.CLIENT_ID, caption="olha meu gato")
+        res = self._dispatch_event(event)
+
+        self.assertNotEqual(res, {"action": "skip", "reason": "sale-detected"})
+        mock_save.assert_not_called()
+
+    @patch("urllib.request.urlopen")
+    def test_list_sales_command_is_deterministic_no_llm(self, mock_urlopen):
+        """'listar vendas' responde direto do arquivo, sem passar por _classify_owner_intent."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        with patch("whatsapp_manager._load_sales", return_value={
+            "v1": {"contact_name": "João", "amount": "R$ 15,00", "status": "pending_review"},
+        }), patch("whatsapp_manager._classify_owner_intent") as mock_intent:
+            event = self._make_text_event(owner_id, owner_id, "listar vendas")
+            res = self._dispatch_event(event)
+            mock_intent.assert_not_called()
+
+        self.assertEqual(res, {"action": "skip", "reason": "sales-list-command"})
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={
+        "v1": {"contact_name": "João", "amount": "R$ 15,00", "status": "pending_review"},
+    })
+    @patch("urllib.request.urlopen")
+    def test_confirm_sale_command_updates_status(self, mock_urlopen, mock_load, mock_save):
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "confirmar venda v1")
+        res = self._dispatch_event(event)
+
+        self.assertEqual(res, {"action": "skip", "reason": "sale-review-command"})
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved["v1"]["status"], "confirmed")
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("urllib.request.urlopen")
+    def test_confirm_unknown_sale_id_does_not_crash(self, mock_urlopen, mock_load, mock_save):
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "confirmar venda v99")
+        res = self._dispatch_event(event)
+
+        self.assertEqual(res, {"action": "skip", "reason": "sale-review-command"})
+        mock_save.assert_not_called()
+
+    def test_next_sale_id_skips_existing(self):
+        import whatsapp_manager
+        existing = {"v1": {}, "v2": {}}
+        self.assertEqual(whatsapp_manager._next_sale_id(existing), "v3")
+
+
 class TestProductCatalog(BaseWhatsAppManagerTest):
     """Testes para o catálogo de produtos/serviços: cadastro/edição/remoção via chat com confirmação."""
 
