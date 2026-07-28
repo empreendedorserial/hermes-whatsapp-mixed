@@ -1929,6 +1929,84 @@ class TestProductCatalog(BaseWhatsAppManagerTest):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0][1]["name"], "Consultoria")
 
+    @patch("whatsapp_manager._save_product_catalog")
+    @patch("whatsapp_manager._load_product_catalog", return_value={})
+    @patch("whatsapp_manager._extract_catalog_update_via_llm", return_value={"link": "https://chatkanban.cloud/"})
+    @patch("urllib.request.urlopen")
+    def test_amend_during_add_confirmation_updates_draft_without_saving(self, mock_urlopen, mock_amend, mock_load, mock_save):
+        """Mensagem que não é sim/não durante a confirmação de cadastro emenda o rascunho (ex: link) em vez de ser ignorada."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "add",
+            "item": {"name": "Sistema de agentes", "description": "selfhosting", "price": "R$ 150"},
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("inclua o link do produto https://chatkanban.cloud/")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        mock_save.assert_not_called()
+        pending = whatsapp_manager._pending_catalog_action[self.SENDER_ID]
+        self.assertEqual(pending["item"]["link"], "https://chatkanban.cloud/")
+        self.assertEqual(pending["item"]["name"], "Sistema de agentes")
+
+        # Confirmar em seguida deve salvar já com o link emendado
+        res2 = self._dispatch("sim")
+        self.assertEqual(res2, {"action": "skip", "reason": "catalog-confirmation"})
+        mock_save.assert_called_once()
+        saved_item = next(iter(mock_save.call_args[0][0].values()))
+        self.assertEqual(saved_item["link"], "https://chatkanban.cloud/")
+
+    @patch("whatsapp_manager._extract_catalog_update_via_llm", return_value={})
+    @patch("urllib.request.urlopen")
+    def test_unrelated_message_during_confirmation_still_asks_sim_nao(self, mock_urlopen, mock_amend):
+        """Mensagem sem nenhum campo extraível não vira emenda silenciosa — mantém o pedido de confirmação."""
+        import whatsapp_manager
+        whatsapp_manager._pending_catalog_action[self.SENDER_ID] = {
+            "action": "add", "item": {"name": "Mentoria"},
+            "created_at": whatsapp_manager.time.time(),
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        res = self._dispatch("beleza")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-confirmation"})
+        self.assertIn(self.SENDER_ID, whatsapp_manager._pending_catalog_action)
+
+    @patch("urllib.request.urlopen")
+    def test_list_catalog_command_is_deterministic_no_llm(self, mock_urlopen):
+        """'listar catálogo' responde direto do arquivo, sem passar por _classify_owner_intent."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._load_product_catalog", return_value={
+            "a": {"name": "Mentoria Individual", "price": "R$ 500", "active": True},
+            "b": {"name": "Produto Antigo", "active": False},
+        }), patch("whatsapp_manager._classify_owner_intent") as mock_intent:
+            res = self._dispatch("listar catálogo")
+            mock_intent.assert_not_called()
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-list-command"})
+
+    @patch("urllib.request.urlopen")
+    def test_list_catalog_empty_message(self, mock_urlopen):
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with patch("whatsapp_manager._load_product_catalog", return_value={}):
+            res = self._dispatch("quais produtos")
+
+        self.assertEqual(res, {"action": "skip", "reason": "catalog-list-command"})
+
 
 class TestFullSummaryFunctions(BaseWhatsAppManagerTest):
     """Testes para _update_full_summary, _compress_full_summary e _sync_full_summaries."""

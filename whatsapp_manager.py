@@ -4116,7 +4116,7 @@ def _find_catalog_matches(identifier: str) -> list[tuple[str, dict]]:
 def _format_catalog_item(item: dict, changes: dict | None = None) -> str:
     """Formata um item do catálogo para exibição ao owner, com diff opcional (valor atual → novo)."""
     lines = [f"Nome: {item.get('name', '')}"]
-    for field, label in (("description", "Descrição"), ("price", "Preço")):
+    for field, label in (("description", "Descrição"), ("price", "Preço"), ("link", "Link")):
         current = item.get(field) or "—"
         if changes and field in changes:
             lines.append(f"{label}: {current} → {changes[field]}")
@@ -4138,6 +4138,8 @@ def _build_catalog_context_block() -> str:
             line += f" ({item['price']})"
         if item.get("description"):
             line += f": {item['description']}"
+        if item.get("link"):
+            line += f" — {item['link']}"
         lines.append(line)
     return "\n".join(lines) + "\n\n"
 
@@ -4187,9 +4189,10 @@ def _extract_catalog_item_via_llm(message: str) -> dict:
         f"\"{message}\"\n\n"
         "Extraia os campos e retorne APENAS JSON:\n"
         "  {\"name\": \"nome do produto/serviço\", \"description\": \"descrição curta ou null\", "
-        "\"price\": \"preço como texto (ex: 'R$ 500') ou null\"}\n"
+        "\"price\": \"preço como texto (ex: 'R$ 500') ou null\", "
+        "\"link\": \"URL do produto/página, se mencionada, ou null\"}\n"
         "Se não houver um nome claro de produto/serviço, retorne {\"name\": null}.\n"
-        "NÃO invente descrição ou preço que não foram mencionados — use null.\n"
+        "NÃO invente descrição, preço ou link que não foram mencionados — use null.\n"
     )
     text_content = _catalog_llm_call(prompt)
     if not text_content:
@@ -4198,23 +4201,26 @@ def _extract_catalog_item_via_llm(message: str) -> dict:
         result = _extract_json_from_text(text_content)
         if not isinstance(result, dict) or not result.get("name"):
             return {}
-        return {k: v for k, v in result.items() if k in ("name", "description", "price") and v is not None}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link") and v is not None}
     except Exception as e:
         logger.info(f"[catalog-extract] Erro ao parsear JSON de cadastro: {e} — raw: {repr(text_content)[:200]}")
         return {}
 
 
 def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
-    """Extrai SOMENTE os campos (name/description/price) explicitamente mencionados para edição."""
+    """Extrai SOMENTE os campos (name/description/price/link) explicitamente mencionados para edição."""
     prompt = (
         f"O usuário pediu para editar o produto/serviço '{product_name}' com a seguinte instrução:\n"
         f"\"{message}\"\n\n"
         "Extraia SOMENTE os campos explicitamente mencionados para alteração e retorne JSON.\n"
-        "Campos permitidos: name, description, price.\n"
+        "Campos permitidos: name, description, price, link.\n"
         "NÃO invente valores. Se um campo não foi mencionado, não o inclua no JSON.\n"
+        "Se a mensagem não mencionar nenhum campo do produto (ex: é só um comentário, uma pergunta, "
+        "ou algo sem relação com nome/descrição/preço/link), retorne {}.\n"
         "Exemplos:\n"
         "  'muda o preço pra 350' → {\"price\": \"R$ 350\"}\n"
         "  'atualiza a descrição: agora inclui suporte por 30 dias' → {\"description\": \"agora inclui suporte por 30 dias\"}\n"
+        "  'inclua o link do produto https://exemplo.com' → {\"link\": \"https://exemplo.com\"}\n"
     )
     text_content = _catalog_llm_call(prompt)
     if not text_content:
@@ -4223,7 +4229,7 @@ def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
         result = _extract_json_from_text(text_content)
         if not isinstance(result, dict):
             return {}
-        return {k: v for k, v in result.items() if k in ("name", "description", "price") and v is not None}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link") and v is not None}
     except Exception as e:
         logger.info(f"[catalog-extract] Erro ao parsear JSON de edição: {e} — raw: {repr(text_content)[:200]}")
         return {}
@@ -5012,7 +5018,9 @@ def pre_gateway_dispatch(*args, **kwargs):
             "• Cadastrar: _\"adiciona um produto: mentoria individual, R$ 500\"_\n"
             "• Editar: _\"muda o preço da mentoria pra 550\"_\n"
             "• Remover: _\"remove o produto mentoria individual\"_\n"
-            "• Toda ação pede confirmação (*sim*/*não*) antes de salvar\n"
+            "• Listar: `listar catálogo` / `quais produtos`\n"
+            "• Toda ação de adicionar/editar/remover pede confirmação (*sim*/*não*) antes de salvar — "
+            "e dá pra emendar mais detalhes (ex: um link) antes de confirmar\n"
             "• O bot usa o catálogo pra responder clientes/amigos que perguntarem sobre produtos\n\n"
             "*🔍 CONSULTAR HISTÓRICO*\n"
             "• _\"o que a Isabel falou?\"_ — busca histórico real da conversa\n"
@@ -5030,6 +5038,37 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id:
             _human_send(chat_id, help_text)
         return {"action": "skip", "reason": "help-command"}
+
+    # Comando: listar catálogo — determinístico (sem LLM), pra não cair no chat genérico
+    # e responder algo sem relação (ex: confundir com o catálogo de skills do sistema).
+    _catalog_list_keywords = [
+        "listar catalogo", "lista catalogo", "liste o catalogo", "liste catalogo",
+        "mostrar catalogo", "mostre o catalogo", "mostre catalogo", "ver catalogo",
+        "catalogo de produtos", "quais produtos", "quais os produtos", "meus produtos",
+        "produtos cadastrados", "produtos e servicos", "ver produtos",
+    ]
+    _normalized_for_catalog_list = _normalize_text(normalized_msg)
+    if is_owner and any(kw in _normalized_for_catalog_list for kw in _catalog_list_keywords):
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        catalog = _load_product_catalog()
+        if not catalog:
+            reply = "📋 Nenhum produto cadastrado ainda."
+        else:
+            lines = ["📋 *Catálogo de produtos/serviços*"]
+            for item in catalog.values():
+                status = "" if item.get("active", True) else " _(inativo)_"
+                block = f"\n*{item.get('name', '')}*{status}"
+                if item.get("price"):
+                    block += f"\nPreço: {item['price']}"
+                if item.get("description"):
+                    block += f"\nDescrição: {item['description']}"
+                if item.get("link"):
+                    block += f"\nLink: {item['link']}"
+                lines.append(block)
+            reply = "\n".join(lines)
+        if chat_id:
+            _human_send(chat_id, reply)
+        return {"action": "skip", "reason": "catalog-list-command"}
 
     # Comando: update contact <nome> <campo>=<valor> [campo=valor ...]
     # Exemplo: "update contact Isabel relationship=Filha notes=minha filha mais velha"
@@ -5182,7 +5221,37 @@ def pre_gateway_dispatch(*args, **kwargs):
                 del _pending_catalog_action[sender_id]
                 reply = "❌ Operação cancelada."
             else:
-                reply = "Responda *sim* para confirmar ou *não* para cancelar a operação pendente no catálogo."
+                # Não é sim/não — tentar tratar como emenda ao rascunho pendente
+                # (ex: "inclua o link do produto https://...") em vez de só repetir o pedido.
+                catalog_action = pending_catalog.get("action")
+                amendments = {}
+                if catalog_action == "add":
+                    current_name = pending_catalog.get("item", {}).get("name") or "produto"
+                    amendments = _extract_catalog_update_via_llm(current_name, msg_text)
+                elif catalog_action == "update":
+                    base_item = _load_product_catalog().get(pending_catalog.get("key", ""), {})
+                    amendments = _extract_catalog_update_via_llm(base_item.get("name") or "produto", msg_text)
+
+                if amendments and catalog_action == "add":
+                    pending_catalog["item"].update(amendments)
+                    pending_catalog["created_at"] = time.time()
+                    _pending_catalog_action[sender_id] = pending_catalog
+                    reply = (
+                        f"📋 Confirma o cadastro?\n{_format_catalog_item(pending_catalog['item'])}\n\n"
+                        "Responda *sim* para salvar ou *não* para cancelar."
+                    )
+                elif amendments and catalog_action == "update":
+                    pending_catalog["changes"].update(amendments)
+                    pending_catalog["created_at"] = time.time()
+                    _pending_catalog_action[sender_id] = pending_catalog
+                    base_item = _load_product_catalog().get(pending_catalog["key"], {})
+                    reply = (
+                        f"📋 Confirma a alteração em \"{base_item.get('name', '')}\"?\n"
+                        f"{_format_catalog_item(base_item, pending_catalog['changes'])}\n\n"
+                        "Responda *sim* para salvar ou *não* para cancelar."
+                    )
+                else:
+                    reply = "Responda *sim* para confirmar ou *não* para cancelar a operação pendente no catálogo."
             if chat_id:
                 _human_send(chat_id, reply)
             return {"action": "skip", "reason": "catalog-confirmation"}
