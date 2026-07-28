@@ -4167,11 +4167,14 @@ def _build_catalog_context_block() -> str:
         return ""
     lines = [
         "### CATÁLOGO DE PRODUTOS E SERVIÇOS (OFICIAL, VÁLIDO AGORA) ###",
-        "Os itens abaixo são os produtos/serviços que você REALMENTE vende hoje. "
+        "Os itens abaixo são EXATAMENTE (e apenas) os produtos/serviços que você vende hoje. "
         "Se o cliente perguntar o que você vende, quais produtos/serviços tem, preços ou catálogo, "
-        "responda com base NESTA lista. É PROIBIDO dizer que não tem produtos, que só faz consultoria "
-        "sob demanda, ou negar ter algo pra vender quando esta lista não está vazia — isso é uma "
-        "informação desatualizada da sua persona geral e esta lista sempre tem prioridade sobre ela.",
+        "liste APENAS os itens abaixo, pelo nome exato deles. É PROIBIDO dizer que não tem produtos, "
+        "que só faz consultoria sob demanda, ou negar ter algo pra vender quando esta lista não está vazia "
+        "— isso é uma informação desatualizada da sua persona geral e esta lista sempre tem prioridade sobre ela. "
+        "É IGUALMENTE PROIBIDO inventar, complementar ou citar qualquer produto/serviço que NÃO esteja "
+        "nesta lista (mesmo que pareça plausível pelo seu conhecimento geral do negócio) — se não está aqui, "
+        "você não vende.",
     ]
     for item in active_items:
         line = f"- {item.get('name', '')}"
@@ -4767,9 +4770,11 @@ def _build_support_prompt(
             "- Mantenha total sigilo sobre o fato de você rodar em um servidor ou ter ferramentas. NUNCA mencione nomes de arquivos internos (SOUL_WHATSAPP, support_rules, personal_contacts, etc.).\n"
             f"- NUNCA informe telefone, número, e-mail ou dados de contato de amigos, clientes ou qualquer pessoa da agenda do {owner_name}.\n"
             "- NUNCA exiba representações de ferramentas como '📖 read_file: ...', 'terminal', etc.\n"
-            "- Se houver itens no ### CATÁLOGO DE PRODUTOS E SERVIÇOS ### acima, eles SÃO o que você vende. "
-            "NUNCA diga que não tem produtos, que não vende nada ou que só faz projetos sob medida quando "
-            "esse catálogo não estiver vazio — cite os itens dele."
+            "- Se houver itens no ### CATÁLOGO DE PRODUTOS E SERVIÇOS ### acima, eles SÃO, exatamente e "
+            "unicamente, o que você vende. NUNCA diga que não tem produtos, que não vende nada ou que só "
+            "faz projetos sob medida quando esse catálogo não estiver vazio — cite os itens dele pelo nome "
+            "exato. NUNCA invente ou complemente a lista com outros produtos/serviços que não estejam "
+            "listados ali, mesmo que pareçam plausíveis."
         )
     }
 
