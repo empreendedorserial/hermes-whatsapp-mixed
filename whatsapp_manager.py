@@ -5145,6 +5145,26 @@ def pre_gateway_dispatch(*args, **kwargs):
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
     sale_detection = None
+    if media_info["has_media"] or media_info["media_urls"] or media_info["media_type"]:
+        logger.info(f"[sale-detect] _get_media_info bruto: {media_info!r}")
+    elif os.path.isdir("/opt/data/.hermes/image_cache") and any(
+        time.time() - os.path.getmtime(os.path.join("/opt/data/.hermes/image_cache", f)) < 20
+        for f in os.listdir("/opt/data/.hermes/image_cache")
+    ):
+        # _get_media_info não achou nada, mas uma imagem foi cacheada pelo bridge nos
+        # últimos 20s — provável mudança de estrutura do evento no adapter nativo do
+        # Hermes 0.19. Diagnóstico único: descobrir onde o caminho da imagem realmente
+        # está no objeto event, já que "media_urls"/"hasMedia" não o encontraram.
+        try:
+            _event_attrs = {
+                a: repr(getattr(event, a))[:200]
+                for a in dir(event)
+                if not a.startswith("_")
+                and any(kw in a.lower() for kw in ("media", "image", "cache", "attach", "file", "path", "url"))
+            }
+            logger.info(f"[sale-detect] _get_media_info vazio mas imagem cacheada recentemente — atributos do event: {_event_attrs!r}")
+        except Exception as _diag_err:
+            logger.info(f"[sale-detect] Erro no diagnóstico de atributos do event: {_diag_err}")
     if media_info["has_media"] and media_info["media_urls"]:
         media_type = media_info["media_type"]
         logger.info(f"[sale-detect] mídia recebida: media_type={media_type!r} urls={media_info['media_urls']!r}")
