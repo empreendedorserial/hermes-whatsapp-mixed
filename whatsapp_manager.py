@@ -45,13 +45,19 @@ class PluginConfig:
     def google_api_key(self) -> str:
         key = os.getenv("GOOGLE_API_KEY", "").strip()
         if not key:
-            # Fallback: ler do credential_pool.gemini no auth.json do Hermes
+            # Fallback: ler do credential_pool.gemini no auth.json do Hermes. Esse campo pode
+            # ser uma string única OU uma lista de chaves (rotação) — usar a primeira da lista
+            # quando for o caso, em vez de chamar .strip() direto nela (o que sempre falhava
+            # silenciosamente e deixava a chave vazia pro processo do gateway).
             try:
                 hermes_home = os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
                 auth_path = Path(hermes_home) / "auth.json"
                 if auth_path.exists():
                     auth = json.loads(auth_path.read_text(encoding="utf-8"))
-                    key = (auth.get("credential_pool", {}).get("gemini", "") or "").strip()
+                    pool_gemini = auth.get("credential_pool", {}).get("gemini", "")
+                    if isinstance(pool_gemini, list):
+                        pool_gemini = pool_gemini[0] if pool_gemini else ""
+                    key = (pool_gemini or "").strip()
             except Exception:
                 pass
         return key
@@ -4524,7 +4530,13 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
     """
     google_key = config.google_api_key
     if not google_key or not file_paths:
-        logger.info(f"[sale-detect] Abortado cedo — google_key={'sim' if google_key else 'não'} file_paths={file_paths!r}")
+        _raw_google = os.environ.get("GOOGLE_API_KEY")
+        _raw_openrouter = os.environ.get("OPENROUTER_API_KEY")
+        logger.info(
+            f"[sale-detect] Abortado cedo — google_key={'sim' if google_key else 'não'} file_paths={file_paths!r} "
+            f"— os.environ direto: GOOGLE_API_KEY={'presente(' + str(len(_raw_google)) + ' chars)' if _raw_google else 'ausente'} "
+            f"OPENROUTER_API_KEY={'presente' if _raw_openrouter else 'ausente'} total_env_vars={len(os.environ)}"
+        )
         return None
 
     file_path = file_paths[0]
@@ -5159,6 +5171,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     # Processamento de Mídia (Áudio e Imagem) via Gemini
     media_info = _get_media_info(event)
     sale_detection = None
+    image_analysis_attempted = False
     if media_info["has_media"] and media_info["media_urls"]:
         media_type = media_info["media_type"]
         logger.info(f"[sale-detect] mídia recebida: media_type={media_type!r} urls={media_info['media_urls']!r}")
@@ -5166,6 +5179,7 @@ def pre_gateway_dispatch(*args, **kwargs):
         # essa função apaga o arquivo físico assim que termina (privacidade: sem guardar mídia).
         # Aqui só LEMOS o arquivo, sem apagar; quem apaga continua sendo o fluxo normal abaixo.
         if media_type == "image":
+            image_analysis_attempted = True
             try:
                 _caption_text = (getattr(event, "text", "") or "").strip()
                 sale_detection = _detect_and_extract_sale_from_image(media_info["media_urls"], _caption_text)
@@ -5281,6 +5295,51 @@ def pre_gateway_dispatch(*args, **kwargs):
         except Exception as sale_action_err:
             logger.error(f"[sale-detect] Erro ao registrar venda: {sale_action_err}")
         return {"action": "skip", "reason": "sale-detected"}
+
+    # A análise da imagem foi tentada mas falhou tecnicamente (chave ausente, erro de rede,
+    # JSON inválido, etc.) — não dá pra saber se era um comprovante ou não. Em vez de perder
+    # silenciosamente um pagamento real, registra como "não validado" e avisa o dono conferir
+    # manualmente. Não interrompe o fluxo normal (o LLM ainda responde ao cliente normalmente).
+    elif image_analysis_attempted and sale_detection is None and not is_owner:
+        try:
+            personal_contacts = _load_personal_contacts()
+            contact_name = (
+                (personal_contacts.get(chat_id) or {}).get("name")
+                or getattr(event, "sender_name", None)
+                or getattr(event, "senderName", None)
+                or clean_sender
+            )
+            sales = _load_sales()
+            sale_id = _next_sale_id(sales)
+            sales[sale_id] = {
+                "contact_key": chat_id,
+                "contact_name": contact_name,
+                "amount": None,
+                "payment_datetime": None,
+                "sender_name": None,
+                "bank_app": None,
+                "address": None,
+                "status": "unvalidated",
+                "detected_at": time.time(),
+            }
+            _save_sales(sales)
+            logger.info(
+                f"[sale-detect] Análise falhou tecnicamente — venda {sale_id} registrada como "
+                f"não validada para {contact_name} ({chat_id})"
+            )
+
+            owner_number_clean = clean_owner
+            if owner_number_clean:
+                owner_chat = f"{owner_number_clean}@s.whatsapp.net"
+                _human_send(
+                    owner_chat,
+                    f"⚠️ {contact_name} mandou uma imagem que pode ser um comprovante de pagamento, mas não "
+                    f"consegui analisar automaticamente (falha técnica). Confira manualmente:\n"
+                    f"ID: {sale_id}\nCliente: {contact_name}\nStatus: não validado\n\n"
+                    f"`confirmar venda {sale_id}` ou `rejeitar venda {sale_id}`"
+                )
+        except Exception as sale_action_err:
+            logger.error(f"[sale-detect] Erro ao registrar venda não validada: {sale_action_err}")
 
     # Captura de endereço enviado DEPOIS do comprovante — roda como efeito colateral, sem
     # interromper o fluxo normal (o cliente pode estar falando de qualquer outra coisa também).
@@ -5564,7 +5623,10 @@ def pre_gateway_dispatch(*args, **kwargs):
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sales = _load_sales()
         only_pending = "pendente" in _normalized_for_sales_list
-        items = {k: v for k, v in sales.items() if not only_pending or v.get("status") == "pending_review"}
+        items = {
+            k: v for k, v in sales.items()
+            if not only_pending or v.get("status") in ("pending_review", "unvalidated")
+        }
         if not items:
             reply = "💰 Nenhuma venda pendente." if only_pending else "💰 Nenhuma venda registrada ainda."
         else:
