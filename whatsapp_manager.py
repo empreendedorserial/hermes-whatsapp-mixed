@@ -447,21 +447,27 @@ def _process_media_message(event) -> str | None:
         except Exception as e:
             logger.warning(f"[media] Gemini falhou: {e}")
 
-    # --- OpenAI gpt-4o (suporta áudio base64 via chat completions) ---
-    if openai_key and media_type in ["ptt", "audio"] and parts:
+    # --- OpenAI (áudio via gpt-4o-audio-preview, imagem via gpt-4o-mini) ---
+    if openai_key and parts:
         try:
-            audio_part = parts[0]
-            b64 = audio_part["inlineData"]["data"]
-            mime = audio_part["inlineData"]["mimeType"]
-            oai_model = "gpt-4o-audio-preview" if "audio" in (media_model or "") else "gpt-4o-audio-preview"
-            payload = {
-                "model": oai_model,
-                "modalities": ["text"],
-                "messages": [{"role": "user", "content": [
-                    {"type": "input_audio", "input_audio": {"data": b64, "format": "wav" if "wav" in mime else "mp3" if "mp3" in mime else "mp4" if "mp4" in mime else "wav"}},
-                    {"type": "text", "text": prompt},
-                ]}],
-            }
+            if media_type in ["ptt", "audio"]:
+                audio_part = parts[0]
+                b64 = audio_part["inlineData"]["data"]
+                mime = audio_part["inlineData"]["mimeType"]
+                payload = {
+                    "model": "gpt-4o-audio-preview",
+                    "modalities": ["text"],
+                    "messages": [{"role": "user", "content": [
+                        {"type": "input_audio", "input_audio": {"data": b64, "format": "wav" if "wav" in mime else "mp3" if "mp3" in mime else "mp4" if "mp4" in mime else "wav"}},
+                        {"type": "text", "text": prompt},
+                    ]}],
+                }
+            else:
+                content = [
+                    {"type": "image_url", "image_url": {"url": f"data:{p['inlineData']['mimeType']};base64,{p['inlineData']['data']}"}}
+                    for p in parts
+                ] + [{"type": "text", "text": prompt}]
+                payload = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": content}]}
             req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"}, method="POST")
             with urllib.request.urlopen(req, timeout=45) as resp:
                 result = json.loads(resp.read().decode())
@@ -469,20 +475,22 @@ def _process_media_message(event) -> str | None:
         except Exception as e:
             logger.warning(f"[media] OpenAI falhou: {e}")
 
-    # --- OpenRouter (Gemini via OR) ---
-    if openrouter_key and media_type in ["ptt", "audio"] and parts:
+    # --- OpenRouter (Gemini via OR — mesmo formato pra áudio e imagem) ---
+    if openrouter_key and parts:
         try:
-            audio_part = parts[0]
-            b64 = audio_part["inlineData"]["data"]
-            mime = audio_part["inlineData"]["mimeType"]
-            or_model = media_model or "google/gemini-flash-1.5-8b"
-            payload = {
-                "model": or_model,
-                "messages": [{"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            if media_type in ["ptt", "audio"]:
+                audio_part = parts[0]
+                content = [
+                    {"type": "image_url", "image_url": {"url": f"data:{audio_part['inlineData']['mimeType']};base64,{audio_part['inlineData']['data']}"}},
                     {"type": "text", "text": prompt},
-                ]}],
-            }
+                ]
+            else:
+                content = [
+                    {"type": "image_url", "image_url": {"url": f"data:{p['inlineData']['mimeType']};base64,{p['inlineData']['data']}"}}
+                    for p in parts
+                ] + [{"type": "text", "text": prompt}]
+            or_model = media_model or "google/gemini-flash-1.5-8b"
+            payload = {"model": or_model, "messages": [{"role": "user", "content": content}]}
             req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"}, method="POST")
             with urllib.request.urlopen(req, timeout=45) as resp:
                 result = json.loads(resp.read().decode())
@@ -4533,13 +4541,13 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
       {"is_payment_receipt": bool, "amount", "payment_datetime", "sender_name", "bank_app", "address"}
     """
     google_key = config.google_api_key
-    if not google_key or not file_paths:
-        _raw_google = os.environ.get("GOOGLE_API_KEY")
-        _raw_openrouter = os.environ.get("OPENROUTER_API_KEY")
+    openai_key = config.openai_api_key
+    openrouter_key = config.openrouter_api_key
+    if not (google_key or openai_key or openrouter_key) or not file_paths:
         logger.info(
-            f"[sale-detect] Abortado cedo — google_key={'sim' if google_key else 'não'} file_paths={file_paths!r} "
-            f"— os.environ direto: GOOGLE_API_KEY={'presente(' + str(len(_raw_google)) + ' chars)' if _raw_google else 'ausente'} "
-            f"OPENROUTER_API_KEY={'presente' if _raw_openrouter else 'ausente'} total_env_vars={len(os.environ)}"
+            f"[sale-detect] Abortado cedo — nenhum provider de IA disponível (google={'sim' if google_key else 'não'} "
+            f"openai={'sim' if openai_key else 'não'} openrouter={'sim' if openrouter_key else 'não'}) "
+            f"file_paths={file_paths!r}"
         )
         return None
 
@@ -4573,22 +4581,69 @@ def _detect_and_extract_sale_from_image(file_paths: list, caption_text: str = ""
         "NÃO invente valores que não estão visíveis — use null.\n"
     )
 
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
-        payload = {
-            "contents": [{"parts": [
-                {"inlineData": {"mimeType": mime_type, "data": base64_data}},
-                {"text": prompt},
-            ]}]
-        }
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode())
-            text_content = result["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        logger.warning(f"[sale-detect] Gemini falhou: {e}")
+    text_content = None
+
+    # --- Google Gemini direto ---
+    if google_key:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{media_model}:generateContent?key={google_key}"
+            payload = {
+                "contents": [{"parts": [
+                    {"inlineData": {"mimeType": mime_type, "data": base64_data}},
+                    {"text": prompt},
+                ]}]
+            }
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                text_content = result["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            logger.warning(f"[sale-detect] Gemini falhou: {e}")
+
+    # --- OpenAI (fallback quando GOOGLE_API_KEY não chega neste processo, ex: gateway) ---
+    if text_content is None and openai_key:
+        try:
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            }
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions", data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {openai_key}"}, method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                text_content = result["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.warning(f"[sale-detect] OpenAI falhou: {e}")
+
+    # --- OpenRouter (mesmo motivo do OpenAI acima) ---
+    if text_content is None and openrouter_key:
+        try:
+            or_model = media_model if "/" in (media_model or "") else "google/gemini-flash-1.5-8b"
+            payload = {
+                "model": or_model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}},
+                    {"type": "text", "text": prompt},
+                ]}],
+            }
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions", data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {openrouter_key}"}, method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                text_content = result["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.warning(f"[sale-detect] OpenRouter falhou: {e}")
+
+    if text_content is None:
         return None
 
     try:
