@@ -421,12 +421,16 @@ def _process_media_message(event) -> str | None:
         except OSError as read_err:
             logger.error(f"Erro ao ler arquivo de mídia para envio: {read_err}")
         finally:
-            # Remover o arquivo físico após carregar os dados em memória para honrar a diretriz de não armazenar mídias
-            try:
-                os.remove(file_path)
-                logger.info(f"Arquivo temporário de mídia removido para economizar espaço: {file_path}")
-            except OSError as delete_err:
-                logger.warning(f"Erro ao deletar arquivo de mídia temporário: {delete_err}")
+            # Imagens: NÃO apagar aqui. O Hermes 0.19+ também lê esse mesmo arquivo cacheado
+            # nativamente (attachment/vision_analyze) pra montar a mensagem multimodal — apagar
+            # antes disso causa "source is not a recognized image" no lado do Hermes. O cache
+            # de imagens (/opt/data/.hermes/image_cache/) é gerenciado pelo próprio Hermes.
+            if media_type != "image":
+                try:
+                    os.remove(file_path)
+                    logger.info(f"Arquivo temporário de mídia removido para economizar espaço: {file_path}")
+                except OSError as delete_err:
+                    logger.warning(f"Erro ao deletar arquivo de mídia temporário: {delete_err}")
 
     if not parts:
         return None

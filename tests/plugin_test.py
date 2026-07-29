@@ -1063,12 +1063,10 @@ class TestMediaMessageProcessing(BaseWhatsAppManagerTest):
         # O open deve ter sido chamado exatamente 5 vezes (limite de 5 imagens)
         self.assertEqual(mock_open.call_count, 5)
         
-        # O remove deve ter sido chamado exatamente 5 vezes
-        self.assertEqual(mock_remove.call_count, 5)
-        
-        # Verificar se as chamadas de remoção correspondem aos primeiros 5 arquivos
-        expected_removed = [unittest.mock.call(f"/path/to/photo{i}.jpg") for i in range(5)]
-        mock_remove.assert_has_calls(expected_removed, any_order=True)
+        # Imagens não são mais apagadas aqui — o Hermes 0.19+ também lê o mesmo arquivo
+        # cacheado nativamente pra montar a mensagem multimodal, e apagar antes disso
+        # quebra esse fluxo do lado do Hermes.
+        mock_remove.assert_not_called()
 
     @patch.dict(os.environ, {}, clear=True)
     def test_process_media_message_no_google_key(self):
