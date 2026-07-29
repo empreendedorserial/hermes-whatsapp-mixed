@@ -4433,16 +4433,23 @@ def _save_sales(sales: dict) -> None:
 
 
 def _next_sale_id(sales: dict) -> str:
-    """Gera um ID curto e sequencial (v1, v2, ...) fácil de digitar em comandos."""
-    n = 1
-    while f"v{n}" in sales:
+    """Gera um ID sequência+data+hora (ex: 001-29072026-1530) — fácil de digitar em comandos
+    e já mostra de cara quando o pedido entrou, sem precisar abrir o registro."""
+    from datetime import datetime as _dt
+    now_str = _dt.now().strftime("%d%m%Y-%H%M")
+    n = len(sales) + 1
+    sale_id = f"{n:03d}-{now_str}"
+    while sale_id in sales:
         n += 1
-    return f"v{n}"
+        sale_id = f"{n:03d}-{now_str}"
+    return sale_id
 
 
 def _format_sale_record(sale_id: str, sale: dict) -> str:
     """Formata um registro de venda para exibição ao dono."""
     lines = [f"ID: {sale_id}", f"Cliente: {sale.get('contact_name', '')}"]
+    if sale.get("product"):
+        lines.append(f"Produto: {sale['product']}")
     if sale.get("amount"):
         lines.append(f"Valor: {sale['amount']}")
     if sale.get("payment_datetime"):
@@ -4451,8 +4458,28 @@ def _format_sale_record(sale_id: str, sale: dict) -> str:
         lines.append(f"Nome no comprovante: {sale['sender_name']}")
     if sale.get("address"):
         lines.append(f"Endereço: {sale['address']}")
+    if sale.get("detected_at_str"):
+        lines.append(f"Registrado em: {sale['detected_at_str']}")
+    if sale.get("receipt_path"):
+        lines.append(f"Comprovante: {sale['receipt_path']}")
     lines.append(f"Status: {sale.get('status', 'pending_review')}")
     return "\n".join(lines)
+
+
+def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> str | None:
+    """Procura, na legenda da imagem e nas mensagens recentes do cliente, menção a algum item
+    ATIVO do catálogo (match por nome, sem precisar de LLM) — pra saber qual produto foi pago."""
+    catalog = _load_product_catalog()
+    active_names = [item.get("name", "") for item in catalog.values() if item.get("active", True) and item.get("name")]
+    if not active_names:
+        return None
+    texts = ([caption_text] if caption_text else []) + _find_recent_client_messages(chat_id)
+    for text in texts:
+        text_norm = _normalize_text(text)
+        for name in active_names:
+            if _normalize_text(name) in text_norm:
+                return name
+    return None
 
 
 def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 15) -> list[str]:
@@ -4801,11 +4828,33 @@ def _build_personal_prompt(contact_info: dict, relationship: str, history_sectio
     }
 
 
+def _build_client_orders_block(chat_id: str) -> str:
+    """Monta um resumo dos pedidos anteriores desse cliente específico (de sales.json), pra o
+    bot lembrar do que ele já comprou em vez de tratar cada conversa como se fosse a primeira."""
+    if not chat_id:
+        return ""
+    sales = _load_sales()
+    client_sales = {k: v for k, v in sales.items() if v.get("contact_key") == chat_id}
+    if not client_sales:
+        return ""
+    lines = ["### PEDIDOS ANTERIORES DESTE CLIENTE ###"]
+    for sale_id, sale in sorted(client_sales.items(), key=lambda kv: kv[1].get("detected_at", 0)):
+        line = f"- {sale_id}"
+        if sale.get("product"):
+            line += f": {sale['product']}"
+        if sale.get("amount"):
+            line += f" ({sale['amount']})"
+        line += f" — status: {sale.get('status', 'pending_review')}"
+        lines.append(line)
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_support_prompt(
     whatsapp_soul: str,
     rules_content: str,
     history_section: str,
     contact_info: dict | None = None,
+    chat_id: str = "",
 ) -> dict:
     """Constrói o payload de contexto para todos os contatos externos.
 
@@ -4874,6 +4923,7 @@ def _build_support_prompt(
             "### BASE DE CONHECIMENTO E REGRAS DE NEGÓCIO ###\n"
             f"{rules_content}\n\n"
             f"{_build_catalog_context_block()}"
+            f"{_build_client_orders_block(chat_id)}"
             f"{_owner_status_context_block(reveal_status=False)}"
             f"{history_section}"
             "REGRAS DE FORMATO — sem exceção:\n"
@@ -5318,18 +5368,26 @@ def pre_gateway_dispatch(*args, **kwargs):
             if not address:
                 address = _find_address_in_recent_messages(chat_id)
 
+            _caption_for_product = (getattr(event, "text", "") or "").strip()
+            product = _find_product_in_recent_messages(chat_id, _caption_for_product)
+            receipt_path = media_info["media_urls"][0] if media_info.get("media_urls") else None
+            _now_dt = datetime.datetime.now()
+
             sales = _load_sales()
             sale_id = _next_sale_id(sales)
             sales[sale_id] = {
                 "contact_key": chat_id,
                 "contact_name": contact_name,
+                "product": product,
                 "amount": sale_detection.get("amount"),
                 "payment_datetime": sale_detection.get("payment_datetime"),
                 "sender_name": sale_detection.get("sender_name"),
                 "bank_app": sale_detection.get("bank_app"),
                 "address": address,
+                "receipt_path": receipt_path,
                 "status": "pending_review",
                 "detected_at": time.time(),
+                "detected_at_str": _now_dt.strftime("%d/%m/%Y %H:%M"),
             }
             _save_sales(sales)
             logger.info(f"[sale-detect] Venda {sale_id} registrada para {contact_name} ({chat_id}) — endereço={'sim' if address else 'aguardando'}")
@@ -5368,18 +5426,26 @@ def pre_gateway_dispatch(*args, **kwargs):
                 or getattr(event, "senderName", None)
                 or clean_sender
             )
+            _caption_for_product = (getattr(event, "text", "") or "").strip()
+            product = _find_product_in_recent_messages(chat_id, _caption_for_product)
+            receipt_path = media_info["media_urls"][0] if media_info.get("media_urls") else None
+            _now_dt = datetime.datetime.now()
+
             sales = _load_sales()
             sale_id = _next_sale_id(sales)
             sales[sale_id] = {
                 "contact_key": chat_id,
                 "contact_name": contact_name,
+                "product": product,
                 "amount": None,
                 "payment_datetime": None,
                 "sender_name": None,
                 "bank_app": None,
                 "address": None,
+                "receipt_path": receipt_path,
                 "status": "unvalidated",
                 "detected_at": time.time(),
+                "detected_at_str": _now_dt.strftime("%d/%m/%Y %H:%M"),
             }
             _save_sales(sales)
             logger.info(
@@ -5669,6 +5735,20 @@ def pre_gateway_dispatch(*args, **kwargs):
         if chat_id:
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "sale-review-command"}
+
+    # Comando: ver pedido <id> — determinístico (sem LLM), mostra o registro completo.
+    _sale_view_match = re.match(r"^ver\s+pedido\s+(\S+)", normalized_msg, re.IGNORECASE)
+    if is_owner and _sale_view_match:
+        chat_id = str(event.source.chat_id) if event.source.chat_id else ""
+        sale_id = _sale_view_match.group(1).strip()
+        sales = _load_sales()
+        if sale_id not in sales:
+            reply = f"❌ Pedido \"{sale_id}\" não encontrado."
+        else:
+            reply = _format_sale_record(sale_id, sales[sale_id])
+        if chat_id:
+            _human_send(chat_id, reply)
+        return {"action": "skip", "reason": "sale-view-command"}
 
     # Comando: listar vendas / vendas pendentes — determinístico (sem LLM).
     # Gatilho amplo (só a palavra "vendas", sem exigir um verbo exato) pra não perder
@@ -6532,7 +6612,7 @@ def pre_llm_call(*args, **kwargs):
         _already_notified = _chat_id_for_status in _status_notified
         return _build_personal_prompt(contact_info or {}, _rel or _man_rel, history_section, whatsapp_soul, reveal_status=not _already_notified, rules_content=rules_content)
 
-    return _build_support_prompt(whatsapp_soul, rules_content, history_section, contact_info=contact_info)
+    return _build_support_prompt(whatsapp_soul, rules_content, history_section, contact_info=contact_info, chat_id=clean_jid)
 
 
 _sync_running = threading.Event()  # garante que apenas um sync roda por vez

@@ -1845,10 +1845,21 @@ class TestSalesDetection(BaseWhatsAppManagerTest):
         self.assertEqual(res, {"action": "skip", "reason": "sale-review-command"})
         mock_save.assert_not_called()
 
-    def test_next_sale_id_skips_existing(self):
+    def test_next_sale_id_format(self):
+        """ID = sequência(3 dígitos)-DDMMYYYY-HHMM, ex: 001-29072026-1530."""
         import whatsapp_manager
-        existing = {"v1": {}, "v2": {}}
-        self.assertEqual(whatsapp_manager._next_sale_id(existing), "v3")
+        sale_id = whatsapp_manager._next_sale_id({"a": {}, "b": {}})
+        self.assertRegex(sale_id, r"^003-\d{8}-\d{4}$")
+
+    def test_next_sale_id_skips_collision(self):
+        import whatsapp_manager
+        from datetime import datetime
+        now_str = datetime.now().strftime("%d%m%Y-%H%M")
+        # 1 item existente -> próxima sequência seria 002, mas essa chave já está ocupada
+        # (mesmo minuto) -> deve pular pra 003.
+        existing = {f"002-{now_str}": {}}
+        sale_id = whatsapp_manager._next_sale_id(existing)
+        self.assertEqual(sale_id, f"003-{now_str}")
 
     @patch("whatsapp_manager._save_sales")
     @patch("whatsapp_manager._load_sales", return_value={})
