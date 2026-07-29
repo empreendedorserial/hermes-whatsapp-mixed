@@ -4182,7 +4182,7 @@ def _find_catalog_matches(identifier: str) -> list[tuple[str, dict]]:
 def _format_catalog_item(item: dict, changes: dict | None = None) -> str:
     """Formata um item do catálogo para exibição ao owner, com diff opcional (valor atual → novo)."""
     lines = [f"Nome: {item.get('name', '')}"]
-    for field, label in (("description", "Descrição"), ("price", "Preço"), ("link", "Link"), ("pix_key", "Chave Pix")):
+    for field, label in (("description", "Descrição"), ("price", "Preço"), ("link", "Link"), ("pix_key", "Chave Pix"), ("delivery_fee", "Entrega")):
         current = item.get(field) or "—"
         if changes and field in changes:
             lines.append(f"{label}: {current} → {changes[field]}")
@@ -4222,6 +4222,14 @@ def _build_catalog_context_block() -> str:
             line += f" — link: {item['link']}"
         if item.get("pix_key"):
             line += f" — chave Pix: {item['pix_key']}"
+        delivery_fee = item.get("delivery_fee")
+        if delivery_fee not in (None, ""):
+            if str(delivery_fee).strip().upper() == "D":
+                line += " — entrega: produto digital, sem custo de entrega"
+            elif str(delivery_fee).strip() in ("0", "0.0", "R$ 0", "R$0"):
+                line += " — entrega: sem custo (grátis)"
+            else:
+                line += f" — valor fixo de entrega: {delivery_fee}"
         lines.append(line)
     lines.append(
         "\n### COMO REVELAR ESSAS INFORMAÇÕES (seja natural, não despeje tudo de uma vez) ###\n"
@@ -4236,14 +4244,20 @@ def _build_catalog_context_block() -> str:
     )
     lines.append(
         "\n### COMO CONDUZIR UMA VENDA (só quando o cliente confirmar que quer comprar) ###\n"
-        "Informe o preço (se ainda não tiver dito) e diga que o pagamento é feito via Pix. Se o item "
-        "tiver uma chave Pix na lista acima, informe essa chave exata para o cliente pagar. Peça para "
-        "ele enviar o comprovante (print/foto do pagamento) aqui mesmo na conversa. Diga que, após a "
-        "confirmação do pagamento pela nossa equipe: se for um produto digital (tem um link de acesso "
-        "próprio, como um site/sistema), o acesso será liberado por esse link; se for um produto físico "
-        "(algo que precisa ser enviado, como o Mini PC), ele será despachado após a verificação. NÃO "
-        "direcione o cliente para comprar em outro lugar quando o item já está no catálogo — a venda é "
-        "conduzida aqui na conversa."
+        "Se o cliente não disser a quantidade, assuma 1 unidade — não precisa perguntar. Calcule o total "
+        "SEMPRE assim: (preço unitário × quantidade) + valor de entrega. O valor de entrega vem da lista "
+        "acima: some o valor fixo se houver um número; NÃO some nada se a entrega for 'produto digital' "
+        "ou 'sem custo (grátis)'. Mostre a conta pro cliente de forma simples, ex: '2x R$ 50 + R$ 10 de "
+        "entrega = R$ 110'. Faça a conta com cuidado — não arredonde nem chute o valor.\n"
+        "Depois de calcular, informe o total e diga que o pagamento é feito via Pix. Se o item tiver uma "
+        "chave Pix na lista acima, informe essa chave exata para o cliente pagar O VALOR TOTAL (já com "
+        "quantidade e entrega, não só o preço unitário). Peça para ele enviar o comprovante (print/foto "
+        "do pagamento) aqui mesmo na conversa. Diga que, após a confirmação do pagamento pela nossa "
+        "equipe: se for um produto digital (tem um link de acesso próprio, como um site/sistema), o "
+        "acesso será liberado por esse link; se for um produto físico (algo que precisa ser enviado, "
+        "como o Mini PC), ele será despachado após a verificação (considerando o valor de entrega já "
+        "cobrado, se houver). NÃO direcione o cliente para comprar em outro lugar quando o item já está "
+        "no catálogo — a venda é conduzida aqui na conversa."
     )
     return "\n".join(lines) + "\n\n"
 
@@ -4295,9 +4309,11 @@ def _extract_catalog_item_via_llm(message: str) -> dict:
         "  {\"name\": \"nome do produto/serviço\", \"description\": \"descrição curta ou null\", "
         "\"price\": \"preço como texto (ex: 'R$ 500') ou null\", "
         "\"link\": \"URL do produto/página, se mencionada, ou null\", "
-        "\"pix_key\": \"chave Pix pra pagamento, se mencionada, ou null\"}\n"
+        "\"pix_key\": \"chave Pix pra pagamento, se mencionada, ou null\", "
+        "\"delivery_fee\": \"valor fixo de entrega como texto (ex: 'R$ 10'), '0' se for mencionado como "
+        "grátis/sem custo, 'D' se for produto digital sem entrega física, ou null se não foi mencionado\"}\n"
         "Se não houver um nome claro de produto/serviço, retorne {\"name\": null}.\n"
-        "NÃO invente descrição, preço, link ou chave Pix que não foram mencionados — use null.\n"
+        "NÃO invente descrição, preço, link, chave Pix ou valor de entrega que não foram mencionados — use null.\n"
     )
     text_content = _text_llm_call(prompt)
     if not text_content:
@@ -4306,7 +4322,7 @@ def _extract_catalog_item_via_llm(message: str) -> dict:
         result = _extract_json_from_text(text_content)
         if not isinstance(result, dict) or not result.get("name"):
             return {}
-        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link", "pix_key") and v is not None}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link", "pix_key", "delivery_fee") and v is not None}
     except Exception as e:
         logger.info(f"[catalog-extract] Erro ao parsear JSON de cadastro: {e} — raw: {repr(text_content)[:200]}")
         return {}
@@ -4318,15 +4334,18 @@ def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
         f"O usuário pediu para editar o produto/serviço '{product_name}' com a seguinte instrução:\n"
         f"\"{message}\"\n\n"
         "Extraia SOMENTE os campos explicitamente mencionados para alteração e retorne JSON.\n"
-        "Campos permitidos: name, description, price, link, pix_key.\n"
+        "Campos permitidos: name, description, price, link, pix_key, delivery_fee.\n"
         "NÃO invente valores. Se um campo não foi mencionado, não o inclua no JSON.\n"
         "Se a mensagem não mencionar nenhum campo do produto (ex: é só um comentário, uma pergunta, "
-        "ou algo sem relação com nome/descrição/preço/link/chave Pix), retorne {}.\n"
+        "ou algo sem relação com nome/descrição/preço/link/chave Pix/entrega), retorne {}.\n"
         "Exemplos:\n"
         "  'muda o preço pra 350' → {\"price\": \"R$ 350\"}\n"
         "  'atualiza a descrição: agora inclui suporte por 30 dias' → {\"description\": \"agora inclui suporte por 30 dias\"}\n"
         "  'inclua o link do produto https://exemplo.com' → {\"link\": \"https://exemplo.com\"}\n"
         "  'a chave pix é meuemail@exemplo.com' → {\"pix_key\": \"meuemail@exemplo.com\"}\n"
+        "  'a entrega é R$ 15' → {\"delivery_fee\": \"R$ 15\"}\n"
+        "  'entrega grátis' ou 'sem custo de entrega' → {\"delivery_fee\": \"0\"}\n"
+        "  'é um produto digital, sem entrega' → {\"delivery_fee\": \"D\"}\n"
     )
     text_content = _text_llm_call(prompt)
     if not text_content:
@@ -4335,7 +4354,7 @@ def _extract_catalog_update_via_llm(product_name: str, message: str) -> dict:
         result = _extract_json_from_text(text_content)
         if not isinstance(result, dict):
             return {}
-        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link", "pix_key") and v is not None}
+        return {k: v for k, v in result.items() if k in ("name", "description", "price", "link", "pix_key", "delivery_fee") and v is not None}
     except Exception as e:
         logger.info(f"[catalog-extract] Erro ao parsear JSON de edição: {e} — raw: {repr(text_content)[:200]}")
         return {}
