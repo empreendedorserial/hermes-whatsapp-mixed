@@ -4494,28 +4494,58 @@ def _format_sale_record(sale_id: str, sale: dict) -> str:
 
 
 def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> str | None:
-    """Procura, na legenda da imagem e nas mensagens recentes do cliente, menção a algum item
-    ATIVO do catálogo (match por nome, sem precisar de LLM) — pra saber qual produto foi pago."""
+    """Procura, na legenda da imagem e nas mensagens recentes do chat (cliente + bot), menção a
+    algum item ATIVO do catálogo — pra saber qual produto foi pago.
+
+    Estratégia de match (mais para menos precisa):
+      1. Nome completo do produto aparece na mensagem (exact substring).
+      2. Pelo menos 2 palavras-chave distintivas (>3 letras) do nome aparecem na mesma mensagem.
+      3. A palavra mais longa e distintiva do nome (>5 letras) aparece isolada — só aceita
+         este caso se nenhum outro produto também bater (evita falsos positivos como 'instalação').
+    Busca nas mensagens do CLIENTE e do BOT (from_me=0 e from_me=1), porque é o bot que
+    cita o nome do produto durante a negociação.
+    """
     catalog = _load_product_catalog()
-    active_names = [item.get("name", "") for item in catalog.values() if item.get("active", True) and item.get("name")]
-    if not active_names:
+    active_items = [(key, item) for key, item in catalog.items()
+                    if item.get("active", True) and item.get("name")]
+    if not active_items:
         return None
-    texts = ([caption_text] if caption_text else []) + _find_recent_client_messages(chat_id)
+
+    texts = ([caption_text] if caption_text else []) + _find_recent_all_messages(chat_id)
+
     for text in texts:
         text_norm = _normalize_text(text)
         text_words = set(text_norm.split())
-        for name in active_names:
-            name_norm = _normalize_text(name)
-            if name_norm in text_norm:
+
+        # Passo 1: match exato do nome completo
+        for _key, item in active_items:
+            name = item.get("name", "")
+            if _normalize_text(name) in text_norm:
                 return name
-            # Nome completo do catálogo raramente aparece por extenso numa mensagem informal
-            # do cliente (ex: "mini pc" em vez do nome completo do produto) — cai pra match por
-            # palavra-chave: qualquer palavra "distintiva" (mais de 3 letras) do nome do produto
-            # aparecendo isolada na mensagem já é sinal suficiente.
-            keywords = [w for w in name_norm.split() if len(w) > 3]
+
+        # Passo 2: pelo menos 2 keywords distintivas (>3 letras) presentes
+        for _key, item in active_items:
+            name = item.get("name", "")
+            keywords = [w for w in _normalize_text(name).split() if len(w) > 3]
+            matched = [w for w in keywords if w in text_words]
+            if len(matched) >= 2:
+                return name
+
+    # Passo 3 (mais fraco — só se único match): palavra mais longa do nome aparece isolada
+    for text in texts:
+        text_norm = _normalize_text(text)
+        text_words = set(text_norm.split())
+        candidates = []
+        for _key, item in active_items:
+            name = item.get("name", "")
+            keywords = [w for w in _normalize_text(name).split() if len(w) > 5]
             if keywords and any(w in text_words for w in keywords):
-                return name
+                candidates.append(name)
+        if len(candidates) == 1:
+            return candidates[0]
+
     return None
+
 
 
 _QUANTITY_PATTERNS = [
@@ -4572,6 +4602,34 @@ def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 1
     except sqlite3.Error as e:
         logger.warning(f"[sale-address] Erro ao consultar histórico de mensagens: {e}")
         return []
+
+
+def _find_recent_all_messages(chat_id: str, minutes: int = 60, limit: int = 30) -> list[str]:
+    """Busca os textos das últimas mensagens do CLIENTE e do BOT nesse chat, dentro da janela
+    de tempo — usado pra identificar qual produto foi negociado antes do comprovante chegar.
+    O bot cita o nome exato do produto durante a negociação (ex: 'É o Mini PC Acemagic...'),
+    por isso precisamos das mensagens do bot também."""
+    bridge_db = Path("/opt/data/.hermes/whatsapp_messages.db")
+    if not bridge_db.exists():
+        return []
+    cutoff = int(time.time()) - (minutes * 60)
+    try:
+        with sqlite3.connect(str(bridge_db)) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT body FROM messages
+                WHERE chat_id = ? AND body IS NOT NULL AND body != ''
+                  AND timestamp >= ?
+                ORDER BY timestamp DESC LIMIT ?
+                """,
+                (chat_id, cutoff, limit),
+            )
+            return [r[0] for r in cur.fetchall() if r[0]]
+    except sqlite3.Error as e:
+        logger.warning(f"[sale-product] Erro ao consultar histórico de mensagens: {e}")
+        return []
+
 
 
 def _extract_address_via_llm(text: str) -> str | None:
