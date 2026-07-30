@@ -4509,8 +4509,17 @@ def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> st
     texts = ([caption_text] if caption_text else []) + _find_recent_client_messages(chat_id)
     for text in texts:
         text_norm = _normalize_text(text)
+        text_words = set(text_norm.split())
         for name in active_names:
-            if _normalize_text(name) in text_norm:
+            name_norm = _normalize_text(name)
+            if name_norm in text_norm:
+                return name
+            # Nome completo do catálogo raramente aparece por extenso numa mensagem informal
+            # do cliente (ex: "mini pc" em vez do nome completo do produto) — cai pra match por
+            # palavra-chave: qualquer palavra "distintiva" (mais de 3 letras) do nome do produto
+            # aparecendo isolada na mensagem já é sinal suficiente.
+            keywords = [w for w in name_norm.split() if len(w) > 3]
+            if keywords and any(w in text_words for w in keywords):
                 return name
     return None
 
@@ -5851,7 +5860,11 @@ def pre_gateway_dispatch(*args, **kwargs):
             lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "") + " — use `ver pedido <id>` para detalhes"]
             for sale_id, sale in items.items():
                 product = (sale.get("product") or "—")[:20]
-                lines.append(f"{sale_id}: {sale.get('contact_name', '')} — {product} — {sale.get('status', 'pending_review')}")
+                amount = sale.get("amount") or "—"
+                lines.append(
+                    f"{sale_id}: {sale.get('contact_name', '')} — {product} — {amount} — "
+                    f"{sale.get('status', 'pending_review')}"
+                )
             reply = "\n".join(lines)
         if chat_id:
             _human_send(chat_id, reply)
