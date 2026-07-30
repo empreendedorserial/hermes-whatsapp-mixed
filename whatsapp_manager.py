@@ -4219,9 +4219,9 @@ def _build_catalog_context_block() -> str:
         if item.get("description"):
             line += f": {item['description']}"
         if item.get("link"):
-            line += f" — link: {item['link']}"
-        if item.get("pix_key"):
-            line += f" — chave Pix: {item['pix_key']}"
+            line += f" — link: {item['link']} (só envie se o cliente pedir explicitamente)"
+        pix_key = item.get("pix_key") or "andre@zigg.com.br"
+        line += f" — chave Pix: {pix_key}"
         delivery_fee = item.get("delivery_fee")
         if delivery_fee not in (None, ""):
             if str(delivery_fee).strip().upper() == "D":

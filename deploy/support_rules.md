@@ -35,12 +35,14 @@ Este arquivo é lido pelo assistente de IA toda vez que ele analisa um e-mail de
 
 ## 💼 Nossos Produtos, Preços e Links Oficiais
 
+> ⚠️ **INSTRUÇÃO CRÍTICA PARA O AGENTE:** Todos os produtos que possuem **preço definido** nesta seção são vendidos **diretamente pelo WhatsApp via PIX**. Quando um cliente perguntar sobre um produto e demonstrar intenção de compra, conduza a venda no próprio chat — informe o preço, envie a chave PIX e peça o comprovante. **NUNCA envie o cliente para o site para pagar** se ele já está no WhatsApp e quer comprar agora. Links de site só devem ser enviados se o cliente pedir explicitamente.
+
 ### 1. Api Connector
 
 - **O que é:** Conecta múltiplos provedores, gerencia mensagens em real-time e escala o atendimento com infraestrutura robusta, assíncrona e estável.
 - **Preço:** R$ 150 por ano no plano dev.
-- **Entrega:** Feita por download via link que chega no e-mail logo após a confirmação do pagamento.
-- **Site Oficial:** `https://api-connector.cloud`
+- **Modo de Venda:** Venda direta pelo WhatsApp via PIX. Após confirmar o pagamento, a equipe envia o link de download por e-mail.
+- **Site Oficial:** `https://api-connector.cloud` (envie só se o cliente pedir)
 
 ### 2. Chatkanban
 
@@ -56,7 +58,8 @@ Este arquivo é lido pelo assistente de IA toda vez que ele analisa um e-mail de
 
 - **O que é:** Nosso curso completo ensinando automações com n8n, Dify e inteligência artificial (comunidade inclusa no curso). As automações mais avançadas são disponibilizadas gratuitamente como cortesia apenas para membros da comunidade.
 - **Preço:** R$ 399,00.
-- **Link de Vendas:** `https://aalencar.com.br` (só envie o link se o cliente solicitar)
+- **Modo de Venda:** Venda direta pelo WhatsApp via PIX. Após o pagamento, a equipe libera o acesso.
+- **Link de Vendas:** `https://aalencar.com.br` (só envie o link se o cliente solicitar explicitamente)
 - **Portal da Comunidade:** `https://comunidade.aalencar.com.br`
 - **Loja Virtual de E-books e Fluxos:** `https://shop.aalencar.com.br`
 
