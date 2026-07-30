@@ -4424,8 +4424,11 @@ def _load_sales() -> dict:
 
 
 def _save_sales(sales: dict) -> None:
-    """Salva sales.json localmente e sincroniza com o GitHub em background,
-    avisando o dono se o push falhar (mesmo padrão de _save_product_catalog)."""
+    """Salva sales.json localmente e sincroniza com o GitHub de forma SÍNCRONA (ao contrário do
+    padrão em background usado pra contatos/catálogo). Motivo: um push assíncrono que ainda não
+    terminou quando o container é recriado (parte normal do fluxo de deploy deste projeto) perde
+    a venda pra sempre, já que o boot seguinte puxa do GitHub o estado antigo — e isso é dinheiro
+    real, não uma preferência de UI que dá pra perder sem problema."""
     try:
         with open(str(_SALES_PATH), "w", encoding="utf-8") as f:
             json.dump(sales, f, ensure_ascii=False, indent=2)
@@ -4458,7 +4461,8 @@ def _save_sales(sales: dict) -> None:
             logger.error(f"Erro ao sincronizar sales.json com o GitHub: {e}")
             return False
 
-    threading.Thread(target=lambda: _notify_owner_if_push_failed(_push, "o registro de vendas"), daemon=True).start()
+    # Chamado direto (sem thread) — ver docstring: perder essa sincronização é perder uma venda.
+    _notify_owner_if_push_failed(_push, "o registro de vendas")
 
 
 def _next_sale_id(sales: dict) -> str:
