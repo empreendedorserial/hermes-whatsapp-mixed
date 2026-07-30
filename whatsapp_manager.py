@@ -4511,7 +4511,8 @@ def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> st
     if not active_items:
         return None
 
-    texts = ([caption_text] if caption_text else []) + _find_recent_all_messages(chat_id)
+    # Janela de 7 dias: cliente pode enviar o comprovante dias após a conversa de compra
+    texts = ([caption_text] if caption_text else []) + _find_recent_all_messages(chat_id, minutes=60 * 24 * 7, limit=50)
 
     for text in texts:
         text_norm = _normalize_text(text)
@@ -4535,7 +4536,7 @@ def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> st
     for text in texts:
         text_norm = _normalize_text(text)
         text_words = set(text_norm.split())
-        candidates = []
+        candidates: list[str] = []
         for _key, item in active_items:
             name = item.get("name", "")
             keywords = [w for w in _normalize_text(name).split() if len(w) > 5]
@@ -4604,7 +4605,7 @@ def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 1
         return []
 
 
-def _find_recent_all_messages(chat_id: str, minutes: int = 60, limit: int = 30) -> list[str]:
+def _find_recent_all_messages(chat_id: str, minutes: int = 60 * 24 * 7, limit: int = 50) -> list[str]:
     """Busca os textos das últimas mensagens do CLIENTE e do BOT nesse chat, dentro da janela
     de tempo — usado pra identificar qual produto foi negociado antes do comprovante chegar.
     O bot cita o nome exato do produto durante a negociação (ex: 'É o Mini PC Acemagic...'),
