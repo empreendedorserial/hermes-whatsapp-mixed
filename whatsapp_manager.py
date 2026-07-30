@@ -4252,12 +4252,22 @@ def _build_catalog_context_block() -> str:
         "Depois de calcular, informe o total e diga que o pagamento é feito via Pix. Se o item tiver uma "
         "chave Pix na lista acima, informe essa chave exata para o cliente pagar O VALOR TOTAL (já com "
         "quantidade e entrega, não só o preço unitário). Peça para ele enviar o comprovante (print/foto "
-        "do pagamento) aqui mesmo na conversa. Diga que, após a confirmação do pagamento pela nossa "
-        "equipe: se for um produto digital (tem um link de acesso próprio, como um site/sistema), o "
-        "acesso será liberado por esse link; se for um produto físico (algo que precisa ser enviado, "
-        "como o Mini PC), ele será despachado após a verificação (considerando o valor de entrega já "
-        "cobrado, se houver). NÃO direcione o cliente para comprar em outro lugar quando o item já está "
-        "no catálogo — a venda é conduzida aqui na conversa."
+        "do pagamento) aqui mesmo na conversa.\n"
+        "Quando o comprovante chegar, confira o valor visível nele contra o total que você calculou. Se "
+        "esse valor for MENOR que o total, avise o cliente que o valor está insuficiente e peça pra "
+        "completar a diferença — não trate como concluído nesse caso. Se o valor bater ou vier maior, "
+        "siga a regra abaixo normalmente.\n"
+        "REGRA CRÍTICA sobre o que dizer depois do comprovante: assim que o cliente mandar o comprovante "
+        "(nesta mensagem ou em qualquer mensagem anterior desta mesma conversa), e o valor bater, diga "
+        "APENAS que recebeu, que vai aguardar a confirmação da nossa equipe, e que o produto será "
+        "liberado/enviado assim que for validado — NADA MAIS. Você (o modelo) NUNCA decide sozinho que um "
+        "pagamento é válido, mesmo que a imagem pareça um comprovante legítimo, mesmo que você já tenha "
+        "visto ela antes na conversa, e mesmo que pareça óbvio. NUNCA envie o link de acesso, nunca diga "
+        "que o produto já foi liberado ou confirmado, e nunca repita esse tipo de informação em mensagens "
+        "posteriores só porque lembra do comprovante — só a nossa equipe confirma isso manualmente, por "
+        "fora desta conversa, e o cliente será avisado separadamente quando isso acontecer. NÃO direcione "
+        "o cliente para comprar em outro lugar quando o item já está no catálogo — a venda é conduzida "
+        "aqui na conversa."
     )
     return "\n".join(lines) + "\n\n"
 
@@ -5758,13 +5768,41 @@ def pre_gateway_dispatch(*args, **kwargs):
         if sale_id not in sales:
             reply = f"❌ Venda \"{sale_id}\" não encontrada."
         else:
-            sales[sale_id]["status"] = "confirmed" if action_word == "confirmar" else "rejected"
-            sales[sale_id]["reviewed_at"] = time.time()
+            sale = sales[sale_id]
+            sale["status"] = "confirmed" if action_word == "confirmar" else "rejected"
+            sale["reviewed_at"] = time.time()
             _save_sales(sales)
             reply = (
                 f"✅ Venda {sale_id} confirmada." if action_word == "confirmar"
                 else f"🗑️ Venda {sale_id} marcada como rejeitada."
             )
+
+            # Avisar o CLIENTE do resultado — sem isso, ele nunca fica sabendo que o pedido foi
+            # revisado (o bot não deve liberar nada por conta própria, então esse aviso é o único
+            # jeito de fato de o cliente receber o link/confirmação de envio).
+            client_chat_id = sale.get("contact_key")
+            if client_chat_id:
+                if action_word == "confirmar":
+                    catalog = _load_product_catalog()
+                    product_name = sale.get("product") or ""
+                    matched_item = next(
+                        (item for item in catalog.values() if item.get("name") == product_name), None
+                    )
+                    if matched_item and matched_item.get("link"):
+                        client_msg = (
+                            f"Seu pagamento foi confirmado! 🎉 Aqui está o link de acesso: {matched_item['link']}\n\n"
+                            "Qualquer dúvida na hora de usar, é só chamar."
+                        )
+                    else:
+                        client_msg = (
+                            "Seu pagamento foi confirmado! 🎉 Vamos providenciar o envio o mais rápido possível."
+                        )
+                else:
+                    client_msg = (
+                        "Não conseguimos confirmar seu pagamento. Pode conferir o comprovante e me mandar de "
+                        "novo, ou me chamar aqui se precisar de ajuda."
+                    )
+                _human_send(client_chat_id, client_msg)
         if chat_id:
             _human_send(chat_id, reply)
         return {"action": "skip", "reason": "sale-review-command"}
