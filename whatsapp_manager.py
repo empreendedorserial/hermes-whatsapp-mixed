@@ -4483,6 +4483,8 @@ def _format_sale_record(sale_id: str, sale: dict) -> str:
     lines = [f"ID: {sale_id}", f"Cliente: {sale.get('contact_name', '')}"]
     if sale.get("product"):
         lines.append(f"Produto: {sale['product']}")
+    if sale.get("quantity"):
+        lines.append(f"Quantidade: {sale['quantity']}")
     if sale.get("amount"):
         lines.append(f"Valor: {sale['amount']}")
     if sale.get("payment_datetime"):
@@ -4522,6 +4524,35 @@ def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> st
             if keywords and any(w in text_words for w in keywords):
                 return name
     return None
+
+
+_QUANTITY_PATTERNS = [
+    r"\bquero\s+(\d+)\b",
+    r"\bquantidade[:\s]+(\d+)\b",
+    r"\b(\d+)\s*x\b",
+    r"\b(\d+)\s*unidades?\b",
+    r"\bmanda(?:r)?\s+(\d+)\b",
+    r"\bcoloca(?:r)?\s+(\d+)\b",
+]
+
+
+def _find_quantity_in_recent_messages(chat_id: str, caption_text: str = "") -> int:
+    """Procura, na legenda da imagem e nas mensagens recentes do cliente, uma quantidade
+    mencionada (ex: 'quero 2', '3x', 'quantidade 2') — sem LLM, por padrões comuns. Retorna 1
+    (padrão) se não encontrar nada, já que o cliente raramente especifica quando quer só uma."""
+    texts = ([caption_text] if caption_text else []) + _find_recent_client_messages(chat_id)
+    for text in texts:
+        text_norm = _normalize_text(text)
+        for pattern in _QUANTITY_PATTERNS:
+            m = re.search(pattern, text_norm)
+            if m:
+                try:
+                    qty = int(m.group(1))
+                    if qty > 0:
+                        return qty
+                except ValueError:
+                    pass
+    return 1
 
 
 def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 15) -> list[str]:
@@ -5426,6 +5457,7 @@ def pre_gateway_dispatch(*args, **kwargs):
 
             _caption_for_product = (getattr(event, "text", "") or "").strip()
             product = _find_product_in_recent_messages(chat_id, _caption_for_product)
+            quantity = _find_quantity_in_recent_messages(chat_id, _caption_for_product)
             receipt_path = media_info["media_urls"][0] if media_info.get("media_urls") else None
             _now_dt = datetime.datetime.now()
 
@@ -5435,6 +5467,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 "contact_key": chat_id,
                 "contact_name": contact_name,
                 "product": product,
+                "quantity": quantity,
                 "amount": sale_detection.get("amount"),
                 "payment_datetime": sale_detection.get("payment_datetime"),
                 "sender_name": sale_detection.get("sender_name"),
@@ -5484,6 +5517,7 @@ def pre_gateway_dispatch(*args, **kwargs):
             )
             _caption_for_product = (getattr(event, "text", "") or "").strip()
             product = _find_product_in_recent_messages(chat_id, _caption_for_product)
+            quantity = _find_quantity_in_recent_messages(chat_id, _caption_for_product)
             receipt_path = media_info["media_urls"][0] if media_info.get("media_urls") else None
             _now_dt = datetime.datetime.now()
 
@@ -5493,6 +5527,7 @@ def pre_gateway_dispatch(*args, **kwargs):
                 "contact_key": chat_id,
                 "contact_name": contact_name,
                 "product": product,
+                "quantity": quantity,
                 "amount": None,
                 "payment_datetime": None,
                 "sender_name": None,
@@ -5823,8 +5858,11 @@ def pre_gateway_dispatch(*args, **kwargs):
         return {"action": "skip", "reason": "sale-review-command"}
 
     # Comando: ver pedido <id> — determinístico (sem LLM), mostra o registro completo.
-    _sale_view_match = re.match(r"^ver\s+pedido\s+(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
-    if is_owner and _sale_view_match:
+    # "pedido" é opcional — o dono às vezes escreve só "ver <id>", direto. Só dispara se o que
+    # vier depois do "ver" parecer mesmo um ID de venda (formato 001-DDMMYYYY-HHMM ou vN antigo)
+    # — senão "ver histórico"/"ver contato" seriam engolidos por engano.
+    _sale_view_match = re.match(r"^ver\s+(?:pedido\s+)?(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
+    if is_owner and _sale_view_match and re.match(r"^(\d{3}-\d{8}-\d{4}|v\d+)$", _sale_view_match.group(1).strip(), re.IGNORECASE):
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sale_id = _sale_view_match.group(1).strip()
         sales = _load_sales()
@@ -5860,9 +5898,10 @@ def pre_gateway_dispatch(*args, **kwargs):
             lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "") + " — use `ver pedido <id>` para detalhes"]
             for sale_id, sale in items.items():
                 product = (sale.get("product") or "—")[:20]
+                quantity = sale.get("quantity") or 1
                 amount = sale.get("amount") or "—"
                 lines.append(
-                    f"{sale_id}: {sale.get('contact_name', '')} — {product} — {amount} — "
+                    f"{sale_id}: {sale.get('contact_name', '')} — {product} — qtd {quantity} — {amount} — "
                     f"{sale.get('status', 'pending_review')}"
                 )
             reply = "\n".join(lines)
