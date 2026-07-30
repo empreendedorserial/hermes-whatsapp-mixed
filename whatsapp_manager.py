@@ -4493,17 +4493,65 @@ def _format_sale_record(sale_id: str, sale: dict) -> str:
     return "\n".join(lines)
 
 
-def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> str | None:
-    """Procura, na legenda da imagem e nas mensagens recentes do chat (cliente + bot), menção a
-    algum item ATIVO do catálogo — pra saber qual produto foi pago.
+def _parse_br_payment_datetime(dt_str: str) -> float | None:
+    """Converte strings de data/hora do comprovante (formato BR) em unix timestamp.
 
-    Estratégia de match (mais para menos precisa):
-      1. Nome completo do produto aparece na mensagem (exact substring).
-      2. Pelo menos 2 palavras-chave distintivas (>3 letras) do nome aparecem na mesma mensagem.
-      3. A palavra mais longa e distintiva do nome (>5 letras) aparece isolada — só aceita
-         este caso se nenhum outro produto também bater (evita falsos positivos como 'instalação').
-    Busca nas mensagens do CLIENTE e do BOT (from_me=0 e from_me=1), porque é o bot que
-    cita o nome do produto durante a negociação.
+    Suporta formatos como:
+      '28/julho/2026 às 18:10:38'
+      '28/07/2026 18:10:38'
+      '28/07/2026 às 18:10'
+    Retorna None se não conseguir parsear.
+    """
+    if not dt_str:
+        return None
+    _BR_MONTHS = {
+        "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3,
+        "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+        "agosto": 8, "setembro": 9, "outubro": 10,
+        "novembro": 11, "dezembro": 12,
+    }
+    # Normaliza: remove 'às', vírgulas extras
+    cleaned = dt_str.lower().replace("às", "").replace("as", "").strip()
+    # Tenta parsear mês por extenso: "28/julho/2026 18:10:38"
+    import re as _re
+    m = _re.search(r"(\d{1,2})[/\-](\w+)[/\-](\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?", cleaned)
+    if m:
+        day, month_raw, year, hour, minute = int(m.group(1)), m.group(2), int(m.group(3)), int(m.group(4)), int(m.group(5))
+        second = int(m.group(6)) if m.group(6) else 0
+        month = _BR_MONTHS.get(month_raw)
+        if not month:
+            try:
+                month = int(month_raw)
+            except ValueError:
+                return None
+        try:
+            dt = datetime.datetime(year, month, day, hour, minute, second)
+            return dt.timestamp()
+        except ValueError:
+            return None
+    # Fallback: formatos numéricos comuns
+    for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.datetime.strptime(cleaned.strip(), fmt).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def _find_product_in_recent_messages(
+    chat_id: str,
+    caption_text: str = "",
+    payment_datetime_str: str = "",
+) -> str | None:
+    """Identifica qual produto do catálogo foi comprado, analisando o histórico da conversa.
+
+    A janela de busca é ancorada no payment_datetime do comprovante (72h antes → 2h depois)
+    para evitar cruzar com conversas de outros pedidos. Se não houver timestamp, usa 7 dias.
+
+    Estratégia:
+      1. LLM: passa o histórico da conversa + catálogo e pede o nome exato do produto.
+      2. Fallback exato: nome completo do produto encontrado como substring.
+      3. Fallback heurístico: único produto com palavra-chave longa (>5 letras) na conversa.
     """
     catalog = _load_product_catalog()
     active_items = [(key, item) for key, item in catalog.items()
@@ -4511,40 +4559,83 @@ def _find_product_in_recent_messages(chat_id: str, caption_text: str = "") -> st
     if not active_items:
         return None
 
-    # Janela de 7 dias: cliente pode enviar o comprovante dias após a conversa de compra
-    texts = ([caption_text] if caption_text else []) + _find_recent_all_messages(chat_id, minutes=60 * 24 * 7, limit=50)
+    # Ancora a janela no timestamp do pagamento — evita pegar conversas de outros pedidos
+    payment_ts = _parse_br_payment_datetime(payment_datetime_str)
+    if payment_ts:
+        # 72h antes do pagamento até 2h depois (conversa pode ter sido dias antes)
+        window_start = payment_ts - 72 * 3600
+        window_end = payment_ts + 2 * 3600
+        messages = _find_recent_all_messages(chat_id, anchor_start=window_start, anchor_end=window_end, limit=50)
+        logger.info(f"[sale-detect] Janela ancorada no pagamento: {payment_datetime_str} (±72h)")
+    else:
+        # Sem timestamp parsável: fallback para 7 dias a partir de agora
+        messages = _find_recent_all_messages(chat_id, minutes=60 * 24 * 7, limit=50)
+        logger.info("[sale-detect] Janela não ancorada (payment_datetime não parsável): usando 7 dias")
+    texts = ([caption_text] if caption_text else []) + messages
 
+    # --- Passo 1: LLM identifica o produto pelo contexto da conversa ---
+    if messages:
+        catalog_list = "\n".join(
+            f"- {item.get('name', '')}"
+            + (f" ({item.get('price', '')})" if item.get("price") else "")
+            for _key, item in active_items
+        )
+        # Últimas 20 mensagens em ordem cronológica (mais antiga primeiro)
+        conversation = "\n".join(reversed(messages[:20]))
+        prompt = (
+            "Você analisa conversas de vendas pelo WhatsApp para identificar qual produto foi comprado.\n\n"
+            f"CATÁLOGO DE PRODUTOS (apenas estes existem):\n{catalog_list}\n\n"
+            f"CONVERSA RECENTE (mais antiga → mais nova):\n{conversation}\n\n"
+            f"LEGENDA DO COMPROVANTE: \"{caption_text}\"\n\n"
+            "Com base na conversa acima, qual produto do catálogo o cliente estava comprando?\n"
+            "Retorne APENAS JSON: {\"product\": \"nome EXATO do produto conforme o catálogo, ou null se não identificado\"}\n"
+            "Use null se a conversa não mencionar claramente nenhum produto do catálogo."
+        )
+        llm_result = _text_llm_call(prompt, timeout=15)
+        if llm_result:
+            try:
+                parsed = _extract_json_from_text(llm_result)
+                if isinstance(parsed, dict):
+                    product_name = parsed.get("product")
+                    if product_name and isinstance(product_name, str):
+                        active_names = [item.get("name", "") for _k, item in active_items]
+                        # Match exato primeiro
+                        if product_name in active_names:
+                            logger.info(f"[sale-detect] Produto identificado via LLM: '{product_name}'")
+                            return product_name
+                        # Match fuzzy: LLM pode retornar nome ligeiramente diferente
+                        product_norm = _normalize_text(product_name)
+                        for name in active_names:
+                            if product_norm in _normalize_text(name) or _normalize_text(name) in product_norm:
+                                logger.info(f"[sale-detect] Produto identificado via LLM (fuzzy): '{name}'")
+                                return name
+            except Exception as e:
+                logger.info(f"[sale-detect] Erro ao parsear resposta do LLM para produto: {e}")
+
+    # --- Passo 2: fallback — match exato do nome completo nas mensagens ---
     for text in texts:
         text_norm = _normalize_text(text)
-        text_words = set(text_norm.split())
-
-        # Passo 1: match exato do nome completo
         for _key, item in active_items:
             name = item.get("name", "")
             if _normalize_text(name) in text_norm:
+                logger.info(f"[sale-detect] Produto identificado via match exato: '{name}'")
                 return name
 
-        # Passo 2: pelo menos 2 keywords distintivas (>3 letras) presentes
-        for _key, item in active_items:
-            name = item.get("name", "")
-            keywords = [w for w in _normalize_text(name).split() if len(w) > 3]
-            matched = [w for w in keywords if w in text_words]
-            if len(matched) >= 2:
-                return name
-
-    # Passo 3 (mais fraco — só se único match): palavra mais longa do nome aparece isolada
+    # --- Passo 3: fallback fraco — só aceita se for o único candidato ---
+    candidates: list[str] = []
     for text in texts:
         text_norm = _normalize_text(text)
         text_words = set(text_norm.split())
-        candidates: list[str] = []
         for _key, item in active_items:
             name = item.get("name", "")
             keywords = [w for w in _normalize_text(name).split() if len(w) > 5]
-            if keywords and any(w in text_words for w in keywords):
+            if keywords and any(w in text_words for w in keywords) and name not in candidates:
                 candidates.append(name)
-        if len(candidates) == 1:
-            return candidates[0]
+    if len(candidates) == 1:
+        logger.info(f"[sale-detect] Produto identificado via heurística (único match): '{candidates[0]}'")
+        return candidates[0]
 
+    logger.info(f"[sale-detect] Produto não identificado para chat {chat_id}")
     return None
 
 
@@ -4605,27 +4696,45 @@ def _find_recent_client_messages(chat_id: str, minutes: int = 60, limit: int = 1
         return []
 
 
-def _find_recent_all_messages(chat_id: str, minutes: int = 60 * 24 * 7, limit: int = 50) -> list[str]:
-    """Busca os textos das últimas mensagens do CLIENTE e do BOT nesse chat, dentro da janela
-    de tempo — usado pra identificar qual produto foi negociado antes do comprovante chegar.
-    O bot cita o nome exato do produto durante a negociação (ex: 'É o Mini PC Acemagic...'),
-    por isso precisamos das mensagens do bot também."""
+def _find_recent_all_messages(
+    chat_id: str,
+    minutes: int = 60 * 24 * 7,
+    limit: int = 50,
+    anchor_start: float | None = None,
+    anchor_end: float | None = None,
+) -> list[str]:
+    """Busca os textos das mensagens do CLIENTE e do BOT nesse chat.
+
+    Se anchor_start/anchor_end forem fornecidos, busca nessa janela absoluta.
+    Caso contrário, busca os últimos `minutes` minutos a partir de agora.
+    """
     bridge_db = Path("/opt/data/.hermes/whatsapp_messages.db")
     if not bridge_db.exists():
         return []
-    cutoff = int(time.time()) - (minutes * 60)
     try:
         with sqlite3.connect(str(bridge_db)) as conn:
             cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT body FROM messages
-                WHERE chat_id = ? AND body IS NOT NULL AND body != ''
-                  AND timestamp >= ?
-                ORDER BY timestamp DESC LIMIT ?
-                """,
-                (chat_id, cutoff, limit),
-            )
+            if anchor_start is not None and anchor_end is not None:
+                cur.execute(
+                    """
+                    SELECT body FROM messages
+                    WHERE chat_id = ? AND body IS NOT NULL AND body != ''
+                      AND timestamp >= ? AND timestamp <= ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (chat_id, int(anchor_start), int(anchor_end), limit),
+                )
+            else:
+                cutoff = int(time.time()) - (minutes * 60)
+                cur.execute(
+                    """
+                    SELECT body FROM messages
+                    WHERE chat_id = ? AND body IS NOT NULL AND body != ''
+                      AND timestamp >= ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (chat_id, cutoff, limit),
+                )
             return [r[0] for r in cur.fetchall() if r[0]]
     except sqlite3.Error as e:
         logger.warning(f"[sale-product] Erro ao consultar histórico de mensagens: {e}")
@@ -5509,7 +5618,8 @@ def pre_gateway_dispatch(*args, **kwargs):
                 address = _find_address_in_recent_messages(chat_id)
 
             _caption_for_product = (getattr(event, "text", "") or "").strip()
-            product = _find_product_in_recent_messages(chat_id, _caption_for_product)
+            _payment_dt_str = sale_detection.get("payment_datetime") or ""
+            product = _find_product_in_recent_messages(chat_id, _caption_for_product, payment_datetime_str=_payment_dt_str)
             quantity = _find_quantity_in_recent_messages(chat_id, _caption_for_product)
             receipt_path = media_info["media_urls"][0] if media_info.get("media_urls") else None
             _now_dt = datetime.datetime.now()
