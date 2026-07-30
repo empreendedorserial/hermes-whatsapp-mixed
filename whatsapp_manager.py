@@ -5803,6 +5803,10 @@ def pre_gateway_dispatch(*args, **kwargs):
                     block += f"\nDescrição: {item['description']}"
                 if item.get("link"):
                     block += f"\nLink: {item['link']}"
+                if item.get("pix_key"):
+                    block += f"\nChave Pix: {item['pix_key']}"
+                if item.get("delivery_fee") not in (None, ""):
+                    block += f"\nEntrega: {item['delivery_fee']}"
                 lines.append(block)
             reply = "\n".join(lines)
         if chat_id:
