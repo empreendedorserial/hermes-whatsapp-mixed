@@ -4548,7 +4548,9 @@ def _find_quantity_in_recent_messages(chat_id: str, caption_text: str = "") -> i
             if m:
                 try:
                     qty = int(m.group(1))
-                    if qty > 0:
+                    # Limite sensato — evita que "manda 11987654321" (telefone colado sem
+                    # espaço extra) ou algo parecido vire uma "quantidade" absurda.
+                    if 0 < qty <= 100:
                         return qty
                 except ValueError:
                     pass
