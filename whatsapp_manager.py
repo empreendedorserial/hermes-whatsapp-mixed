@@ -5653,6 +5653,9 @@ def pre_gateway_dispatch(*args, **kwargs):
 
     # Comando para sincronizar e importar contatos do SQLite para personal_contacts.json e GitHub
     normalized_msg = msg_text.strip().lower().replace("_", " ").replace("-", " ")
+    # Versão SEM substituir hífen por espaço — normalized_msg quebra IDs de venda no formato
+    # 001-DDMMYYYY-HHMM (viram "001 DDMMYYYY HHMM"), então os comandos de venda usam esta aqui.
+    _msg_no_hyphen_strip = msg_text.strip().lower()
     try:
         logger.info(
             f"[debug] sender='{sender_id}' (clean='{clean_sender}', norm='{_normalize_brazilian_phone(clean_sender)}')"
@@ -5810,7 +5813,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     # engolida pelo gatilho mais amplo de "vendas".
     # .strip("`") — o dono costuma copiar o comando direto de uma sugestão nossa em markdown
     # (ex: "`confirmar venda 001-...`"), que vem com crases coladas e quebraria o "^" do regex.
-    _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
+    _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", _msg_no_hyphen_strip.strip("` "), re.IGNORECASE)
     if is_owner and _sale_review_match:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         action_word, sale_id = _sale_review_match.group(1).lower(), _sale_review_match.group(2).strip()
@@ -5861,7 +5864,7 @@ def pre_gateway_dispatch(*args, **kwargs):
     # "pedido" é opcional — o dono às vezes escreve só "ver <id>", direto. Só dispara se o que
     # vier depois do "ver" parecer mesmo um ID de venda (formato 001-DDMMYYYY-HHMM ou vN antigo)
     # — senão "ver histórico"/"ver contato" seriam engolidos por engano.
-    _sale_view_match = re.match(r"^ver\s+(?:pedido\s+)?(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
+    _sale_view_match = re.match(r"^ver\s+(?:pedido\s+)?(\S+)", _msg_no_hyphen_strip.strip("` "), re.IGNORECASE)
     if is_owner and _sale_view_match and re.match(r"^(\d{3}-\d{8}-\d{4}|v\d+)$", _sale_view_match.group(1).strip(), re.IGNORECASE):
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sale_id = _sale_view_match.group(1).strip()
