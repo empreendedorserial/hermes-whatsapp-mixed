@@ -5840,9 +5840,10 @@ def pre_gateway_dispatch(*args, **kwargs):
         if not items:
             reply = "💰 Nenhuma venda pendente." if only_pending else "💰 Nenhuma venda registrada ainda."
         else:
-            lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "")]
+            lines = ["💰 *Vendas*" + (" pendentes" if only_pending else "") + " — use `ver pedido <id>` para detalhes"]
             for sale_id, sale in items.items():
-                lines.append("\n" + _format_sale_record(sale_id, sale))
+                product = (sale.get("product") or "—")[:20]
+                lines.append(f"{sale_id}: {sale.get('contact_name', '')} — {product} — {sale.get('status', 'pending_review')}")
             reply = "\n".join(lines)
         if chat_id:
             _human_send(chat_id, reply)
