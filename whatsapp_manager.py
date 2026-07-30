@@ -4562,11 +4562,11 @@ def _find_product_in_recent_messages(
     # Ancora a janela no timestamp do pagamento — evita pegar conversas de outros pedidos
     payment_ts = _parse_br_payment_datetime(payment_datetime_str)
     if payment_ts:
-        # 72h antes do pagamento até 2h depois (conversa pode ter sido dias antes)
-        window_start = payment_ts - 72 * 3600
-        window_end = payment_ts + 2 * 3600
+        # 24h antes do pagamento até 1h depois
+        window_start = payment_ts - 24 * 3600
+        window_end = payment_ts + 1 * 3600
         messages = _find_recent_all_messages(chat_id, anchor_start=window_start, anchor_end=window_end, limit=50)
-        logger.info(f"[sale-detect] Janela ancorada no pagamento: {payment_datetime_str} (±72h)")
+        logger.info(f"[sale-detect] Janela ancorada no pagamento: {payment_datetime_str} (-24h/+1h)")
     else:
         # Sem timestamp parsável: fallback para 7 dias a partir de agora
         messages = _find_recent_all_messages(chat_id, minutes=60 * 24 * 7, limit=50)
