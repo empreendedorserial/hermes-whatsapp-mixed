@@ -1845,6 +1845,120 @@ class TestSalesDetection(BaseWhatsAppManagerTest):
         self.assertEqual(res, {"action": "skip", "reason": "sale-review-command"})
         mock_save.assert_not_called()
 
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={
+        "001-30072026-0031": {"contact_name": "João", "contact_key": "5511888877777@s.whatsapp.net", "amount": "R$ 15,00", "status": "pending_review"},
+    })
+    @patch("whatsapp_manager._load_product_catalog", return_value={})
+    @patch("urllib.request.urlopen")
+    def test_confirm_sale_with_hyphenated_id(self, mock_urlopen, mock_catalog, mock_load, mock_save):
+        """Regressão: normalized_msg troca hífen por espaço, o que quebrava confirmar/rejeitar
+        venda pra IDs no formato novo (001-DDMMYYYY-HHMM) — só "vN" passava despercebido."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "confirmar venda 001-30072026-0031")
+        with patch("whatsapp_manager._human_send"):
+            res = self._dispatch_event(event)
+
+        self.assertEqual(res, {"action": "skip", "reason": "sale-review-command"})
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        self.assertEqual(saved["001-30072026-0031"]["status"], "confirmed")
+
+    @patch("whatsapp_manager._save_sales")
+    @patch("whatsapp_manager._load_sales", return_value={
+        "001-30072026-0031": {
+            "contact_name": "João", "contact_key": "5511888877777@s.whatsapp.net",
+            "product": "E-book Teste", "status": "pending_review",
+        },
+    })
+    @patch("whatsapp_manager._load_product_catalog", return_value={
+        "ebook": {"name": "E-book Teste", "link": "https://exemplo.com/ebook", "active": True},
+    })
+    @patch("urllib.request.urlopen")
+    def test_confirm_sale_notifies_client_with_digital_link(self, mock_urlopen, mock_catalog, mock_load, mock_save):
+        """Ao confirmar, o CLIENTE (não só o dono) recebe o link do produto digital confirmado."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "confirmar venda 001-30072026-0031")
+        with patch("whatsapp_manager._human_send") as mock_send:
+            self._dispatch_event(event)
+
+        self.assertEqual(mock_send.call_count, 2)
+        client_call = next(c for c in mock_send.call_args_list if c.args[0] == "5511888877777@s.whatsapp.net")
+        self.assertIn("https://exemplo.com/ebook", client_call.args[1])
+
+    @patch("whatsapp_manager._load_sales", return_value={
+        "001-30072026-0031": {
+            "contact_name": "João", "product": "E-book", "quantity": 2,
+            "amount": "R$ 15,00", "status": "pending_review",
+        },
+    })
+    @patch("urllib.request.urlopen")
+    def test_ver_id_without_pedido_keyword(self, mock_urlopen, mock_load):
+        """'ver <id>' (sem a palavra 'pedido') também deve disparar o comando determinístico."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "ver 001-30072026-0031")
+        with patch("whatsapp_manager._human_send") as mock_send:
+            res = self._dispatch_event(event)
+
+        self.assertEqual(res, {"action": "skip", "reason": "sale-view-command"})
+        sent_text = mock_send.call_args[0][1]
+        self.assertIn("Quantidade: 2", sent_text)
+        self.assertIn("Produto: E-book", sent_text)
+
+    @patch("whatsapp_manager._load_sales", return_value={})
+    @patch("urllib.request.urlopen")
+    def test_ver_unrelated_phrase_not_swallowed(self, mock_urlopen, mock_load):
+        """'ver histórico'/'ver contato' não devem ser tratados como 'ver pedido' — só dispara
+        quando o que vem depois do 'ver' parece mesmo um ID de venda."""
+        import whatsapp_manager
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b""
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        owner_id = "5511999999999@s.whatsapp.net"
+        event = self._make_text_event(owner_id, owner_id, "ver histórico do João")
+        res = self._dispatch_event(event)
+
+        self.assertNotEqual(res, {"action": "skip", "reason": "sale-view-command"})
+
+    def test_find_quantity_default_is_one(self):
+        import whatsapp_manager
+        with patch("whatsapp_manager._find_recent_client_messages", return_value=["oi tudo bem"]):
+            qty = whatsapp_manager._find_quantity_in_recent_messages(self.CLIENT_ID)
+        self.assertEqual(qty, 1)
+
+    def test_find_quantity_from_caption(self):
+        import whatsapp_manager
+        with patch("whatsapp_manager._find_recent_client_messages", return_value=[]):
+            qty = whatsapp_manager._find_quantity_in_recent_messages(self.CLIENT_ID, "quero 3 por favor")
+        self.assertEqual(qty, 3)
+
+    def test_find_product_matches_partial_keyword(self):
+        """Cliente escreve só 'mini pc', não o nome completo do catálogo — deve casar mesmo assim."""
+        import whatsapp_manager
+        catalog = {
+            "mini-pc": {"name": "Mini Pc Acemagic Ryzen 7 7730u 16gb", "active": True},
+        }
+        with patch("whatsapp_manager._load_product_catalog", return_value=catalog), \
+             patch("whatsapp_manager._find_recent_client_messages", return_value=["quero o mini pc"]):
+            product = whatsapp_manager._find_product_in_recent_messages(self.CLIENT_ID)
+        self.assertEqual(product, "Mini Pc Acemagic Ryzen 7 7730u 16gb")
+
     def test_next_sale_id_format(self):
         """ID = sequência(3 dígitos)-DDMMYYYY-HHMM, ex: 001-29072026-1530."""
         import whatsapp_manager
