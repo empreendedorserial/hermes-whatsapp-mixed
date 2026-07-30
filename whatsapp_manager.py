@@ -5760,7 +5760,9 @@ def pre_gateway_dispatch(*args, **kwargs):
     # decisão sobre dinheiro não deveria depender de classificação por linguagem natural).
     # Checado ANTES do comando de listagem abaixo pra essa ação específica não ser
     # engolida pelo gatilho mais amplo de "vendas".
-    _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", normalized_msg, re.IGNORECASE)
+    # .strip("`") — o dono costuma copiar o comando direto de uma sugestão nossa em markdown
+    # (ex: "`confirmar venda 001-...`"), que vem com crases coladas e quebraria o "^" do regex.
+    _sale_review_match = re.match(r"^(confirmar|rejeitar)\s+venda\s+(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
     if is_owner and _sale_review_match:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         action_word, sale_id = _sale_review_match.group(1).lower(), _sale_review_match.group(2).strip()
@@ -5808,7 +5810,7 @@ def pre_gateway_dispatch(*args, **kwargs):
         return {"action": "skip", "reason": "sale-review-command"}
 
     # Comando: ver pedido <id> — determinístico (sem LLM), mostra o registro completo.
-    _sale_view_match = re.match(r"^ver\s+pedido\s+(\S+)", normalized_msg, re.IGNORECASE)
+    _sale_view_match = re.match(r"^ver\s+pedido\s+(\S+)", normalized_msg.strip("` "), re.IGNORECASE)
     if is_owner and _sale_view_match:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sale_id = _sale_view_match.group(1).strip()
@@ -5828,7 +5830,9 @@ def pre_gateway_dispatch(*args, **kwargs):
     # gateway, etc.) que não existem aqui. Falso positivo aqui é só mostrar a lista
     # de vendas sem necessidade; a alucinação é bem pior.
     _normalized_for_sales_list = _normalize_text(normalized_msg)
-    _sales_list_trigger = "vendas" in _normalized_for_sales_list.split()
+    # \b (borda de palavra) em vez de split() por espaço — assim "vendas" ainda é reconhecido
+    # mesmo colado em pontuação/markdown, ex: "`listar vendas`" copiado de uma sugestão nossa.
+    _sales_list_trigger = bool(re.search(r"\bvendas\b", _normalized_for_sales_list))
     if is_owner and _sales_list_trigger:
         chat_id = str(event.source.chat_id) if event.source.chat_id else ""
         sales = _load_sales()
